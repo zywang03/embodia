@@ -4,43 +4,46 @@ from __future__ import annotations
 
 import time
 
-from embodia import Action, Frame, ModelBase, ModelSpec, RobotBase, RobotSpec
+from embodia import Action, Frame, ModelMixin, RobotMixin
 
 
-class DummyRobot(RobotBase):
-    def get_spec(self) -> RobotSpec:
-        return RobotSpec(
-            name="dummy_robot",
-            action_modes=["ee_delta"],
-            image_keys=["front_rgb"],
-            state_keys=["joint_positions"],
-        )
+class DummyRobot(RobotMixin):
+    def __init__(self) -> None:
+        self.last_action: Action | None = None
 
-    def observe(self) -> Frame:
-        return Frame(
-            timestamp_ns=time.time_ns(),
-            images={"front_rgb": None},
-            state={"joint_positions": [0.0] * 6},
-        )
+    def _get_spec_impl(self) -> dict[str, object]:
+        return {
+            "name": "dummy_robot",
+            "action_modes": ["ee_delta"],
+            "image_keys": ["front_rgb"],
+            "state_keys": ["joint_positions"],
+        }
 
-    def act(self, action: Action) -> None:
+    def _observe_impl(self) -> dict[str, object]:
+        return {
+            "timestamp_ns": time.time_ns(),
+            "images": {"front_rgb": None},
+            "state": {"joint_positions": [0.0] * 6},
+        }
+
+    def _act_impl(self, action: Action) -> None:
+        self.last_action = action
+
+    def _reset_impl(self) -> dict[str, object]:
+        return self._observe_impl()
+
+
+class DummyModel(ModelMixin):
+    def _get_spec_impl(self) -> dict[str, object]:
+        return {
+            "name": "dummy_model",
+            "required_image_keys": ["front_rgb"],
+            "required_state_keys": ["joint_positions"],
+            "output_action_mode": "ee_delta",
+        }
+
+    def _reset_impl(self) -> None:
         return None
 
-    def reset(self) -> Frame:
-        return self.observe()
-
-
-class DummyModel(ModelBase):
-    def get_spec(self) -> ModelSpec:
-        return ModelSpec(
-            name="dummy_model",
-            required_image_keys=["front_rgb"],
-            required_state_keys=["joint_positions"],
-            output_action_mode="ee_delta",
-        )
-
-    def reset(self) -> None:
-        return None
-
-    def step(self, frame: Frame) -> Action:
-        return Action(mode="ee_delta", value=[0.0] * 6)
+    def _step_impl(self, frame: Frame) -> dict[str, object]:
+        return {"mode": "ee_delta", "value": [0.0] * 6}

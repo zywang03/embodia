@@ -1,9 +1,9 @@
 # embodia
 
-`embodia` is a minimal Python library for unified runtime interfaces between
+`embodia` is a small Python library for unified runtime interfaces between
 robots and models.
 
-It is intentionally small:
+It is intentionally narrow:
 
 - no network service
 - no server process
@@ -11,11 +11,11 @@ It is intentionally small:
 - no training framework
 - no plugin system
 
-The core design is:
+The design is simple:
 
-1. `Protocol` defines compatibility for third-party implementations.
-2. `Base` provides a recommended inheritance path for official implementations.
-3. `check_*` functions are the real runtime acceptance gates.
+- `Protocol` is the compatibility standard
+- `Mixin` is the recommended integration layer
+- `check_*` is the runtime acceptance gate
 
 ## Install
 
@@ -25,44 +25,118 @@ For local development:
 pip install .
 ```
 
-## Quick Start
+## 30-Second Example
 
-Run the repository examples after installing the package:
+```python
+import embodia as em
+
+
+class YourRobot(em.RobotMixin):
+    ROBOT_SPEC = {
+        "name": "your_robot",
+        "action_modes": ["cartesian_delta"],
+        "image_keys": ["rgb_front"],
+        "state_keys": ["qpos"],
+    }
+    METHOD_ALIASES = {
+        "observe": "capture",
+        "act": "send_command",
+        "reset": "home",
+    }
+    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
+    STATE_KEY_MAP = {"qpos": "joint_positions"}
+    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+
+    def capture(self): ...
+    def send_command(self, action): ...
+    def home(self): ...
+
+
+class YourModel(em.ModelMixin):
+    MODEL_SPEC = {
+        "name": "your_model",
+        "required_image_keys": ["rgb_front"],
+        "required_state_keys": ["qpos"],
+        "output_action_mode": "cartesian_delta",
+    }
+    METHOD_ALIASES = {
+        "reset": "clear_state",
+        "step": "infer",
+    }
+    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
+    STATE_KEY_MAP = {"qpos": "joint_positions"}
+    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+
+    def clear_state(self): ...
+    def infer(self, frame): ...
+```
+
+Then:
+
+```python
+robot = YourRobot()
+model = YourModel()
+
+em.check_pair(robot, model, sample_frame=robot.reset())
+result = em.run_step(robot, model)
+```
+
+## Integration Rules
+
+- Edit your existing outer class directly. Do not add an extra wrapper class unless you really need one.
+- Put `RobotMixin` or `ModelMixin` on the far left so it is the outermost runtime layer.
+- Keep your own methods thin. Let embodia do remapping, validation, and normalization.
+- Prefer declarative class attributes over extra adapter methods.
+
+Correct:
+
+```python
+class YourRobot(em.RobotMixin):
+    ...
+```
+
+Wrong:
+
+```python
+class YourRobot(SomeOtherBase, em.RobotMixin):
+    ...
+```
+
+## What The Class Attributes Mean
+
+- `ROBOT_SPEC` / `MODEL_SPEC`: describe your current native interface
+- `METHOD_ALIASES`: embodia method name -> your existing method name
+- `IMAGE_KEY_MAP`: native image key -> embodia standard key
+- `STATE_KEY_MAP`: native state key -> embodia standard key
+- `ACTION_MODE_MAP`: native action mode -> embodia standard mode
+
+If your class already uses embodia-standard names, you can leave the maps empty.
+
+Detailed guide:
+
+- [mixin_guide.md](/data/embodia/docs/mixin_guide.md)
+
+## Examples
 
 ```bash
 pip install -e .
-python examples/basic_usage.py
-python examples/structural_compatibility.py
+python examples/00_mixin_quickstart.py
+python examples/02_wrap_existing_classes.py
+python examples/03_rollout_loop.py
+python examples/01_mixin_from_scratch.py
+python examples/04_pi06star_pi05_policy.py
 ```
 
-## Package Layout
+Suggested reading order:
 
-```text
-embodia/
-  pyproject.toml
-  README.md
-  examples/
-    basic_usage.py
-    structural_compatibility.py
-  src/embodia/
-    __init__.py
-    __main__.py
-    core/
-      schema.py
-      protocols.py
-      base.py
-    runtime/
-      checks.py
-  tests/
-    helpers.py
-    test_interfaces.py
-```
+1. `examples/00_mixin_quickstart.py`
+2. `examples/02_wrap_existing_classes.py`
+3. `examples/03_rollout_loop.py`
+4. `examples/01_mixin_from_scratch.py`
+5. `examples/04_pi06star_pi05_policy.py`
 
 ## Philosophy
 
-- `Protocol`: external compatibility standard
-- `Base`: official recommended parent class
-- `check_*`: runtime validation and acceptance entrypoints
-
-This makes it easy to wrap real robot SDKs and existing model classes without
-forcing them to inherit from a framework base class.
+- Focus on unified runtime data flow, not training infrastructure.
+- Make third-party code compatible without forcing a framework base class.
+- Keep user-side intrusion small and predictable.

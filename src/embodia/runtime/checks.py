@@ -7,6 +7,7 @@ import math
 from numbers import Real
 from typing import Any
 
+from ..core.errors import InterfaceValidationError
 from ..core.schema import (
     Action,
     Frame,
@@ -14,10 +15,6 @@ from ..core.schema import (
     ModelSpec,
     RobotSpec,
 )
-
-
-class InterfaceValidationError(ValueError):
-    """Raised when an object does not satisfy the runtime interface contract."""
 
 
 def _object_label(obj: object) -> str:

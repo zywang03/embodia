@@ -7,6 +7,7 @@ import math
 from numbers import Real
 from typing import Any
 
+from ..core.modalities import action_modes, images, state
 from ..core.errors import InterfaceValidationError
 from ..core.schema import (
     Action,
@@ -107,6 +108,18 @@ def _require_method(obj: object, method_name: str) -> Any:
             f"{_object_label(obj)} attribute {method_name!r} exists but is not callable."
         )
     return method
+
+
+def _call_method(method: Any, obj: object, method_name: str, *args: object) -> Any:
+    """Call a checked method and wrap runtime errors consistently."""
+
+    try:
+        return method(*args)
+    except Exception as exc:
+        raise InterfaceValidationError(
+            f"{_object_label(obj)} {method_name}() raised "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def _ensure_signature_accepts(method: Any, method_name: str, *args: object) -> None:
@@ -214,6 +227,35 @@ def validate_model_spec(spec: ModelSpec) -> None:
     _ensure_non_empty_string(spec.output_action_mode, "model_spec.output_action_mode")
 
 
+def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
+    """Return compatibility problems between a robot spec and a model spec."""
+
+    problems: list[str] = []
+
+    action_mode_problem = action_modes.pair_problem(
+        supported_modes=robot_spec.action_modes,
+        output_mode=model_spec.output_action_mode,
+    )
+    if action_mode_problem is not None:
+        problems.append(action_mode_problem)
+
+    image_problem = images.pair_problem(
+        available_keys=robot_spec.image_keys,
+        required_keys=model_spec.required_image_keys,
+    )
+    if image_problem is not None:
+        problems.append(image_problem)
+
+    state_problem = state.pair_problem(
+        available_keys=robot_spec.state_keys,
+        required_keys=model_spec.required_state_keys,
+    )
+    if state_problem is not None:
+        problems.append(state_problem)
+
+    return problems
+
+
 def check_robot(robot: object, *, call_observe: bool = True) -> None:
     """Runtime-check whether an object is a compatible robot implementation."""
 
@@ -227,14 +269,7 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
     _ensure_signature_accepts(act, "act", object())
     _ensure_signature_accepts(reset, "reset")
 
-    try:
-        spec = get_spec()
-    except Exception as exc:
-        raise InterfaceValidationError(
-            f"{_object_label(robot)} get_spec() raised "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-
+    spec = _call_method(get_spec, robot, "get_spec")
     if not isinstance(spec, RobotSpec):
         raise InterfaceValidationError(
             f"{_object_label(robot)} get_spec() must return RobotSpec, "
@@ -243,14 +278,7 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
     validate_robot_spec(spec)
 
     if call_observe:
-        try:
-            frame = observe()
-        except Exception as exc:
-            raise InterfaceValidationError(
-                f"{_object_label(robot)} observe() raised "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-
+        frame = _call_method(observe, robot, "observe")
         if not isinstance(frame, Frame):
             raise InterfaceValidationError(
                 f"{_object_label(robot)} observe() must return Frame, "
@@ -270,14 +298,7 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
     _ensure_signature_accepts(reset, "reset")
     _ensure_signature_accepts(step, "step", object())
 
-    try:
-        spec = get_spec()
-    except Exception as exc:
-        raise InterfaceValidationError(
-            f"{_object_label(model)} get_spec() raised "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-
+    spec = _call_method(get_spec, model, "get_spec")
     if not isinstance(spec, ModelSpec):
         raise InterfaceValidationError(
             f"{_object_label(model)} get_spec() must return ModelSpec, "
@@ -285,14 +306,7 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
         )
     validate_model_spec(spec)
 
-    try:
-        reset_result = reset()
-    except Exception as exc:
-        raise InterfaceValidationError(
-            f"{_object_label(model)} reset() raised "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-
+    reset_result = _call_method(reset, model, "reset")
     if reset_result is not None:
         raise InterfaceValidationError(
             f"{_object_label(model)} reset() must return None, "
@@ -304,14 +318,7 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
 
     validate_frame(sample_frame)
 
-    try:
-        action = step(sample_frame)
-    except Exception as exc:
-        raise InterfaceValidationError(
-            f"{_object_label(model)} step(frame) raised "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-
+    action = _call_method(step, model, "step", sample_frame)
     if not isinstance(action, Action):
         raise InterfaceValidationError(
             f"{_object_label(model)} step(frame) must return Action, "
@@ -328,7 +335,7 @@ def check_pair(
 ) -> None:
     """Validate that a robot and a model are individually valid and compatible."""
 
-    check_robot(robot)
+    check_robot(robot, call_observe=sample_frame is None)
     check_model(model, sample_frame=sample_frame)
 
     robot_spec = robot.get_spec()
@@ -337,35 +344,7 @@ def check_pair(
     validate_robot_spec(robot_spec)
     validate_model_spec(model_spec)
 
-    problems: list[str] = []
-
-    if model_spec.output_action_mode not in robot_spec.action_modes:
-        problems.append(
-            "action mode mismatch: "
-            f"model outputs {model_spec.output_action_mode!r}, "
-            f"but robot supports {robot_spec.action_modes!r}."
-        )
-
-    missing_image_keys = sorted(
-        set(model_spec.required_image_keys) - set(robot_spec.image_keys)
-    )
-    if missing_image_keys:
-        problems.append(
-            "missing image keys: "
-            f"model requires {missing_image_keys!r}, "
-            f"but robot exposes {robot_spec.image_keys!r}."
-        )
-
-    missing_state_keys = sorted(
-        set(model_spec.required_state_keys) - set(robot_spec.state_keys)
-    )
-    if missing_state_keys:
-        problems.append(
-            "missing state keys: "
-            f"model requires {missing_state_keys!r}, "
-            f"but robot exposes {robot_spec.state_keys!r}."
-        )
-
+    problems = _pair_problems(robot_spec, model_spec)
     if problems:
         raise InterfaceValidationError(
             "Robot/model pair is incompatible:\n- " + "\n- ".join(problems)

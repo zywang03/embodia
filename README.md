@@ -3,6 +3,8 @@
 `embodia` is a small Python library for unified runtime interfaces between
 robots and models.
 
+Its core job is interface unification.
+
 It is intentionally narrow:
 
 - no network service
@@ -16,16 +18,28 @@ The design is simple:
 - `Protocol` is the compatibility standard
 - `Mixin` is the recommended integration layer
 - `check_*` is the runtime acceptance gate
+- `collect_episode()` is one data-collection helper built on top
+- `run_step()` is one inference helper built on top
 
 ## Install
 
-For local development:
+Core install:
 
 ```bash
 pip install .
 ```
 
-## 30-Second Example
+If you only want embodia's core interface layer, checks, inference helpers, or
+basic collection helpers, that is enough.
+
+Only install the LeRobot extra when you want the optional bridge in
+`embodia.contrib.lerobot`:
+
+```bash
+pip install ".[lerobot]"
+```
+
+## 30-Second Collection Example
 
 ```python
 import embodia as em
@@ -50,36 +64,43 @@ class YourRobot(em.RobotMixin):
     def capture(self): ...
     def send_command(self, action): ...
     def home(self): ...
-
-
-class YourModel(em.ModelMixin):
-    MODEL_SPEC = {
-        "name": "your_model",
-        "required_image_keys": ["rgb_front"],
-        "required_state_keys": ["qpos"],
-        "output_action_mode": "cartesian_delta",
-    }
-    METHOD_ALIASES = {
-        "reset": "clear_state",
-        "step": "infer",
-    }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
-
-    def clear_state(self): ...
-    def infer(self, frame): ...
 ```
 
 Then:
 
 ```python
 robot = YourRobot()
+
+em.check_robot(robot, call_observe=False)
+
+step = em.record_step(robot)
+episode = em.collect_episode(robot, steps=128)
+```
+
+If you also have a model:
+
+```python
 model = YourModel()
 
 em.check_pair(robot, model, sample_frame=robot.reset())
 result = em.run_step(robot, model)
+rollout = em.collect_episode(robot, steps=128, model=model)
 ```
+
+## Core and Sub-Applications
+
+embodia should stay small and centered on one pain point: make different robot
+and model implementations speak one runtime shape.
+
+The layers are:
+
+- Core interface layer:
+  `Frame`, `Action`, `RobotProtocol`, `ModelProtocol`, `RobotMixin`,
+  `ModelMixin`, transform helpers, `check_*`
+- Collection sub-application:
+  `record_step()`, `collect_episode()`
+- Inference sub-application:
+  `run_step()`
 
 ## Integration Rules
 
@@ -114,29 +135,39 @@ If your class already uses embodia-standard names, you can leave the maps empty.
 
 Detailed guide:
 
+- [collection_guide.md](/data/embodia/docs/collection_guide.md)
 - [mixin_guide.md](/data/embodia/docs/mixin_guide.md)
+- [lerobot_bridge.md](/data/embodia/docs/lerobot_bridge.md)
 
 ## Examples
 
 ```bash
 pip install -e .
+python examples/05_robot_data_collection.py
 python examples/00_mixin_quickstart.py
 python examples/02_wrap_existing_classes.py
 python examples/03_rollout_loop.py
 python examples/01_mixin_from_scratch.py
 python examples/04_pi06star_pi05_policy.py
+python examples/06_lerobot_bridge.py
 ```
 
 Suggested reading order:
 
-1. `examples/00_mixin_quickstart.py`
-2. `examples/02_wrap_existing_classes.py`
-3. `examples/03_rollout_loop.py`
-4. `examples/01_mixin_from_scratch.py`
-5. `examples/04_pi06star_pi05_policy.py`
+1. `examples/05_robot_data_collection.py`
+2. `examples/00_mixin_quickstart.py`
+3. `examples/02_wrap_existing_classes.py`
+4. `examples/03_rollout_loop.py`
+5. `examples/01_mixin_from_scratch.py`
+6. `examples/04_pi06star_pi05_policy.py`
+7. `examples/06_lerobot_bridge.py`
 
 ## Philosophy
 
 - Focus on unified runtime data flow, not training infrastructure.
 - Make third-party code compatible without forcing a framework base class.
 - Keep user-side intrusion small and predictable.
+- Treat collection and inference as sub-applications of the same unified
+  interface layer.
+- Keep ecosystem bridges like LeRobot optional and outside the main package
+  surface.

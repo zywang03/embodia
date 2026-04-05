@@ -11,14 +11,12 @@ from ..runtime.checks import (
     validate_model_spec as _validate_model_spec,
     validate_robot_spec as _validate_robot_spec,
 )
+from .modalities._common import resolve_string_mapping
+from .modalities import action_modes, images, state
 from .errors import InterfaceValidationError
 from .schema import Action, Frame, ModelSpec, RobotSpec
 from .transform import (
     action_to_dict,
-    coerce_action,
-    coerce_frame,
-    coerce_model_spec,
-    coerce_robot_spec,
     frame_to_dict,
     invert_mapping,
     model_spec_to_dict,
@@ -33,17 +31,29 @@ from .transform import (
 class _CommonInterfaceMixin:
     """Shared transform and validation helpers."""
 
-    IMAGE_KEY_MAP: Mapping[str, str] = {}
-    STATE_KEY_MAP: Mapping[str, str] = {}
-    ACTION_MODE_MAP: Mapping[str, str] = {}
     METHOD_ALIASES: Mapping[str, str] = {}
+    _METHOD_ALIAS_ATTRS: Mapping[str, str] = {}
 
     def _resolve_impl(self, public_name: str, fallback_name: str) -> Any:
-        """Resolve a wrapped public method or a local ``*_impl`` hook."""
+        """Resolve the wrapped implementation for a public embodia method."""
 
-        next_method = getattr(super(), public_name, None)
-        if callable(next_method):
-            return next_method
+        alias_name = self._resolve_method_alias(
+            public_name,
+            type(self)._METHOD_ALIAS_ATTRS.get(public_name),
+        )
+
+        if alias_name != public_name:
+            local_aliased = self._resolve_local_method(alias_name)
+            if callable(local_aliased):
+                return local_aliased
+
+            inherited_aliased = getattr(super(), alias_name, None)
+            if callable(inherited_aliased):
+                return inherited_aliased
+
+        inherited = getattr(super(), public_name, None)
+        if callable(inherited):
+            return inherited
 
         fallback = getattr(self, fallback_name, None)
         if callable(fallback):
@@ -57,13 +67,7 @@ class _CommonInterfaceMixin:
     def _resolve_mapping(self, attr_name: str) -> Mapping[str, str]:
         """Resolve a declarative mapping attribute."""
 
-        value = getattr(type(self), attr_name, {})
-        if not isinstance(value, Mapping):
-            raise TypeError(
-                f"{type(self).__name__}.{attr_name} must be a mapping, "
-                f"got {type(value).__name__}."
-            )
-        return value
+        return resolve_string_mapping(self, attr_name)
 
     def _resolve_local_method(self, method_name: str) -> Any | None:
         """Resolve a method defined directly on the integration class.
@@ -81,7 +85,11 @@ class _CommonInterfaceMixin:
         if descriptor is None:
             return None
 
-        candidate = descriptor.__get__(self, type(self)) if hasattr(descriptor, "__get__") else descriptor
+        candidate = (
+            descriptor.__get__(self, type(self))
+            if hasattr(descriptor, "__get__")
+            else descriptor
+        )
         if not callable(candidate):
             raise TypeError(
                 f"{type(self).__name__}.{method_name} exists but is not callable."
@@ -121,23 +129,23 @@ class _CommonInterfaceMixin:
     def get_image_key_map(self) -> Mapping[str, str]:
         """Map native image keys to embodia-standard image keys."""
 
-        return self._resolve_mapping("IMAGE_KEY_MAP")
+        return images.get_key_map(self)
 
     def get_state_key_map(self) -> Mapping[str, str]:
         """Map native state keys to embodia-standard state keys."""
 
-        return self._resolve_mapping("STATE_KEY_MAP")
+        return state.get_key_map(self)
 
     def get_action_mode_map(self) -> Mapping[str, str]:
         """Map native action modes to embodia-standard action modes."""
 
-        return self._resolve_mapping("ACTION_MODE_MAP")
+        return action_modes.get_mode_map(self)
 
     def normalize_frame(self, frame: Frame | Mapping[str, Any]) -> Frame:
         """Transform a frame-like value into :class:`Frame`."""
 
         return remap_frame(
-            coerce_frame(frame),
+            frame,
             image_key_map=self.get_image_key_map(),
             state_key_map=self.get_state_key_map(),
         )
@@ -163,7 +171,7 @@ class _CommonInterfaceMixin:
         """Transform an action-like value into :class:`Action`."""
 
         return remap_action(
-            coerce_action(action),
+            action,
             mode_map=self.get_action_mode_map(),
         )
 
@@ -183,7 +191,6 @@ class _CommonInterfaceMixin:
         """Export an action-like value into a plain dictionary."""
 
         return action_to_dict(action)
-
 
 class RobotMixin(_CommonInterfaceMixin):
     """Mixin that wraps a robot implementation with embodia behavior.
@@ -238,31 +245,11 @@ class RobotMixin(_CommonInterfaceMixin):
                 f"for example: class {cls.__name__}(RobotMixin, VendorRobot): ..."
             )
 
-    def _resolve_impl(self, public_name: str, fallback_name: str) -> Any:
-        """Resolve robot methods with optional alias support."""
-
-        alias_name = self._resolve_method_alias(
-            public_name,
-            self._METHOD_ALIAS_ATTRS.get(public_name),
-        )
-
-        if alias_name != public_name:
-            local_aliased = self._resolve_local_method(alias_name)
-            if callable(local_aliased):
-                return local_aliased
-
-        if alias_name != public_name:
-            aliased = getattr(super(), alias_name, None)
-            if callable(aliased):
-                return aliased
-
-        return super()._resolve_impl(public_name, fallback_name)
-
     def normalize_spec(self, spec: RobotSpec | Mapping[str, Any]) -> RobotSpec:
         """Transform a robot spec-like value into :class:`RobotSpec`."""
 
         return remap_robot_spec(
-            coerce_robot_spec(spec),
+            spec,
             image_key_map=self.get_image_key_map(),
             state_key_map=self.get_state_key_map(),
             action_mode_map=self.get_action_mode_map(),
@@ -294,24 +281,16 @@ class RobotMixin(_CommonInterfaceMixin):
 
         normalized_frame = self.validate_frame(frame)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-
-        missing_image_keys = sorted(
-            set(normalized_spec.image_keys) - set(normalized_frame.images)
+        images.ensure_frame_keys(
+            normalized_frame,
+            owner_label="robot",
+            required_keys=normalized_spec.image_keys,
         )
-        if missing_image_keys:
-            raise InterfaceValidationError(
-                "frame is missing robot image keys: "
-                f"{missing_image_keys!r}."
-            )
-
-        missing_state_keys = sorted(
-            set(normalized_spec.state_keys) - set(normalized_frame.state)
+        state.ensure_frame_keys(
+            normalized_frame,
+            owner_label="robot",
+            required_keys=normalized_spec.state_keys,
         )
-        if missing_state_keys:
-            raise InterfaceValidationError(
-                "frame is missing robot state keys: "
-                f"{missing_state_keys!r}."
-            )
         return normalized_frame
 
     def ensure_action_supported(
@@ -323,12 +302,12 @@ class RobotMixin(_CommonInterfaceMixin):
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-        if normalized_action.mode not in normalized_spec.action_modes:
-            raise InterfaceValidationError(
-                f"action mode {normalized_action.mode!r} is not supported by robot "
-                f"{normalized_spec.name!r}; supported modes: "
-                f"{normalized_spec.action_modes!r}."
-            )
+        action_modes.ensure_supported(
+            normalized_action,
+            normalized_spec.action_modes,
+            owner_label="robot",
+            owner_name=normalized_spec.name,
+        )
         return normalized_action
 
     def to_native_action(self, action: Action) -> Any:
@@ -424,31 +403,11 @@ class ModelMixin(_CommonInterfaceMixin):
                 f"for example: class {cls.__name__}(ModelMixin, VendorModel): ..."
             )
 
-    def _resolve_impl(self, public_name: str, fallback_name: str) -> Any:
-        """Resolve model methods with optional alias support."""
-
-        alias_name = self._resolve_method_alias(
-            public_name,
-            self._METHOD_ALIAS_ATTRS.get(public_name),
-        )
-
-        if alias_name != public_name:
-            local_aliased = self._resolve_local_method(alias_name)
-            if callable(local_aliased):
-                return local_aliased
-
-        if alias_name != public_name:
-            aliased = getattr(super(), alias_name, None)
-            if callable(aliased):
-                return aliased
-
-        return super()._resolve_impl(public_name, fallback_name)
-
     def normalize_spec(self, spec: ModelSpec | Mapping[str, Any]) -> ModelSpec:
         """Transform a model spec-like value into :class:`ModelSpec`."""
 
         return remap_model_spec(
-            coerce_model_spec(spec),
+            spec,
             image_key_map=self.get_image_key_map(),
             state_key_map=self.get_state_key_map(),
             action_mode_map=self.get_action_mode_map(),
@@ -480,24 +439,16 @@ class ModelMixin(_CommonInterfaceMixin):
 
         normalized_frame = self.validate_frame(frame)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-
-        missing_image_keys = sorted(
-            set(normalized_spec.required_image_keys) - set(normalized_frame.images)
+        images.ensure_frame_keys(
+            normalized_frame,
+            owner_label="model",
+            required_keys=normalized_spec.required_image_keys,
         )
-        if missing_image_keys:
-            raise InterfaceValidationError(
-                "frame is missing model image keys: "
-                f"{missing_image_keys!r}."
-            )
-
-        missing_state_keys = sorted(
-            set(normalized_spec.required_state_keys) - set(normalized_frame.state)
+        state.ensure_frame_keys(
+            normalized_frame,
+            owner_label="model",
+            required_keys=normalized_spec.required_state_keys,
         )
-        if missing_state_keys:
-            raise InterfaceValidationError(
-                "frame is missing model state keys: "
-                f"{missing_state_keys!r}."
-            )
         return normalized_frame
 
     def ensure_output_matches_spec(
@@ -509,12 +460,11 @@ class ModelMixin(_CommonInterfaceMixin):
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-        if normalized_action.mode != normalized_spec.output_action_mode:
-            raise InterfaceValidationError(
-                f"model {normalized_spec.name!r} declared output action mode "
-                f"{normalized_spec.output_action_mode!r}, but produced "
-                f"{normalized_action.mode!r}."
-            )
+        action_modes.ensure_model_output(
+            normalized_action,
+            output_mode=normalized_spec.output_action_mode,
+            model_name=normalized_spec.name,
+        )
         return normalized_action
 
     def to_native_frame(self, frame: Frame) -> Any:

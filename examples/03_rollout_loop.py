@@ -1,4 +1,4 @@
-"""Example 3: run a short standardized rollout and collect a trajectory.
+"""Example 3: run a short standardized rollout and collect an episode.
 
 Run with:
 
@@ -76,18 +76,17 @@ def main() -> None:
     model = UnifiedLoopModel()
     em.check_pair(robot, model, sample_frame=robot.reset())
 
-    trajectory: list[dict[str, object]] = []
-    for _ in range(3):
-        result = em.run_step(robot, model)
-        trajectory.append(
-            {
-                "frame": em.frame_to_dict(result.frame),
-                "action": em.action_to_dict(result.action),
-            }
-        )
+    episode = em.collect_episode(
+        robot,
+        steps=3,
+        model=model,
+        execute_actions=True,
+        reset_robot=True,
+    )
+    exported = em.episode_to_dict(episode)
 
-    print("trajectory_length:", len(trajectory))
-    print("first_step:", trajectory[0])
+    print("episode_length:", len(episode.steps))
+    print("first_step:", exported["steps"][0])
     print("last_native_action:", robot.last_native_action)
     print("example 3 passed.")
 

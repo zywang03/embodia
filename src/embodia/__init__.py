@@ -29,12 +29,23 @@ from .runtime.checks import (
     validate_model_spec,
     validate_robot_spec,
 )
+from .runtime.collect import (
+    Episode,
+    EpisodeStep,
+    collect_episode,
+    episode_step_to_dict,
+    episode_to_dict,
+    record_step,
+)
 from .runtime.flow import StepResult, run_step
 
 __all__ = [
     "Action",
     "ActionMode",
+    "collect_episode",
     "Frame",
+    "Episode",
+    "EpisodeStep",
     "InterfaceValidationError",
     "ModelMixin",
     "ModelProtocol",
@@ -47,6 +58,8 @@ __all__ = [
     "check_model",
     "check_pair",
     "check_robot",
+    "episode_step_to_dict",
+    "episode_to_dict",
     "coerce_action",
     "coerce_frame",
     "coerce_model_spec",
@@ -59,6 +72,7 @@ __all__ = [
     "remap_mapping_keys",
     "remap_model_spec",
     "remap_robot_spec",
+    "record_step",
     "robot_spec_to_dict",
     "run_step",
     "validate_action",

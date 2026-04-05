@@ -1,4 +1,4 @@
-"""Helpers for unified robot-model runtime data flow."""
+"""Helpers for the inference side of embodia's unified runtime data flow."""
 
 from __future__ import annotations
 

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 
 from embodia import (
     Action,
+    Episode,
+    EpisodeStep,
     Frame,
     InterfaceValidationError,
     ModelMixin,
@@ -14,13 +18,18 @@ from embodia import (
     check_model,
     check_pair,
     check_robot,
+    collect_episode,
     coerce_action,
+    episode_step_to_dict,
+    episode_to_dict,
     frame_to_dict,
+    record_step,
     remap_frame,
     run_step,
     validate_action,
     validate_frame,
 )
+from embodia.contrib import lerobot as em_lerobot
 from tests.helpers import DummyModel, DummyRobot
 
 
@@ -91,6 +100,95 @@ class InterfaceTests(unittest.TestCase):
 
         self.assertIn("front_rgb", frame.images)
         self.assertIn("joint_positions", frame.state)
+
+    def test_record_step_collects_observation_only(self) -> None:
+        robot = DummyRobot()
+
+        step = record_step(robot)
+
+        self.assertIsInstance(step, EpisodeStep)
+        self.assertEqual(step.action, None)
+        self.assertIn("front_rgb", step.frame.images)
+
+    def test_collect_episode_robot_only_allows_scripted_action_source(self) -> None:
+        robot = DummyRobot()
+
+        def scripted_action(frame: Frame) -> dict[str, object]:
+            return {"mode": "ee_delta", "value": [frame.timestamp_ns * 0.0] * 6}
+
+        episode = collect_episode(
+            robot,
+            steps=2,
+            action_fn=scripted_action,
+            execute_actions=True,
+            reset_robot=True,
+            include_reset_frame=True,
+            episode_meta={"source": "scripted"},
+        )
+
+        self.assertIsInstance(episode, Episode)
+        self.assertEqual(len(episode.steps), 3)
+        self.assertEqual(episode.steps[0].meta["source"], "reset")
+        self.assertIsNotNone(robot.last_action)
+        self.assertEqual(episode.meta["source"], "scripted")
+
+    def test_collect_episode_with_model_records_standardized_actions(self) -> None:
+        robot = DummyRobot()
+        model = DummyModel()
+
+        episode = collect_episode(
+            robot,
+            steps=2,
+            model=model,
+            execute_actions=False,
+            reset_model=True,
+        )
+
+        self.assertEqual(len(episode.steps), 2)
+        self.assertEqual(episode.steps[0].action.mode, "ee_delta")
+        self.assertIsNone(robot.last_action)
+        self.assertEqual(episode.model_spec.output_action_mode, "ee_delta")
+
+    def test_episode_export_helpers_return_plain_dicts(self) -> None:
+        robot = DummyRobot()
+        step = record_step(robot, step_meta={"collector": "test"})
+        episode = Episode(robot_spec=robot.get_spec(), steps=[step])
+
+        exported_step = episode_step_to_dict(step)
+        exported_episode = episode_to_dict(episode)
+
+        self.assertEqual(exported_step["meta"]["collector"], "test")
+        self.assertEqual(exported_episode["robot_spec"]["name"], "dummy_robot")
+        self.assertEqual(len(exported_episode["steps"]), 1)
+
+    def test_lerobot_bridge_converts_episode_to_records(self) -> None:
+        robot = DummyRobot()
+        episode = collect_episode(robot, steps=2)
+
+        records = em_lerobot.episode_to_lerobot_records(episode, episode_index=3)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["episode_index"], 3)
+        self.assertIn("observation.images", records[0])
+        self.assertFalse(records[0]["next.done"])
+        self.assertTrue(records[-1]["next.done"])
+
+    def test_lerobot_bridge_writes_jsonl(self) -> None:
+        robot = DummyRobot()
+        episode = collect_episode(robot, steps=2)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = em_lerobot.write_lerobot_jsonl(
+                episode,
+                f"{tmpdir}/episode_0001.jsonl",
+                episode_index=1,
+            )
+            with open(path, "r", encoding="utf-8") as handle:
+                rows = [json.loads(line) for line in handle]
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["episode_index"], 1)
+        self.assertIn("observation.state", rows[0])
 
     def test_robot_mixin_wraps_existing_robot_class(self) -> None:
         class VendorRobot:

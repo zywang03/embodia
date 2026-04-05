@@ -1,9 +1,24 @@
 # embodia examples
 
-These examples are ordered from the smallest-intrusion path to the most
-complete data-flow demo.
+These examples are ordered from the smallest-intrusion path to increasingly
+complete sub-applications built on the same interface layer.
 
-## 0. Recommended quickstart: mixins
+## 0. Robot-only data collection
+
+```bash
+PYTHONPATH=src python examples/05_robot_data_collection.py
+```
+
+Start here if your first goal is standardized robot data collection.
+
+What it shows:
+
+- robot-only collection as a sub-application, not a second framework
+- `record_step()` for one normalized sample
+- `collect_episode()` for a small standardized episode
+- optional externally supplied actions without changing the robot API
+
+## 1. Recommended quickstart: mixins
 
 ```bash
 PYTHONPATH=src python examples/00_mixin_quickstart.py
@@ -22,7 +37,7 @@ What it shows:
 - minimal intrusion into an existing codebase
 - one normalized `run_step()` data-flow cycle
 
-## 1. Fresh implementation with mixins
+## 2. Fresh implementation with mixins
 
 ```bash
 PYTHONPATH=src python examples/01_mixin_from_scratch.py
@@ -38,7 +53,7 @@ What it shows:
 - `run_step`
 - normalized `Frame` and `Action`
 
-## 2. Wrap existing vendor classes
+## 3. Wrap existing vendor classes
 
 ```bash
 PYTHONPATH=src python examples/02_wrap_existing_classes.py
@@ -56,7 +71,7 @@ What it shows:
 - mode remapping, for example `cartesian_delta -> ee_delta`
 - native vendor data flow on one side and standardized embodia data on the other
 
-## 3. Multi-step rollout
+## 4. Multi-step rollout
 
 ```bash
 PYTHONPATH=src python examples/03_rollout_loop.py
@@ -68,11 +83,11 @@ shape.
 
 What it shows:
 
-- repeated `run_step()` calls
-- collecting a standardized trajectory
-- using `frame_to_dict()` and `action_to_dict()` for logging/export
+- `collect_episode(..., model=...)` for standardized rollout logging
+- collecting a standardized episode
+- using `episode_to_dict()` for logging/export
 
-## 4. Real pi06star pi05 policy integration
+## 5. Real pi06star pi05 policy integration
 
 ```bash
 PYTHONPATH=src python examples/04_pi06star_pi05_policy.py
@@ -87,3 +102,19 @@ What it shows:
 - keeping heavy dependencies optional for the main embodia package
 - adapting a chunked policy output to embodia's minimal single-step `Action`
 - passing through `check_pair(...)` before attempting real inference
+
+## 6. Optional LeRobot bridge
+
+```bash
+PYTHONPATH=src python examples/06_lerobot_bridge.py
+```
+
+Use this if you want to hand embodia-collected episodes into a LeRobot-oriented
+pipeline without making LeRobot part of embodia core.
+
+What it shows:
+
+- `embodia.contrib.lerobot`
+- optional dependency detection
+- conservative LeRobot-oriented record export
+- JSONL staging output for downstream dataset tooling

@@ -6,15 +6,13 @@ from collections.abc import Mapping, Sequence
 
 from ..errors import InterfaceValidationError
 from ..schema import Frame
-from ._common import resolve_string_mapping
-
-IMAGE_KEY_MAP_ATTR = "IMAGE_KEY_MAP"
+from ._common import IMAGE_KEYS, resolve_modality_mapping
 
 
 def get_key_map(owner: object) -> Mapping[str, str]:
     """Resolve the image-key remapping table for a class or instance."""
 
-    return resolve_string_mapping(owner, IMAGE_KEY_MAP_ATTR)
+    return resolve_modality_mapping(owner, IMAGE_KEYS)
 
 
 def ensure_frame_keys(
@@ -55,4 +53,4 @@ def pair_problem(
     )
 
 
-__all__ = ["ensure_frame_keys", "get_key_map", "pair_problem"]
+__all__ = ["IMAGE_KEYS", "ensure_frame_keys", "get_key_map", "pair_problem"]

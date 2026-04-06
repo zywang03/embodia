@@ -11,8 +11,12 @@ from ..runtime.checks import (
     validate_model_spec as _validate_model_spec,
     validate_robot_spec as _validate_robot_spec,
 )
-from .modalities._common import resolve_string_mapping
 from .modalities import action_modes, images, state
+from .modalities._common import (
+    ModalityToken,
+    resolve_modality_mapping,
+    resolve_string_mapping,
+)
 from .errors import InterfaceValidationError
 from .schema import Action, Frame, ModelSpec, RobotSpec
 from .transform import (
@@ -31,6 +35,7 @@ from .transform import (
 class _CommonInterfaceMixin:
     """Shared transform and validation helpers."""
 
+    MODALITY_MAPS: Mapping[ModalityToken | str, Mapping[str, str]] = {}
     METHOD_ALIASES: Mapping[str, str] = {}
     _METHOD_ALIAS_ATTRS: Mapping[str, str] = {}
 
@@ -68,6 +73,11 @@ class _CommonInterfaceMixin:
         """Resolve a declarative mapping attribute."""
 
         return resolve_string_mapping(self, attr_name)
+
+    def get_modality_map(self, modality: ModalityToken | str) -> Mapping[str, str]:
+        """Resolve one declared modality remapping table."""
+
+        return resolve_modality_mapping(self, modality)
 
     def _resolve_local_method(self, method_name: str) -> Any | None:
         """Resolve a method defined directly on the integration class.
@@ -129,17 +139,17 @@ class _CommonInterfaceMixin:
     def get_image_key_map(self) -> Mapping[str, str]:
         """Map native image keys to embodia-standard image keys."""
 
-        return images.get_key_map(self)
+        return self.get_modality_map(images.IMAGE_KEYS)
 
     def get_state_key_map(self) -> Mapping[str, str]:
         """Map native state keys to embodia-standard state keys."""
 
-        return state.get_key_map(self)
+        return self.get_modality_map(state.STATE_KEYS)
 
     def get_action_mode_map(self) -> Mapping[str, str]:
         """Map native action modes to embodia-standard action modes."""
 
-        return action_modes.get_mode_map(self)
+        return self.get_modality_map(action_modes.ACTION_MODES)
 
     def normalize_frame(self, frame: Frame | Mapping[str, Any]) -> Frame:
         """Transform a frame-like value into :class:`Frame`."""
@@ -205,8 +215,10 @@ class RobotMixin(_CommonInterfaceMixin):
 
     Minimal-intrusion configuration is usually done with class attributes:
 
-    ``ROBOT_SPEC``, ``METHOD_ALIASES``, ``IMAGE_KEY_MAP``, ``STATE_KEY_MAP``,
-    ``ACTION_MODE_MAP``.
+    ``ROBOT_SPEC``, ``METHOD_ALIASES``, ``MODALITY_MAPS``.
+
+    Inside ``MODALITY_MAPS``, prefer embodia modality tokens such as
+    ``IMAGE_KEYS``, ``STATE_KEYS``, and ``ACTION_MODES``.
 
     Fine-grained alias attributes such as ``OBSERVE_METHOD`` remain available
     when a project prefers explicit per-method declarations.
@@ -365,8 +377,10 @@ class ModelMixin(_CommonInterfaceMixin):
 
     Minimal-intrusion configuration is usually done with class attributes:
 
-    ``MODEL_SPEC``, ``METHOD_ALIASES``, ``IMAGE_KEY_MAP``, ``STATE_KEY_MAP``,
-    ``ACTION_MODE_MAP``.
+    ``MODEL_SPEC``, ``METHOD_ALIASES``, ``MODALITY_MAPS``.
+
+    Inside ``MODALITY_MAPS``, prefer embodia modality tokens such as
+    ``IMAGE_KEYS``, ``STATE_KEYS``, and ``ACTION_MODES``.
 
     Fine-grained alias attributes such as ``STEP_METHOD`` remain available
     when a project prefers explicit per-method declarations.

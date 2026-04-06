@@ -28,6 +28,7 @@ defines embodia.
 That means:
 
 - `Frame`, `Action`, `RobotMixin`, `ModelMixin`, `check_*` stay in core
+- H5 collection export stays in core
 - LeRobot-specific staging/export helpers stay in `contrib`
 
 ## What the bridge does today

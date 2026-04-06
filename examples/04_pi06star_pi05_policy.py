@@ -159,13 +159,15 @@ class Pi06starPi05Model(em.ModelMixin):
         "required_state_keys": ["joint_positions"],
         "output_action_mode": "joint_position",
     }
-    IMAGE_KEY_MAP = {
-        "cam_high": "front_rgb",
-        "cam_left_wrist": "left_wrist_rgb",
-        "cam_right_wrist": "right_wrist_rgb",
-    }
-    STATE_KEY_MAP = {
-        "state": "joint_positions",
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {
+            "cam_high": "front_rgb",
+            "cam_left_wrist": "left_wrist_rgb",
+            "cam_right_wrist": "right_wrist_rgb",
+        },
+        em.STATE_KEYS: {
+            "state": "joint_positions",
+        },
     }
 
     DEFAULT_CONFIG_NAME = "policy_pi05_fold_awbc_iter1"

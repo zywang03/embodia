@@ -21,7 +21,7 @@ At the collection layer, embodia gives you three small building blocks:
 
 1. `record_step()`
 2. `collect_episode()`
-3. `episode_to_dict()` / `episode_step_to_dict()`
+3. `save_episode_h5()`
 
 That is intentionally small.
 
@@ -39,6 +39,7 @@ em.check_robot(robot, call_observe=False)
 
 step = em.record_step(robot)
 episode = em.collect_episode(robot, steps=100)
+em.save_episode_h5(episode, "data/episode_0000.h5")
 ```
 
 ### 2. Robot + external action source
@@ -128,11 +129,19 @@ Not a good fit:
 
 ## File export
 
-Today, the main core export path is:
+The default collection file export is:
+
+- `save_episode_h5()`
+
+This keeps collection output small and portable, without pulling LeRobot into
+embodia core.
+
+The plain-Python export helpers are still available:
 
 - `episode_to_dict()`
+- `episode_step_to_dict()`
 
-This is enough for:
+Those are still useful for:
 
 - JSON serialization
 - local logging
@@ -143,8 +152,11 @@ Optional ecosystem bridges should live outside the main package surface.
 
 Important:
 
+- H5 is the default collection file format
+- H5 export uses the optional `h5py` package
 - basic embodia collection does not require LeRobot
 - `record_step()` and `collect_episode()` stay in the core package
+- `save_episode_h5()` is the default persistence helper
 - only the optional LeRobot bridge lives in `embodia.contrib.lerobot`
 
 ## LeRobot bridge

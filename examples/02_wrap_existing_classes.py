@@ -44,9 +44,11 @@ class YourRobot(em.RobotMixin):
         "act": "send_command",
         "reset": "home",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions", "tcp_pose": "ee_pose"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions", "tcp_pose": "ee_pose"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
     def __init__(self) -> None:
         self.last_native_action: object | None = None
@@ -83,9 +85,11 @@ class YourModel(em.ModelMixin):
         "reset": "clear_state",
         "step": "infer",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
     def clear_state(self) -> None:
         return None

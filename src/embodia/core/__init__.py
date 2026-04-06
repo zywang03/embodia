@@ -2,6 +2,7 @@
 
 from .errors import InterfaceValidationError
 from .mixins import ModelMixin, RobotMixin
+from .modalities import ACTION_MODES, IMAGE_KEYS, STATE_KEYS, ModalityToken
 from .protocols import ModelProtocol, RobotProtocol
 from .schema import Action, ActionMode, Frame, ModelSpec, RobotSpec
 from .transform import (
@@ -24,7 +25,9 @@ from .transform import (
 __all__ = [
     "Action",
     "ActionMode",
+    "ACTION_MODES",
     "Frame",
+    "IMAGE_KEYS",
     "InterfaceValidationError",
     "ModelMixin",
     "ModelProtocol",
@@ -32,6 +35,8 @@ __all__ = [
     "RobotMixin",
     "RobotProtocol",
     "RobotSpec",
+    "ModalityToken",
+    "STATE_KEYS",
     "action_to_dict",
     "coerce_action",
     "coerce_frame",

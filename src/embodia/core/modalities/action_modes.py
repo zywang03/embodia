@@ -6,15 +6,13 @@ from collections.abc import Mapping, Sequence
 
 from ..errors import InterfaceValidationError
 from ..schema import Action
-from ._common import resolve_string_mapping
-
-ACTION_MODE_MAP_ATTR = "ACTION_MODE_MAP"
+from ._common import ACTION_MODES, resolve_modality_mapping
 
 
 def get_mode_map(owner: object) -> Mapping[str, str]:
     """Resolve the action-mode remapping table for a class or instance."""
 
-    return resolve_string_mapping(owner, ACTION_MODE_MAP_ATTR)
+    return resolve_modality_mapping(owner, ACTION_MODES)
 
 
 def ensure_supported(
@@ -70,4 +68,10 @@ def pair_problem(
     )
 
 
-__all__ = ["ensure_model_output", "ensure_supported", "get_mode_map", "pair_problem"]
+__all__ = [
+    "ACTION_MODES",
+    "ensure_model_output",
+    "ensure_supported",
+    "get_mode_map",
+    "pair_problem",
+]

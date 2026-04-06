@@ -16,6 +16,7 @@ What it shows:
 - robot-only collection as a sub-application, not a second framework
 - `record_step()` for one normalized sample
 - `collect_episode()` for a small standardized episode
+- `save_episode_h5()` as the default persistence path
 - optional externally supplied actions without changing the robot API
 
 ## 1. Recommended quickstart: mixins

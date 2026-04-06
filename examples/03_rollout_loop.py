@@ -54,9 +54,11 @@ class UnifiedLoopRobot(em.RobotMixin, LoopRobot):
         "image_keys": ["rgb_front"],
         "state_keys": ["qpos"],
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
 
 class UnifiedLoopModel(em.ModelMixin, LoopModel):
@@ -66,9 +68,11 @@ class UnifiedLoopModel(em.ModelMixin, LoopModel):
         "required_state_keys": ["qpos"],
         "output_action_mode": "cartesian_delta",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
 
 def main() -> None:

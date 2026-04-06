@@ -1,29 +1,29 @@
 # embodia mixin guide
 
-This guide explains how to fill:
+This guide explains the recommended embodia mixin configuration.
+
+The main class attributes are:
 
 - `ROBOT_SPEC`
 - `MODEL_SPEC`
 - `METHOD_ALIASES`
-- `IMAGE_KEY_MAP`
-- `STATE_KEY_MAP`
-- `ACTION_MODE_MAP`
+- `MODALITY_MAPS`
 
 The main rule is:
 
 - `*_SPEC` describes your native interface today
-- `*_MAP` renames native names into embodia-standard names
-- `METHOD_ALIASES` tells embodia which existing method on your class should be
-  used
+- `METHOD_ALIASES` tells embodia which existing methods to call
+- `MODALITY_MAPS` renames native names into embodia-standard names
+- prefer embodia modality tokens like `em.IMAGE_KEYS` over bare string keys
 
 ## Direction rules
 
 | Field | Direction |
 | --- | --- |
 | `METHOD_ALIASES` | embodia name -> your existing method name |
-| `IMAGE_KEY_MAP` | native key -> embodia standard key |
-| `STATE_KEY_MAP` | native key -> embodia standard key |
-| `ACTION_MODE_MAP` | native mode -> embodia standard mode |
+| `MODALITY_MAPS[em.IMAGE_KEYS]` | native key -> embodia standard key |
+| `MODALITY_MAPS[em.STATE_KEYS]` | native key -> embodia standard key |
+| `MODALITY_MAPS[em.ACTION_MODES]` | native mode -> embodia standard mode |
 | `ROBOT_SPEC.image_keys` | native image keys |
 | `ROBOT_SPEC.state_keys` | native state keys |
 | `ROBOT_SPEC.action_modes` | native action modes |
@@ -69,9 +69,11 @@ class YourRobot(em.RobotMixin):
         "act": "send_command",
         "reset": "home",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 ```
 
 Meaning:
@@ -82,27 +84,9 @@ Meaning:
 - `METHOD_ALIASES["observe"] = "capture"`: embodia `observe()` should call your `capture()`
 - `METHOD_ALIASES["act"] = "send_command"`: embodia `act()` should call your `send_command()`
 - `METHOD_ALIASES["reset"] = "home"`: embodia `reset()` should call your `home()`
-- `IMAGE_KEY_MAP`: rename native image keys to embodia-standard image keys
-- `STATE_KEY_MAP`: rename native state keys to embodia-standard state keys
-- `ACTION_MODE_MAP`: rename native action mode names to embodia-standard action mode names
-
-Runtime flow:
-
-```text
-capture() -> native keys
--> RobotMixin observe()
--> remap native keys to standard keys
--> standardized Frame
-```
-
-and:
-
-```text
-standardized Action
--> RobotMixin act()
--> remap standard mode back to native mode
--> send_command(...)
-```
+- `MODALITY_MAPS[em.IMAGE_KEYS]`: rename native image keys to embodia-standard image keys
+- `MODALITY_MAPS[em.STATE_KEYS]`: rename native state keys to embodia-standard state keys
+- `MODALITY_MAPS[em.ACTION_MODES]`: rename native action mode names to embodia-standard action mode names
 
 ## Model side
 
@@ -131,29 +115,11 @@ class YourModel(em.ModelMixin):
         "reset": "clear_state",
         "step": "infer",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
-```
-
-Meaning:
-
-- `MODEL_SPEC["required_image_keys"]`: native image keys your model expects
-- `MODEL_SPEC["required_state_keys"]`: native state keys your model expects
-- `MODEL_SPEC["output_action_mode"]`: native action mode your model returns
-- `METHOD_ALIASES["reset"] = "clear_state"`: embodia `reset()` should call your `clear_state()`
-- `METHOD_ALIASES["step"] = "infer"`: embodia `step()` should call your `infer()`
-
-Runtime flow:
-
-```text
-standardized Frame
--> ModelMixin step()
--> remap standard keys to native keys
--> infer(native_frame)
--> native action mode
--> remap native mode to standard mode
--> standardized Action
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 ```
 
 ## Minimal template
@@ -174,14 +140,16 @@ class YourRobot(em.RobotMixin):
         "act": "your_native_act_method",
         "reset": "your_native_reset_method",
     }
-    IMAGE_KEY_MAP = {
-        "your_native_image_key": "your_standard_image_key",
-    }
-    STATE_KEY_MAP = {
-        "your_native_state_key": "your_standard_state_key",
-    }
-    ACTION_MODE_MAP = {
-        "your_native_action_mode": "your_standard_action_mode",
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {
+            "your_native_image_key": "your_standard_image_key",
+        },
+        em.STATE_KEYS: {
+            "your_native_state_key": "your_standard_state_key",
+        },
+        em.ACTION_MODES: {
+            "your_native_action_mode": "your_standard_action_mode",
+        },
     }
 
 
@@ -196,14 +164,16 @@ class YourModel(em.ModelMixin):
         "reset": "your_native_reset_method",
         "step": "your_native_step_method",
     }
-    IMAGE_KEY_MAP = {
-        "your_native_image_key": "your_standard_image_key",
-    }
-    STATE_KEY_MAP = {
-        "your_native_state_key": "your_standard_state_key",
-    }
-    ACTION_MODE_MAP = {
-        "your_native_action_mode": "your_standard_action_mode",
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {
+            "your_native_image_key": "your_standard_image_key",
+        },
+        em.STATE_KEYS: {
+            "your_native_state_key": "your_standard_state_key",
+        },
+        em.ACTION_MODES: {
+            "your_native_action_mode": "your_standard_action_mode",
+        },
     }
 ```
 
@@ -211,14 +181,16 @@ class YourModel(em.ModelMixin):
 
 - If your methods are already called `observe`, `act`, `reset`, `step`, leave
   `METHOD_ALIASES` empty.
-- If your keys are already embodia-standard, leave key maps empty.
-- If your action mode is already embodia-standard, leave `ACTION_MODE_MAP` empty.
+- If your keys are already embodia-standard, leave the corresponding modality
+  maps empty.
+- If your action mode is already embodia-standard, leave
+  `MODALITY_MAPS[em.ACTION_MODES]` empty.
 
 ## Common mistakes
 
 - Do not reverse `METHOD_ALIASES`.
   Write `{"observe": "capture"}`, not `{"capture": "observe"}`.
-- Do not reverse `IMAGE_KEY_MAP` or `STATE_KEY_MAP`.
+- Do not reverse `MODALITY_MAPS[em.IMAGE_KEYS]` or `MODALITY_MAPS[em.STATE_KEYS]`.
   Write native -> standard, not standard -> native.
 - Do not write standardized names into `*_SPEC` if the native interface still
   uses different names and you also provide a map.
@@ -226,3 +198,10 @@ class YourModel(em.ModelMixin):
   position in the base list.
 - Do not push heavy preprocessing into your own methods just to satisfy embodia.
   Keep your methods thin and let embodia do remapping and validation.
+
+## Backward compatibility
+
+Legacy top-level attributes such as `IMAGE_KEY_MAP`, `STATE_KEY_MAP`, and
+`ACTION_MODE_MAP` are still accepted for now. String keys inside
+`MODALITY_MAPS` are also accepted, but embodia modality tokens are the
+recommended public configuration shape going forward.

@@ -6,15 +6,13 @@ from collections.abc import Mapping, Sequence
 
 from ..errors import InterfaceValidationError
 from ..schema import Frame
-from ._common import resolve_string_mapping
-
-STATE_KEY_MAP_ATTR = "STATE_KEY_MAP"
+from ._common import STATE_KEYS, resolve_modality_mapping
 
 
 def get_key_map(owner: object) -> Mapping[str, str]:
     """Resolve the state-key remapping table for a class or instance."""
 
-    return resolve_string_mapping(owner, STATE_KEY_MAP_ATTR)
+    return resolve_modality_mapping(owner, STATE_KEYS)
 
 
 def ensure_frame_keys(
@@ -55,4 +53,4 @@ def pair_problem(
     )
 
 
-__all__ = ["ensure_frame_keys", "get_key_map", "pair_problem"]
+__all__ = ["STATE_KEYS", "ensure_frame_keys", "get_key_map", "pair_problem"]

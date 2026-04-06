@@ -8,12 +8,16 @@ import unittest
 
 from embodia import (
     Action,
+    ACTION_MODES,
     Episode,
     EpisodeStep,
     Frame,
+    H5_FORMAT,
+    IMAGE_KEYS,
     InterfaceValidationError,
     ModelMixin,
     RobotMixin,
+    STATE_KEYS,
     StepResult,
     check_model,
     check_pair,
@@ -23,9 +27,13 @@ from embodia import (
     episode_step_to_dict,
     episode_to_dict,
     frame_to_dict,
+    is_h5_available,
+    load_episode_h5,
     record_step,
     remap_frame,
+    require_h5,
     run_step,
+    save_episode_h5,
     validate_action,
     validate_frame,
 )
@@ -190,6 +198,30 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(rows[0]["episode_index"], 1)
         self.assertIn("observation.state", rows[0])
 
+    def test_h5_require_reports_missing_dependency(self) -> None:
+        if is_h5_available():
+            self.skipTest("h5py is installed in this environment")
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            require_h5()
+
+        self.assertIn("h5py", str(ctx.exception))
+
+    def test_h5_roundtrip_when_h5py_is_available(self) -> None:
+        if not is_h5_available():
+            self.skipTest("h5py is not installed in this environment")
+
+        robot = DummyRobot()
+        episode = collect_episode(robot, steps=2)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = save_episode_h5(episode, f"{tmpdir}/episode_0001.h5")
+            loaded = load_episode_h5(path)
+
+        self.assertEqual(loaded.robot_spec.name, "dummy_robot")
+        self.assertEqual(len(loaded.steps), 2)
+        self.assertEqual(H5_FORMAT, "embodia_episode_v1")
+
     def test_robot_mixin_wraps_existing_robot_class(self) -> None:
         class VendorRobot:
             def __init__(self) -> None:
@@ -281,17 +313,21 @@ class InterfaceTests(unittest.TestCase):
             OBSERVE_METHOD = "capture"
             ACT_METHOD = "send_command"
             RESET_METHOD = "home"
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                "images": {"rgb_front": "front_rgb"},
+                "state": {"qpos": "joint_positions"},
+                "action_modes": {"cartesian_delta": "ee_delta"},
+            }
 
         class CompatibleModel(ModelMixin, VendorModel):
             GET_SPEC_METHOD = "describe"
             RESET_METHOD = "clear_state"
             STEP_METHOD = "infer"
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                "images": {"rgb_front": "front_rgb"},
+                "state": {"qpos": "joint_positions"},
+                "action_modes": {"cartesian_delta": "ee_delta"},
+            }
 
         robot = CompatibleRobot()
         model = CompatibleModel()
@@ -379,9 +415,11 @@ class InterfaceTests(unittest.TestCase):
                 "act": "send_command",
                 "reset": "home",
             }
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            }
 
         class CompatibleModel(ModelMixin, VendorModel):
             MODEL_SPEC = {
@@ -394,9 +432,11 @@ class InterfaceTests(unittest.TestCase):
                 "reset": "clear_state",
                 "step": "infer",
             }
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            }
 
         robot = CompatibleRobot()
         model = CompatibleModel()
@@ -421,9 +461,11 @@ class InterfaceTests(unittest.TestCase):
                 "act": "send_command",
                 "reset": "home",
             }
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            }
 
             def __init__(self) -> None:
                 self.last_action = None
@@ -452,9 +494,11 @@ class InterfaceTests(unittest.TestCase):
                 "reset": "clear_state",
                 "step": "infer",
             }
-            IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-            STATE_KEY_MAP = {"qpos": "joint_positions"}
-            ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+            MODALITY_MAPS = {
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            }
 
             def clear_state(self):
                 return None

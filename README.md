@@ -30,7 +30,13 @@ pip install .
 ```
 
 If you only want embodia's core interface layer, checks, inference helpers, or
-basic collection helpers, that is enough.
+collection in memory, that is enough.
+
+If you want the default H5 collection export:
+
+```bash
+pip install ".[h5]"
+```
 
 Only install the LeRobot extra when you want the optional bridge in
 `embodia.contrib.lerobot`:
@@ -57,9 +63,11 @@ class YourRobot(em.RobotMixin):
         "act": "send_command",
         "reset": "home",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
     def capture(self): ...
     def send_command(self, action): ...
@@ -75,6 +83,7 @@ em.check_robot(robot, call_observe=False)
 
 step = em.record_step(robot)
 episode = em.collect_episode(robot, steps=128)
+em.save_episode_h5(episode, "data/episode_0000.h5")
 ```
 
 If you also have a model:
@@ -98,7 +107,7 @@ The layers are:
   `Frame`, `Action`, `RobotProtocol`, `ModelProtocol`, `RobotMixin`,
   `ModelMixin`, transform helpers, `check_*`
 - Collection sub-application:
-  `record_step()`, `collect_episode()`
+  `record_step()`, `collect_episode()`, `save_episode_h5()`
 - Inference sub-application:
   `run_step()`
 
@@ -127,11 +136,13 @@ class YourRobot(SomeOtherBase, em.RobotMixin):
 
 - `ROBOT_SPEC` / `MODEL_SPEC`: describe your current native interface
 - `METHOD_ALIASES`: embodia method name -> your existing method name
-- `IMAGE_KEY_MAP`: native image key -> embodia standard key
-- `STATE_KEY_MAP`: native state key -> embodia standard key
-- `ACTION_MODE_MAP`: native action mode -> embodia standard mode
+- `MODALITY_MAPS[em.IMAGE_KEYS]`: native image key -> embodia standard key
+- `MODALITY_MAPS[em.STATE_KEYS]`: native state key -> embodia standard key
+- `MODALITY_MAPS[em.ACTION_MODES]`: native action mode -> embodia standard mode
 
 If your class already uses embodia-standard names, you can leave the maps empty.
+The preferred shape is to key `MODALITY_MAPS` with embodia modality tokens like
+`em.IMAGE_KEYS`, not bare string names.
 
 Detailed guide:
 
@@ -169,5 +180,6 @@ Suggested reading order:
 - Keep user-side intrusion small and predictable.
 - Treat collection and inference as sub-applications of the same unified
   interface layer.
+- Default collection file output is H5.
 - Keep ecosystem bridges like LeRobot optional and outside the main package
   surface.

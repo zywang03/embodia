@@ -1,4 +1,4 @@
-"""Example 5: robot-only data collection as an embodia sub-application.
+"""Example 5: robot-only data collection with default H5 export.
 
 Run with:
 
@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import embodia as em
 
@@ -26,9 +27,11 @@ class YourRobot(em.RobotMixin):
         "act": "send_command",
         "reset": "home",
     }
-    IMAGE_KEY_MAP = {"rgb_front": "front_rgb"}
-    STATE_KEY_MAP = {"qpos": "joint_positions"}
-    ACTION_MODE_MAP = {"cartesian_delta": "ee_delta"}
+    MODALITY_MAPS = {
+        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
+        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
+    }
 
     def __init__(self) -> None:
         self.step_count = 0
@@ -76,10 +79,16 @@ def main() -> None:
         include_reset_frame=True,
         episode_meta={"collector": "demo_script"},
     )
+    output_path = Path("tmp") / "episode_demo.h5"
 
     print("one_step:", em.episode_step_to_dict(one_step))
     print("episode_length:", len(episode.steps))
     print("first_episode_step:", em.episode_to_dict(episode)["steps"][0])
+    if em.is_h5_available():
+        saved_path = em.save_episode_h5(episode, output_path)
+        print("h5_path:", saved_path)
+    else:
+        print("h5_export: skipped, install embodia[h5] or h5py")
     print("last_native_action:", robot.last_native_action)
     print("example 5 passed.")
 

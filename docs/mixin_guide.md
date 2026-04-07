@@ -1,20 +1,39 @@
 # embodia mixin guide
 
-This guide explains the recommended embodia mixin configuration.
+This guide explains the embodia mixin configuration surface.
 
-The main class attributes are:
+The same config can live in three places:
 
-- `ROBOT_SPEC`
-- `MODEL_SPEC`
-- `METHOD_ALIASES`
-- `MODALITY_MAPS`
+- class attributes such as `ROBOT_SPEC`, `MODEL_SPEC`, `METHOD_ALIASES`, and
+  `MODALITY_MAPS`
+- constructor-time config through `from_config(...)`
+- file-based config through `from_yaml(...)`
 
-The main rule is:
+For low-intrusion integrations, `from_yaml(...)` or `from_config(...)` is
+usually the best default, because it keeps the wrapped class body focused on
+its native methods. The config meaning is the same in all three cases:
 
 - `*_SPEC` describes your native interface today
 - `METHOD_ALIASES` tells embodia which existing methods to call
 - `MODALITY_MAPS` renames native names into embodia-standard names
 - prefer embodia modality tokens like `em.IMAGE_KEYS` over bare string keys
+
+If you want the declarative dictionaries to read more like named config fields,
+you can also use `em.RobotSpecKey`, `em.ModelSpecKey`, and
+`em.MethodAliasKey` instead of raw string keys.
+
+## YAML-first shape
+
+If you want the config outside Python code entirely, the same fields can live
+in a YAML file and be loaded with:
+
+```python
+robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
+model = YourModel.from_yaml("docs/yaml_config_example.yml")
+```
+
+The full commented example lives in
+[`docs/yaml_config_example.yml`](./yaml_config_example.yml).
 
 ## Direction rules
 
@@ -59,15 +78,15 @@ Then:
 ```python
 class YourRobot(em.RobotMixin):
     ROBOT_SPEC = {
-        "name": "your_robot",
-        "action_modes": ["cartesian_delta"],
-        "image_keys": ["rgb_front"],
-        "state_keys": ["qpos"],
+        em.RobotSpecKey.NAME: "your_robot",
+        em.RobotSpecKey.ACTION_MODES: ["cartesian_delta"],
+        em.RobotSpecKey.IMAGE_KEYS: ["rgb_front"],
+        em.RobotSpecKey.STATE_KEYS: ["qpos"],
     }
     METHOD_ALIASES = {
-        "observe": "capture",
-        "act": "send_command",
-        "reset": "home",
+        em.MethodAliasKey.OBSERVE: "capture",
+        em.MethodAliasKey.ACT: "send_command",
+        em.MethodAliasKey.RESET: "home",
     }
     MODALITY_MAPS = {
         em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
@@ -106,14 +125,14 @@ Then:
 ```python
 class YourModel(em.ModelMixin):
     MODEL_SPEC = {
-        "name": "your_model",
-        "required_image_keys": ["rgb_front"],
-        "required_state_keys": ["qpos"],
-        "output_action_mode": "cartesian_delta",
+        em.ModelSpecKey.NAME: "your_model",
+        em.ModelSpecKey.REQUIRED_IMAGE_KEYS: ["rgb_front"],
+        em.ModelSpecKey.REQUIRED_STATE_KEYS: ["qpos"],
+        em.ModelSpecKey.OUTPUT_ACTION_MODE: "cartesian_delta",
     }
     METHOD_ALIASES = {
-        "reset": "clear_state",
-        "step": "infer",
+        em.MethodAliasKey.RESET: "clear_state",
+        em.MethodAliasKey.STEP: "infer",
     }
     MODALITY_MAPS = {
         em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
@@ -179,12 +198,16 @@ class YourModel(em.ModelMixin):
 
 ## When you can leave things empty
 
-- If your methods are already called `observe`, `act`, `reset`, `step`, leave
-  `METHOD_ALIASES` empty.
 - If your keys are already embodia-standard, leave the corresponding modality
   maps empty.
 - If your action mode is already embodia-standard, leave
   `MODALITY_MAPS[em.ACTION_MODES]` empty.
+
+For direct "edit the outer class in place" integrations, prefer keeping
+`METHOD_ALIASES` explicit and pointing at your native method names such as
+`capture`, `send_command`, `home`, `clear_state`, or `infer`. That keeps the
+embodia wrapper layer visible and avoids mixing the wrapped methods with the
+public embodia methods on the same class body.
 
 ## Common mistakes
 

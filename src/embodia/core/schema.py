@@ -26,12 +26,16 @@ class Frame:
 
 @dataclass(slots=True)
 class Action:
-    """A minimal control command produced by a model and consumed by a robot."""
+    """A minimal control command produced by a model and consumed by a robot.
+
+    ``ref_frame`` names the reference coordinate frame for actions such as
+    end-effector deltas.
+    """
 
     mode: ActionMode
     value: list[float]
     gripper: float | None = None
-    frame: str | None = None
+    ref_frame: str | None = None
     dt: float = 0.1
 
 

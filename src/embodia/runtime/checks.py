@@ -184,8 +184,8 @@ def validate_action(action: Action) -> None:
 
     if action.gripper is not None:
         _ensure_real_number(action.gripper, "action.gripper")
-    if action.frame is not None:
-        _ensure_non_empty_string(action.frame, "action.frame")
+    if action.ref_frame is not None:
+        _ensure_non_empty_string(action.ref_frame, "action.ref_frame")
     dt = _ensure_real_number(action.dt, "action.dt")
     if dt <= 0.0:
         raise InterfaceValidationError("action.dt must be > 0.")

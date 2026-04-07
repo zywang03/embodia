@@ -1,5 +1,5 @@
 """Optional integrations that should not expand embodia's core surface."""
 
-from . import lerobot
+from . import openpi_remote
 
-__all__ = ["lerobot"]
+__all__ = ["openpi_remote"]

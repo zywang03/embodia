@@ -2,42 +2,34 @@
 
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
+from unittest import mock
 
 from embodia import (
     Action,
     ACTION_MODES,
-    Episode,
-    EpisodeStep,
     Frame,
-    H5_FORMAT,
     IMAGE_KEYS,
     InterfaceValidationError,
+    MethodAliasKey,
     ModelMixin,
+    ModelSpecKey,
     RobotMixin,
+    RobotSpecKey,
     STATE_KEYS,
     StepResult,
+    action_to_dict,
     check_model,
     check_pair,
     check_robot,
-    collect_episode,
     coerce_action,
-    episode_step_to_dict,
-    episode_to_dict,
     frame_to_dict,
-    is_h5_available,
-    load_episode_h5,
-    record_step,
     remap_frame,
-    require_h5,
     run_step,
-    save_episode_h5,
     validate_action,
     validate_frame,
 )
-from embodia.contrib import lerobot as em_lerobot
+from embodia.core import arraylike as em_arraylike
 from tests.helpers import DummyModel, DummyRobot
 
 
@@ -82,10 +74,92 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("missing state keys", str(ctx.exception))
 
     def test_transform_helpers_normalize_mapping(self) -> None:
-        action = coerce_action({"mode": "ee_delta", "value": (0.0, 1.0)})
+        action = coerce_action(
+            {
+                "mode": "ee_delta",
+                "value": (0.0, 1.0),
+                "frame": "tool",
+            }
+        )
 
         self.assertIsInstance(action, Action)
         self.assertEqual(action.value, [0.0, 1.0])
+        self.assertEqual(action.ref_frame, "tool")
+
+    def test_coerce_action_accepts_optional_numpy_like_value(self) -> None:
+        class FakeNdArray:
+            def __init__(self, values: list[float]) -> None:
+                self._values = values
+
+            def tolist(self) -> list[float]:
+                return list(self._values)
+
+        with mock.patch.object(
+            em_arraylike,
+            "numpy_ndarray_type",
+            return_value=FakeNdArray,
+        ):
+            action = coerce_action(
+                {
+                    "mode": "ee_delta",
+                    "value": FakeNdArray([0.0, 1.0, 2.0]),
+                }
+            )
+
+        self.assertEqual(action.value, [0.0, 1.0, 2.0])
+
+    def test_coerce_action_accepts_optional_torch_like_value(self) -> None:
+        class FakeDevice:
+            type = "cuda"
+
+        class FakeTensor:
+            def __init__(self, values: list[float]) -> None:
+                self._values = values
+                self.device = FakeDevice()
+                self.detached = False
+                self.moved_to_cpu = False
+
+            def detach(self) -> "FakeTensor":
+                self.detached = True
+                return self
+
+            def cpu(self) -> "FakeTensor":
+                self.moved_to_cpu = True
+                self.device = type("CpuDevice", (), {"type": "cpu"})()
+                return self
+
+            def tolist(self) -> list[float]:
+                return list(self._values)
+
+        tensor = FakeTensor([0.0, 1.0, 2.0])
+        with mock.patch.object(
+            em_arraylike,
+            "torch_tensor_type",
+            return_value=FakeTensor,
+        ):
+            action = coerce_action(
+                {
+                    "mode": "ee_delta",
+                    "value": tensor,
+                }
+            )
+
+        self.assertEqual(action.value, [0.0, 1.0, 2.0])
+        self.assertTrue(tensor.detached)
+        self.assertTrue(tensor.moved_to_cpu)
+
+    def test_action_to_dict_exports_ref_frame_name(self) -> None:
+        exported = action_to_dict(
+            Action(
+                mode="ee_delta",
+                value=[0.0] * 6,
+                ref_frame="tool",
+            )
+        )
+
+        self.assertIn("ref_frame", exported)
+        self.assertEqual(exported["ref_frame"], "tool")
+        self.assertNotIn("frame", exported)
 
     def test_frame_to_dict_exports_dataclass(self) -> None:
         frame = Frame(timestamp_ns=1, images={"front_rgb": None}, state={})
@@ -109,118 +183,22 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("front_rgb", frame.images)
         self.assertIn("joint_positions", frame.state)
 
-    def test_record_step_collects_observation_only(self) -> None:
-        robot = DummyRobot()
-
-        step = record_step(robot)
-
-        self.assertIsInstance(step, EpisodeStep)
-        self.assertEqual(step.action, None)
-        self.assertIn("front_rgb", step.frame.images)
-
-    def test_collect_episode_robot_only_allows_scripted_action_source(self) -> None:
+    def test_run_step_result_can_be_exported_with_plain_dicts(self) -> None:
         robot = DummyRobot()
 
         def scripted_action(frame: Frame) -> dict[str, object]:
             return {"mode": "ee_delta", "value": [frame.timestamp_ns * 0.0] * 6}
 
-        episode = collect_episode(
-            robot,
-            steps=2,
-            action_fn=scripted_action,
-            execute_actions=True,
-            reset_robot=True,
-            include_reset_frame=True,
-            episode_meta={"source": "scripted"},
-        )
+        result = run_step(robot, action_fn=scripted_action)
+        exported = {
+            "frame": frame_to_dict(result.frame),
+            "action": action_to_dict(result.action),
+            "meta": {"collector": "custom"},
+        }
 
-        self.assertIsInstance(episode, Episode)
-        self.assertEqual(len(episode.steps), 3)
-        self.assertEqual(episode.steps[0].meta["source"], "reset")
-        self.assertIsNotNone(robot.last_action)
-        self.assertEqual(episode.meta["source"], "scripted")
-
-    def test_collect_episode_with_model_records_standardized_actions(self) -> None:
-        robot = DummyRobot()
-        model = DummyModel()
-
-        episode = collect_episode(
-            robot,
-            steps=2,
-            model=model,
-            execute_actions=False,
-            reset_model=True,
-        )
-
-        self.assertEqual(len(episode.steps), 2)
-        self.assertEqual(episode.steps[0].action.mode, "ee_delta")
-        self.assertIsNone(robot.last_action)
-        self.assertEqual(episode.model_spec.output_action_mode, "ee_delta")
-
-    def test_episode_export_helpers_return_plain_dicts(self) -> None:
-        robot = DummyRobot()
-        step = record_step(robot, step_meta={"collector": "test"})
-        episode = Episode(robot_spec=robot.get_spec(), steps=[step])
-
-        exported_step = episode_step_to_dict(step)
-        exported_episode = episode_to_dict(episode)
-
-        self.assertEqual(exported_step["meta"]["collector"], "test")
-        self.assertEqual(exported_episode["robot_spec"]["name"], "dummy_robot")
-        self.assertEqual(len(exported_episode["steps"]), 1)
-
-    def test_lerobot_bridge_converts_episode_to_records(self) -> None:
-        robot = DummyRobot()
-        episode = collect_episode(robot, steps=2)
-
-        records = em_lerobot.episode_to_lerobot_records(episode, episode_index=3)
-
-        self.assertEqual(len(records), 2)
-        self.assertEqual(records[0]["episode_index"], 3)
-        self.assertIn("observation.images", records[0])
-        self.assertFalse(records[0]["next.done"])
-        self.assertTrue(records[-1]["next.done"])
-
-    def test_lerobot_bridge_writes_jsonl(self) -> None:
-        robot = DummyRobot()
-        episode = collect_episode(robot, steps=2)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = em_lerobot.write_lerobot_jsonl(
-                episode,
-                f"{tmpdir}/episode_0001.jsonl",
-                episode_index=1,
-            )
-            with open(path, "r", encoding="utf-8") as handle:
-                rows = [json.loads(line) for line in handle]
-
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["episode_index"], 1)
-        self.assertIn("observation.state", rows[0])
-
-    def test_h5_require_reports_missing_dependency(self) -> None:
-        if is_h5_available():
-            self.skipTest("h5py is installed in this environment")
-
-        with self.assertRaises(InterfaceValidationError) as ctx:
-            require_h5()
-
-        self.assertIn("h5py", str(ctx.exception))
-
-    def test_h5_roundtrip_when_h5py_is_available(self) -> None:
-        if not is_h5_available():
-            self.skipTest("h5py is not installed in this environment")
-
-        robot = DummyRobot()
-        episode = collect_episode(robot, steps=2)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = save_episode_h5(episode, f"{tmpdir}/episode_0001.h5")
-            loaded = load_episode_h5(path)
-
-        self.assertEqual(loaded.robot_spec.name, "dummy_robot")
-        self.assertEqual(len(loaded.steps), 2)
-        self.assertEqual(H5_FORMAT, "embodia_episode_v1")
+        self.assertEqual(exported["meta"]["collector"], "custom")
+        self.assertIn("front_rgb", exported["frame"]["images"])
+        self.assertEqual(exported["action"]["mode"], "ee_delta")
 
     def test_robot_mixin_wraps_existing_robot_class(self) -> None:
         class VendorRobot:
@@ -405,15 +383,15 @@ class InterfaceTests(unittest.TestCase):
 
         class CompatibleRobot(RobotMixin, VendorRobot):
             ROBOT_SPEC = {
-                "name": "vendor_robot",
-                "action_modes": ["cartesian_delta"],
-                "image_keys": ["rgb_front"],
-                "state_keys": ["qpos"],
+                RobotSpecKey.NAME: "vendor_robot",
+                RobotSpecKey.ACTION_MODES: ["cartesian_delta"],
+                RobotSpecKey.IMAGE_KEYS: ["rgb_front"],
+                RobotSpecKey.STATE_KEYS: ["qpos"],
             }
             METHOD_ALIASES = {
-                "observe": "capture",
-                "act": "send_command",
-                "reset": "home",
+                MethodAliasKey.OBSERVE: "capture",
+                MethodAliasKey.ACT: "send_command",
+                MethodAliasKey.RESET: "home",
             }
             MODALITY_MAPS = {
                 IMAGE_KEYS: {"rgb_front": "front_rgb"},
@@ -423,14 +401,14 @@ class InterfaceTests(unittest.TestCase):
 
         class CompatibleModel(ModelMixin, VendorModel):
             MODEL_SPEC = {
-                "name": "vendor_model",
-                "required_image_keys": ["rgb_front"],
-                "required_state_keys": ["qpos"],
-                "output_action_mode": "cartesian_delta",
+                ModelSpecKey.NAME: "vendor_model",
+                ModelSpecKey.REQUIRED_IMAGE_KEYS: ["rgb_front"],
+                ModelSpecKey.REQUIRED_STATE_KEYS: ["qpos"],
+                ModelSpecKey.OUTPUT_ACTION_MODE: "cartesian_delta",
             }
             METHOD_ALIASES = {
-                "reset": "clear_state",
-                "step": "infer",
+                MethodAliasKey.RESET: "clear_state",
+                MethodAliasKey.STEP: "infer",
             }
             MODALITY_MAPS = {
                 IMAGE_KEYS: {"rgb_front": "front_rgb"},
@@ -517,6 +495,116 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(result.action.mode, "ee_delta")
         self.assertEqual(robot.last_action.mode, "cartesian_delta")
         self.assertIn("rgb_front", model.seen_frame.images)
+
+    def test_from_config_can_attach_runtime_interface_config(self) -> None:
+        class YourRobot(RobotMixin):
+            def __init__(self) -> None:
+                self.last_action = None
+
+            def capture(self):
+                return {
+                    "timestamp_ns": 1,
+                    "images": {"rgb_front": None},
+                    "state": {"qpos": [0.0] * 6},
+                }
+
+            def send_command(self, action):
+                self.last_action = action
+
+            def home(self):
+                return self.capture()
+
+        class YourModel(ModelMixin):
+            def clear_state(self):
+                return None
+
+            def infer(self, frame):
+                self.seen_frame = frame
+                return {"mode": "cartesian_delta", "value": [0.0] * 6}
+
+        robot = YourRobot.from_config(
+            robot_spec={
+                "name": "vendor_robot",
+                "action_modes": ["cartesian_delta"],
+                "image_keys": ["rgb_front"],
+                "state_keys": ["qpos"],
+            },
+            method_aliases={
+                "observe": "capture",
+                "act": "send_command",
+                "reset": "home",
+            },
+            modality_maps={
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            },
+        )
+        model = YourModel.from_config(
+            model_spec={
+                "name": "vendor_model",
+                "required_image_keys": ["rgb_front"],
+                "required_state_keys": ["qpos"],
+                "output_action_mode": "cartesian_delta",
+            },
+            method_aliases={
+                "reset": "clear_state",
+                "step": "infer",
+            },
+            modality_maps={
+                IMAGE_KEYS: {"rgb_front": "front_rgb"},
+                STATE_KEYS: {"qpos": "joint_positions"},
+                ACTION_MODES: {"cartesian_delta": "ee_delta"},
+            },
+        )
+
+        check_pair(robot, model, sample_frame=robot.reset())
+        result = run_step(robot, model)
+
+        self.assertEqual(result.action.mode, "ee_delta")
+        self.assertEqual(robot.last_action.mode, "cartesian_delta")
+        self.assertIn("rgb_front", model.seen_frame.images)
+
+    def test_from_config_validates_runtime_interface_config(self) -> None:
+        class YourRobot(RobotMixin):
+            pass
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            YourRobot.from_config(
+                method_aliases={"observe": 123},  # type: ignore[dict-item]
+            )
+
+        self.assertIn("method_aliases", str(ctx.exception))
+
+    def test_from_config_rejects_bad_config_before_init(self) -> None:
+        class YourRobot(RobotMixin):
+            init_calls = 0
+
+            def __init__(self) -> None:
+                type(self).init_calls += 1
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            YourRobot.from_config(
+                method_aliases={"not_a_real_method": "capture"},
+            )
+
+        self.assertIn("unsupported key", str(ctx.exception))
+        self.assertEqual(YourRobot.init_calls, 0)
+
+    def test_from_config_rejects_bad_remote_policy_before_init(self) -> None:
+        class YourRobot(RobotMixin):
+            init_calls = 0
+
+            def __init__(self) -> None:
+                type(self).init_calls += 1
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            YourRobot.from_config(
+                remote_policy={"dt": 0.0},
+            )
+
+        self.assertIn("remote_policy.dt", str(ctx.exception))
+        self.assertEqual(YourRobot.init_calls, 0)
 
     def test_mixin_must_be_leftmost_direct_base(self) -> None:
         class VendorRobot:
@@ -605,6 +693,45 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(result.action.mode, "ee_delta")
         self.assertIn("rgb_front", model.seen_frame.images)
         self.assertEqual(robot.last_action.mode, "cartesian_delta")
+
+    def test_run_step_accepts_external_action_fn(self) -> None:
+        robot = DummyRobot()
+        seen_frames: list[Frame] = []
+
+        def remote_policy(frame: Frame) -> dict[str, object]:
+            seen_frames.append(frame)
+            return {"mode": "ee_delta", "value": [1.0] * 6, "dt": 0.1}
+
+        result = run_step(robot, remote_policy)
+
+        self.assertIsInstance(result, StepResult)
+        self.assertEqual(result.action.value, [1.0] * 6)
+        self.assertEqual(robot.last_action.value, [1.0] * 6)
+        self.assertEqual(len(seen_frames), 1)
+
+    def test_run_step_rejects_multiple_action_sources(self) -> None:
+        robot = DummyRobot()
+        model = DummyModel()
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            run_step(
+                robot,
+                model,
+                action_fn=lambda frame: {
+                    "mode": "ee_delta",
+                    "value": [0.0] * 6,
+                },
+            )
+
+        self.assertIn("either a model/callable source", str(ctx.exception))
+
+    def test_run_step_rejects_missing_source_without_remote_policy(self) -> None:
+        robot = DummyRobot()
+
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            run_step(robot)
+
+        self.assertIn("configured remote policy", str(ctx.exception))
 
 
 if __name__ == "__main__":

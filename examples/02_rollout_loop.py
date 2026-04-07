@@ -1,4 +1,4 @@
-"""Example 0: the recommended low-intrusion embodia integration path.
+"""Example 2: run a short standardized rollout from edited outer classes.
 
 Original project structure sketch:
 
@@ -11,17 +11,9 @@ Original project structure sketch:
         def clear_state(self): ...
         def infer(self, frame): ...
 
-This file only keeps the final, embodia-enabled version of those same outer
-classes. In other words, imagine the original classes above were edited in
-place by:
-
-1. adding ``em.RobotMixin`` / ``em.ModelMixin`` to the class header
-2. calling ``from_yaml(...)`` or ``from_config(...)`` when creating the instances
-3. keeping the original native methods like ``capture()`` and ``infer()``
-
 Run with:
 
-    PYTHONPATH=src python examples/00_mixin_quickstart.py
+    PYTHONPATH=src python examples/02_rollout_loop.py
 """
 
 from __future__ import annotations
@@ -32,36 +24,42 @@ import embodia as em
 
 
 class YourRobot(em.RobotMixin):
-    """Pretend this is the original outer robot class after one small edit."""
+    """Pretend this is your existing outer robot class after one small edit."""
 
     def __init__(self) -> None:
-        self.last_native_action = None
+        self.step_count = 0
+        self.last_native_action: object | None = None
 
     def capture(self) -> dict[str, object]:
+        self.step_count += 1
         return {
             "timestamp_ns": time.time_ns(),
             "images": {"rgb_front": None},
-            "state": {"qpos": [0.0] * 6},
+            "state": {"qpos": [float(self.step_count)] * 6},
+            "meta": {"step_count": self.step_count},
         }
 
     def send_command(self, action: object) -> None:
         self.last_native_action = action
-        print(f"[YourRobot] native action -> {action}")
 
     def home(self) -> dict[str, object]:
+        self.step_count = 0
         return self.capture()
 
 
 class YourModel(em.ModelMixin):
-    """Pretend this is the original outer model class after one small edit."""
+    """Pretend this is your existing outer model class after one small edit."""
 
     def clear_state(self) -> None:
         return None
 
     def infer(self, frame: object) -> dict[str, object]:
-        assert "rgb_front" in frame.images
-        assert "qpos" in frame.state
-        return {"mode": "cartesian_delta", "value": [0.0] * 6}
+        qpos = frame.state["qpos"]
+        return {
+            "mode": "cartesian_delta",
+            "value": [qpos[0] * 0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "dt": 0.1,
+        }
 
 
 def main() -> None:
@@ -71,14 +69,22 @@ def main() -> None:
 
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     model = YourModel.from_yaml("examples/basic_runtime.yml")
-
     em.check_pair(robot, model, sample_frame=robot.reset())
-    result = em.run_step(robot, model)
 
-    print("standardized_frame:", em.frame_to_dict(result.frame))
-    print("standardized_action:", em.action_to_dict(result.action))
-    print("native_robot_received:", robot.last_native_action)
-    print("example 0 passed.")
+    records: list[dict[str, object]] = []
+    for _ in range(3):
+        result = em.run_step(robot, model)
+        records.append(
+            {
+                "frame": em.frame_to_dict(result.frame),
+                "action": em.action_to_dict(result.action),
+            }
+        )
+
+    print("record_count:", len(records))
+    print("first_record:", records[0])
+    print("last_native_action:", robot.last_native_action)
+    print("example 2 passed.")
 
 
 if __name__ == "__main__":

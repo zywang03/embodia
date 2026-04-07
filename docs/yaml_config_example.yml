@@ -1,0 +1,73 @@
+# One embodia YAML file can hold both robot-side and model-side config.
+# `RobotMixin.from_yaml(...)` automatically reads the top-level `robot:` block,
+# and `ModelMixin.from_yaml(...)` automatically reads the top-level `model:` block.
+
+robot:
+  # These keys are forwarded into YourRobot(...)
+  init:
+    prompt: pick up the cloth and fold it
+
+  # Describe the robot's native interface before embodia remapping.
+  robot_spec:
+    name: your_robot
+    action_modes:
+      - cartesian_delta
+    image_keys:
+      - rgb_front
+    state_keys:
+      - qpos
+      - tcp_pose
+
+  # embodia method name -> your existing method name
+  method_aliases:
+    observe: capture
+    act: send_command
+    reset: home
+
+  # native name -> embodia standard name
+  modality_maps:
+    images:
+      rgb_front: front_rgb
+    state:
+      qpos: joint_positions
+      tcp_pose: ee_pose
+    action_modes:
+      cartesian_delta: ee_delta
+
+  # Remote policy config can also live here, but Python callables such as
+  # `obs_builder` still need to be passed from code.
+  #
+  # remote_policy:
+  #   enabled: true
+  #   host: localhost
+  #   port: 8000
+  #   action_mode: joint_position
+  #   dt: 0.1
+
+model:
+  # These keys are forwarded into YourModel(...)
+  init:
+    default_prompt: fold the cloth
+
+  # Describe the model's native interface before embodia remapping.
+  model_spec:
+    name: your_model
+    required_image_keys:
+      - rgb_front
+    required_state_keys:
+      - qpos
+    output_action_mode: cartesian_delta
+
+  # embodia method name -> your existing method name
+  method_aliases:
+    reset: clear_state
+    step: infer
+
+  # native name -> embodia standard name
+  modality_maps:
+    images:
+      rgb_front: front_rgb
+    state:
+      qpos: joint_positions
+    action_modes:
+      cartesian_delta: ee_delta

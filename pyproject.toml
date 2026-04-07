@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-h5 = ["h5py"]
-lerobot = ["lerobot"]
+yaml = ["PyYAML>=6.0"]
+openpi-remote = ["msgpack>=1.0.5", "websockets>=11.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

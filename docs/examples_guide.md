@@ -11,13 +11,13 @@ They all share [`examples/basic_runtime.yml`](../examples/basic_runtime.yml), so
 the Python files stay focused on the main user-facing flow: mixin inheritance,
 `from_yaml(...)`, `run_step(...)`, and `InferenceRuntime(...)`.
 
-The examples also follow one consistent data shape:
+The examples follow one grouped-command schema throughout:
 
-- robot state includes both `joint_positions` and `gripper_position`
-- action `value` is the primary arm / body vector
-- optional actuator-specific extras go into `Action.channels`
+- robot state is standardized into semantic keys such as `joint_positions` and `position`
+- robot embodiment is declared through control groups such as `arm` and `gripper`
+- every action step is an `Action` with one or more `commands`
+- each command addresses one control group through `target + mode + value`
 
 If you need more configuration detail, read
 [`docs/yaml_config_example.yml`](./yaml_config_example.yml) and
-[`docs/mixin_guide.md`](./mixin_guide.md). Advanced helpers still exist in the
-package, but they are intentionally not part of the first-read examples.
+[`docs/mixin_guide.md`](./mixin_guide.md).

@@ -68,15 +68,25 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
 
 ```python
 {
-    "mode": "ee_delta",
-    "value": [...],                 # 主动作向量
-    "channels": {"gripper": 0.5},   # 可选命名附加执行器
-    "ref_frame": "tool",
+    "commands": [
+        {
+            "target": "arm",
+            "mode": "ee_delta",
+            "value": [...],
+            "ref_frame": "tool",
+        },
+        {
+            "target": "gripper",
+            "mode": "scalar_position",
+            "value": [0.5],
+        },
+    ],
     "dt": 0.1,
 }
 ```
 
-这里的 `channels` 是通用扩展位，`gripper` 只是一个常见 key，不是写死在 schema 里的专用字段。
+现在的 `Action` 是一个按控制组组织的命令容器。gripper、hand、suction
+这类末端执行器都是一等控制组，不再作为临时附加通道塞进一个扁平动作向量里。
 
 最小的本地推理路径就是：
 
@@ -107,8 +117,7 @@ result = em.run_step(robot, model, runtime=runtime)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
 它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
-这个共享配置已经把 `joint_positions` 和 `gripper_position` 都放进了 state，
-而 Python 示例里的末端附加执行器则统一通过 `Action.channels` 表达。
+这个共享配置定义了 `arm` 和 `gripper` 两个控制组，Python 示例里每一步也都会输出对应的 `Action.commands`。
 
 ## 设计
 

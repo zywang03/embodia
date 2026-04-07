@@ -76,16 +76,26 @@ The normalized action shape is:
 
 ```python
 {
-    "mode": "ee_delta",
-    "value": [...],              # primary action vector
-    "channels": {"gripper": 0.5},  # optional named extra actuators
-    "ref_frame": "tool",
+    "commands": [
+        {
+            "target": "arm",
+            "mode": "ee_delta",
+            "value": [...],
+            "ref_frame": "tool",
+        },
+        {
+            "target": "gripper",
+            "mode": "scalar_position",
+            "value": [0.5],
+        },
+    ],
     "dt": 0.1,
 }
 ```
 
-`channels` is intentionally generic. `gripper` is just one common key, not a
-special built-in field.
+`Action` is a small container of grouped commands. End-effectors such as
+grippers, hands, suction tools, or custom actuators are first-class control
+groups, not ad-hoc extra channels.
 
 The smallest local inference path is:
 
@@ -119,9 +129,8 @@ tools rather than the main user path.
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
-That shared config already includes both `joint_positions` and
-`gripper_position` on the state side, while the Python examples emit extra
-end-effector channels through `Action.channels`.
+That shared config defines two control groups, `arm` and `gripper`, and the
+Python examples emit one grouped `Action.commands` payload per control step.
 
 ## Design
 

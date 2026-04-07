@@ -7,7 +7,7 @@ import unittest
 
 import embodia as em
 
-from .helpers import DummyModel, DummyRobot
+from helpers import DummyModel, DummyRobot
 
 
 class InterfaceTests(unittest.TestCase):
@@ -129,6 +129,24 @@ class InterfaceTests(unittest.TestCase):
 
     def test_robot_and_model_mixins_remap_targets_modes_and_state(self) -> None:
         class VendorRobot:
+            def __init__(self) -> None:
+                self.last_action: em.Action | None = None
+
+            def capture(self) -> dict[str, object]:
+                return {
+                    "timestamp_ns": time.time_ns(),
+                    "images": {"front_rgb": None},
+                    "state": {"qpos": [1.0] * 6, "gripper_pos": 0.5},
+                    "task": {"prompt": "fold"},
+                }
+
+            def send_command(self, action: em.Action) -> None:
+                self.last_action = action
+
+            def home(self) -> dict[str, object]:
+                return self.capture()
+
+        class YourRobot(em.RobotMixin, VendorRobot):
             ROBOT_SPEC = {
                 "name": "vendor_robot",
                 "image_keys": ["front_rgb"],
@@ -170,27 +188,29 @@ class InterfaceTests(unittest.TestCase):
                 },
             }
 
-            def __init__(self) -> None:
-                self.last_action: em.Action | None = None
+        class VendorModel:
+            def clear_state(self) -> None:
+                return None
 
-            def capture(self) -> dict[str, object]:
+            def infer(self, frame: em.Frame) -> dict[str, object]:
+                self.seen = frame
                 return {
-                    "timestamp_ns": time.time_ns(),
-                    "images": {"front_rgb": None},
-                    "state": {"qpos": [1.0] * 6, "gripper_pos": 0.5},
-                    "task": {"prompt": "fold"},
+                    "commands": [
+                        {
+                            "target": "vendor_arm",
+                            "mode": "cartesian_delta",
+                            "value": [0.1] * 6,
+                        },
+                        {
+                            "target": "vendor_gripper",
+                            "mode": "gripper_position",
+                            "value": [0.2],
+                        },
+                    ],
+                    "dt": 0.05,
                 }
 
-            def send_command(self, action: em.Action) -> None:
-                self.last_action = action
-
-            def home(self) -> dict[str, object]:
-                return self.capture()
-
-        class YourRobot(em.RobotMixin, VendorRobot):
-            pass
-
-        class VendorModel:
+        class YourModel(em.ModelMixin, VendorModel):
             MODEL_SPEC = {
                 "name": "vendor_model",
                 "required_image_keys": ["front_rgb"],
@@ -219,30 +239,6 @@ class InterfaceTests(unittest.TestCase):
                     "gripper_position": "scalar_position",
                 },
             }
-
-            def clear_state(self) -> None:
-                return None
-
-            def infer(self, frame: em.Frame) -> dict[str, object]:
-                self.seen = frame
-                return {
-                    "commands": [
-                        {
-                            "target": "vendor_arm",
-                            "mode": "cartesian_delta",
-                            "value": [0.1] * 6,
-                        },
-                        {
-                            "target": "vendor_gripper",
-                            "mode": "gripper_position",
-                            "value": [0.2],
-                        },
-                    ],
-                    "dt": 0.05,
-                }
-
-        class YourModel(em.ModelMixin, VendorModel):
-            pass
 
         robot = YourRobot()
         model = YourModel()

@@ -1,46 +1,63 @@
 # One embodia YAML file can hold both robot-side and model-side config.
 # `RobotMixin.from_yaml(...)` automatically reads the top-level `robot:` block,
 # and `ModelMixin.from_yaml(...)` automatically reads the top-level `model:` block.
-# This file only describes runtime interface alignment. Constructor kwargs do
-# not belong here. Optional actuator commands still belong in Action.channels
-# at runtime, for example {"gripper": 0.5}.
+# This file only describes runtime interface alignment. Constructor kwargs stay
+# in Python code.
 
 robot:
-  # Compact YAML shape: embodia-standard name -> your native name.
-  # embodia turns this into spec + remapping tables internally.
   interface:
     name: your_robot
     images:
       front_rgb: rgb_front
-    state:
-      joint_positions: qpos
-      gripper_position: gripper_pos
-      ee_pose: tcp_pose
-    action_modes:
-      ee_delta: cartesian_delta
+    task:
+      prompt: instruction
+    groups:
+      arm:
+        native_name: vendor_arm
+        kind: arm
+        dof: 6
+        state:
+          joint_positions: qpos
+          ee_pose: tcp_pose
+        action_modes:
+          ee_delta: cartesian_delta
+      gripper:
+        native_name: vendor_gripper
+        kind: gripper
+        dof: 1
+        state:
+          position: gripper_pos
+        action_modes:
+          scalar_position: gripper_position
 
-  # embodia method name -> your existing method name
   method_aliases:
     observe: capture
     act: send_command
     reset: home
 
 model:
-  # Same compact shape on the model side.
   interface:
     name: your_model
     images:
       front_rgb: rgb_front
     state:
       joint_positions: qpos
-      gripper_position: gripper_pos
+      ee_pose: tcp_pose
+      position: gripper_pos
     task:
       prompt: instruction
-    action_modes:
-      ee_delta: cartesian_delta
-    output_action_mode: ee_delta
+    outputs:
+      arm:
+        native_name: vendor_arm
+        mode: ee_delta
+        native_mode: cartesian_delta
+        dim: 6
+      gripper:
+        native_name: vendor_gripper
+        mode: scalar_position
+        native_mode: gripper_position
+        dim: 1
 
-  # embodia method name -> your existing method name
   method_aliases:
     reset: clear_state
     step: infer

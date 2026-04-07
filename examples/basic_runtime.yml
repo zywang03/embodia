@@ -1,39 +1,27 @@
 robot:
-  robot_spec:
+  interface:
     name: vendor_robot
+    images:
+      front_rgb: rgb_front
+    state:
+      joint_positions: qpos
     action_modes:
-      - cartesian_delta
-    image_keys:
-      - rgb_front
-    state_keys:
-      - qpos
+      ee_delta: cartesian_delta
   method_aliases:
     observe: capture
     act: send_command
     reset: home
-  modality_maps:
-    images:
-      rgb_front: front_rgb
-    state:
-      qpos: joint_positions
-    action_modes:
-      cartesian_delta: ee_delta
 
 model:
-  model_spec:
+  interface:
     name: vendor_model
-    required_image_keys:
-      - rgb_front
-    required_state_keys:
-      - qpos
-    output_action_mode: cartesian_delta
+    images:
+      front_rgb: rgb_front
+    state:
+      joint_positions: qpos
+    action_modes:
+      ee_delta: cartesian_delta
+    output_action_mode: ee_delta
   method_aliases:
     reset: clear_state
     step: infer
-  modality_maps:
-    images:
-      rgb_front: front_rgb
-    state:
-      qpos: joint_positions
-    action_modes:
-      cartesian_delta: ee_delta

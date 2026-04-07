@@ -54,6 +54,232 @@ def _copy_mapping(value: Mapping[object, object], *, field_name: str) -> dict[st
     return result
 
 
+def _copy_string_mapping(
+    value: object,
+    *,
+    field_name: str,
+    allow_empty: bool = True,
+) -> dict[str, str]:
+    """Validate and copy one ``mapping[str, str]`` block."""
+
+    if not isinstance(value, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name} must be a mapping[str, str], got "
+            f"{type(value).__name__}."
+        )
+
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise InterfaceValidationError(
+                f"{field_name} must use non-empty string keys and values, got "
+                f"{key!r} -> {item!r}."
+            )
+        if not key.strip() or not item.strip():
+            raise InterfaceValidationError(
+                f"{field_name} must use non-empty string keys and values."
+            )
+        result[key] = item
+
+    if not allow_empty and not result:
+        raise InterfaceValidationError(f"{field_name} must not be empty.")
+
+    return result
+
+
+def _ensure_non_empty_string(value: object, *, field_name: str) -> str:
+    """Validate one non-empty string field."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise InterfaceValidationError(f"{field_name} must be a non-empty string.")
+    return value
+
+
+def _invert_unique_mapping(
+    mapping: Mapping[str, str],
+    *,
+    field_name: str,
+) -> dict[str, str]:
+    """Invert one ``standard -> native`` mapping into ``native -> standard``."""
+
+    result: dict[str, str] = {}
+    for standard_name, native_name in mapping.items():
+        if native_name in result:
+            raise InterfaceValidationError(
+                f"{field_name} maps multiple embodia names to the same native "
+                f"name {native_name!r}, which is ambiguous."
+            )
+        result[native_name] = standard_name
+    return result
+
+
+def _validate_interface_keys(
+    interface: Mapping[str, Any],
+    *,
+    field_name: str,
+    allowed_keys: set[str],
+) -> None:
+    """Ensure one YAML ``interface`` block only uses supported keys."""
+
+    unknown = sorted(key for key in interface if key not in allowed_keys)
+    if not unknown:
+        return
+
+    expected = ", ".join(repr(key) for key in sorted(allowed_keys))
+    found = ", ".join(repr(key) for key in unknown)
+    raise InterfaceValidationError(
+        f"{field_name} contains unsupported field(s) {found}. "
+        f"Expected only: {expected}."
+    )
+
+
+def _expand_robot_interface_config(
+    interface: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    """Expand one compact robot-side YAML interface block."""
+
+    _validate_interface_keys(
+        interface,
+        field_name=field_name,
+        allowed_keys={"name", "images", "state", "action_modes"},
+    )
+
+    name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
+    images = _copy_string_mapping(
+        interface.get("images"),
+        field_name=f"{field_name}.images",
+    )
+    state = _copy_string_mapping(
+        interface.get("state"),
+        field_name=f"{field_name}.state",
+    )
+    action_modes = _copy_string_mapping(
+        interface.get("action_modes"),
+        field_name=f"{field_name}.action_modes",
+        allow_empty=False,
+    )
+
+    return {
+        "robot_spec": {
+            "name": name,
+            "action_modes": list(action_modes.values()),
+            "image_keys": list(images.values()),
+            "state_keys": list(state.values()),
+        },
+        "modality_maps": {
+            "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
+            "state": _invert_unique_mapping(state, field_name=f"{field_name}.state"),
+            "action_modes": _invert_unique_mapping(
+                action_modes,
+                field_name=f"{field_name}.action_modes",
+            ),
+        },
+    }
+
+
+def _expand_model_interface_config(
+    interface: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    """Expand one compact model-side YAML interface block."""
+
+    _validate_interface_keys(
+        interface,
+        field_name=field_name,
+        allowed_keys={
+            "name",
+            "images",
+            "state",
+            "action_modes",
+            "output_action_mode",
+        },
+    )
+
+    name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
+    images = _copy_string_mapping(
+        interface.get("images"),
+        field_name=f"{field_name}.images",
+    )
+    state = _copy_string_mapping(
+        interface.get("state"),
+        field_name=f"{field_name}.state",
+    )
+    action_modes = _copy_string_mapping(
+        interface.get("action_modes"),
+        field_name=f"{field_name}.action_modes",
+        allow_empty=False,
+    )
+    output_action_mode = _ensure_non_empty_string(
+        interface.get("output_action_mode"),
+        field_name=f"{field_name}.output_action_mode",
+    )
+    if output_action_mode not in action_modes:
+        supported_modes = ", ".join(repr(key) for key in action_modes)
+        raise InterfaceValidationError(
+            f"{field_name}.output_action_mode must be one of the embodia-standard "
+            f"action modes declared in {field_name}.action_modes. "
+            f"Got {output_action_mode!r}; expected one of: {supported_modes}."
+        )
+
+    return {
+        "model_spec": {
+            "name": name,
+            "required_image_keys": list(images.values()),
+            "required_state_keys": list(state.values()),
+            "output_action_mode": action_modes[output_action_mode],
+        },
+        "modality_maps": {
+            "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
+            "state": _invert_unique_mapping(state, field_name=f"{field_name}.state"),
+            "action_modes": _invert_unique_mapping(
+                action_modes,
+                field_name=f"{field_name}.action_modes",
+            ),
+        },
+    }
+
+
+def expand_component_yaml_interface_config(
+    loaded: Mapping[str, Any],
+    *,
+    component: str,
+    path: str | PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """Expand one compact YAML ``interface`` block into runtime config fields."""
+
+    copied = _copy_mapping(loaded, field_name=f"{path or '<config>'}:{component}")
+    raw_interface = copied.pop("interface", None)
+    field_name = (
+        f"{Path(path)}:{component}.interface"
+        if path is not None
+        else f"{component}.interface"
+    )
+    if raw_interface is None:
+        raise InterfaceValidationError(
+            f"{field_name} is required. YAML-based embodia config must declare "
+            "one compact 'interface' block."
+        )
+    if not isinstance(raw_interface, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name} must be a mapping, got {type(raw_interface).__name__}."
+        )
+
+    if component == "robot":
+        expanded = _expand_robot_interface_config(raw_interface, field_name=field_name)
+    elif component == "model":
+        expanded = _expand_model_interface_config(raw_interface, field_name=field_name)
+    else:
+        raise InterfaceValidationError(
+            f"Unsupported component {component!r} when expanding YAML interface."
+        )
+
+    copied.update(expanded)
+    return copied
+
+
 def load_yaml_config(
     path: str | PathLike[str],
     *,
@@ -118,7 +344,7 @@ def load_component_yaml_config(
     1. a multi-component file with top-level sections such as ``robot`` and
        ``model``
     2. a direct single-component mapping containing fields such as
-       ``robot_spec`` or ``model_spec``
+       ``interface`` and ``method_aliases``
     """
 
     loaded = load_yaml_config(path)
@@ -147,6 +373,7 @@ def load_component_yaml_config(
 
 
 __all__ = [
+    "expand_component_yaml_interface_config",
     "is_yaml_available",
     "load_component_yaml_config",
     "load_yaml_config",

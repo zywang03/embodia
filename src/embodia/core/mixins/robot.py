@@ -8,7 +8,10 @@ from numbers import Real
 from os import PathLike
 from typing import Any, Self
 
-from ..config_io import load_component_yaml_config
+from ..config_io import (
+    expand_component_yaml_interface_config,
+    load_component_yaml_config,
+)
 from ...runtime.checks import validate_robot_spec as _validate_robot_spec
 from ..errors import InterfaceValidationError
 from ..modalities import action_modes, images, state
@@ -47,9 +50,8 @@ class RobotMixin(_CommonInterfaceMixin):
     }
     _YAML_CONFIG_KEYS = {
         "init",
-        "robot_spec",
+        "interface",
         "method_aliases",
-        "modality_maps",
         "remote_policy",
     }
 
@@ -122,6 +124,11 @@ class RobotMixin(_CommonInterfaceMixin):
             loaded,
             allowed_keys=cls._YAML_CONFIG_KEYS,
             config_label=f"robot YAML config at {path}",
+        )
+        loaded = expand_component_yaml_interface_config(
+            loaded,
+            component="robot",
+            path=path,
         )
         init_config = loaded.pop("init", {})
         if not isinstance(init_config, Mapping):

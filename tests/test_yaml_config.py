@@ -41,11 +41,11 @@ class YamlConfigTests(unittest.TestCase):
     def test_load_yaml_config_reads_top_level_mapping(self) -> None:
         path = self._write_config(
             {
-                "robot_spec": {
+                "interface": {
                     "name": "robot",
-                    "action_modes": ["ee_delta"],
-                    "image_keys": ["front_rgb"],
-                    "state_keys": ["joint_positions"],
+                    "images": {"front_rgb": "front_rgb"},
+                    "state": {"joint_positions": "joint_positions"},
+                    "action_modes": {"ee_delta": "ee_delta"},
                 }
             }
         )
@@ -53,7 +53,7 @@ class YamlConfigTests(unittest.TestCase):
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             loaded = load_yaml_config(path)
 
-        self.assertEqual(loaded["robot_spec"]["name"], "robot")
+        self.assertEqual(loaded["interface"]["name"], "robot")
 
     def test_load_yaml_config_reads_named_section(self) -> None:
         path = self._write_config(
@@ -93,11 +93,11 @@ class YamlConfigTests(unittest.TestCase):
     def test_load_component_yaml_config_accepts_direct_mapping(self) -> None:
         path = self._write_config(
             {
-                "robot_spec": {
+                "interface": {
                     "name": "robot",
-                    "action_modes": ["ee_delta"],
-                    "image_keys": ["front_rgb"],
-                    "state_keys": ["joint_positions"],
+                    "images": {"front_rgb": "front_rgb"},
+                    "state": {"joint_positions": "joint_positions"},
+                    "action_modes": {"ee_delta": "ee_delta"},
                 }
             }
         )
@@ -105,7 +105,7 @@ class YamlConfigTests(unittest.TestCase):
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             loaded = load_component_yaml_config(path, component="robot")
 
-        self.assertEqual(loaded["robot_spec"]["name"], "robot")
+        self.assertEqual(loaded["interface"]["name"], "robot")
 
     def test_require_yaml_reports_missing_optional_dependency(self) -> None:
         with mock.patch.object(config_io.importlib.util, "find_spec", return_value=None):
@@ -119,39 +119,30 @@ class YamlConfigTests(unittest.TestCase):
             {
                 "robot": {
                     "init": {"label": "from_yaml"},
-                    "robot_spec": {
+                    "interface": {
                         "name": "vendor_robot",
-                        "action_modes": ["cartesian_delta"],
-                        "image_keys": ["rgb_front"],
-                        "state_keys": ["qpos"],
+                        "images": {"front_rgb": "rgb_front"},
+                        "state": {"joint_positions": "qpos"},
+                        "action_modes": {"ee_delta": "cartesian_delta"},
                     },
                     "method_aliases": {
                         "observe": "capture",
                         "act": "send_command",
                         "reset": "home",
                     },
-                    "modality_maps": {
-                        "images": {"rgb_front": "front_rgb"},
-                        "state": {"qpos": "joint_positions"},
-                        "action_modes": {"cartesian_delta": "ee_delta"},
-                    },
                 },
                 "model": {
                     "init": {"gain": 0.25},
-                    "model_spec": {
+                    "interface": {
                         "name": "vendor_model",
-                        "required_image_keys": ["rgb_front"],
-                        "required_state_keys": ["qpos"],
-                        "output_action_mode": "cartesian_delta",
+                        "images": {"front_rgb": "rgb_front"},
+                        "state": {"joint_positions": "qpos"},
+                        "action_modes": {"ee_delta": "cartesian_delta"},
+                        "output_action_mode": "ee_delta",
                     },
                     "method_aliases": {
                         "reset": "clear_state",
                         "step": "infer",
-                    },
-                    "modality_maps": {
-                        "images": {"rgb_front": "front_rgb"},
-                        "state": {"qpos": "joint_positions"},
-                        "action_modes": {"cartesian_delta": "ee_delta"},
                     },
                 },
             }
@@ -205,6 +196,12 @@ class YamlConfigTests(unittest.TestCase):
         path = self._write_config(
             {
                 "robot": {
+                    "interface": {
+                        "name": "robot",
+                        "images": {"front_rgb": "front_rgb"},
+                        "state": {"joint_positions": "joint_positions"},
+                        "action_modes": {"ee_delta": "ee_delta"},
+                    },
                     "init": ["not", "a", "mapping"],
                 }
             }
@@ -223,11 +220,11 @@ class YamlConfigTests(unittest.TestCase):
         path = self._write_config(
             {
                 "robot": {
-                    "robot_spec": {
+                    "interface": {
                         "name": "robot",
-                        "action_modes": ["ee_delta"],
-                        "image_keys": ["front_rgb"],
-                        "state_keys": ["joint_positions"],
+                        "images": {"front_rgb": "front_rgb"},
+                        "state": {"joint_positions": "joint_positions"},
+                        "action_modes": {"ee_delta": "ee_delta"},
                     },
                     "method_aliasess": {
                         "observe": "capture",
@@ -248,6 +245,56 @@ class YamlConfigTests(unittest.TestCase):
 
         self.assertIn("unsupported field", str(ctx.exception))
         self.assertEqual(YourRobot.init_calls, 0)
+
+    def test_from_yaml_rejects_ambiguous_native_names_in_interface(self) -> None:
+        path = self._write_config(
+            {
+                "robot": {
+                    "interface": {
+                        "name": "robot",
+                        "images": {
+                            "front_rgb": "shared_camera",
+                            "wrist_rgb": "shared_camera",
+                        },
+                        "state": {"joint_positions": "qpos"},
+                        "action_modes": {"ee_delta": "ee_delta"},
+                    }
+                }
+            }
+        )
+
+        class YourRobot(RobotMixin):
+            pass
+
+        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
+            with self.assertRaises(InterfaceValidationError) as ctx:
+                YourRobot.from_yaml(path)
+
+        self.assertIn("ambiguous", str(ctx.exception))
+
+    def test_from_yaml_rejects_output_mode_missing_from_interface_modes(self) -> None:
+        path = self._write_config(
+            {
+                "model": {
+                    "interface": {
+                        "name": "model",
+                        "images": {"front_rgb": "front_rgb"},
+                        "state": {"joint_positions": "joint_positions"},
+                        "action_modes": {"ee_delta": "cartesian_delta"},
+                        "output_action_mode": "joint_position",
+                    }
+                }
+            }
+        )
+
+        class YourModel(ModelMixin):
+            pass
+
+        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
+            with self.assertRaises(InterfaceValidationError) as ctx:
+                YourModel.from_yaml(path)
+
+        self.assertIn("output_action_mode", str(ctx.exception))
 
 
 if __name__ == "__main__":

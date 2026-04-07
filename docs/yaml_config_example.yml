@@ -7,32 +7,23 @@ robot:
   init:
     prompt: pick up the cloth and fold it
 
-  # Describe the robot's native interface before embodia remapping.
-  robot_spec:
+  # Compact YAML shape: embodia-standard name -> your native name.
+  # embodia turns this into spec + remapping tables internally.
+  interface:
     name: your_robot
+    images:
+      front_rgb: rgb_front
+    state:
+      joint_positions: qpos
+      ee_pose: tcp_pose
     action_modes:
-      - cartesian_delta
-    image_keys:
-      - rgb_front
-    state_keys:
-      - qpos
-      - tcp_pose
+      ee_delta: cartesian_delta
 
   # embodia method name -> your existing method name
   method_aliases:
     observe: capture
     act: send_command
     reset: home
-
-  # native name -> embodia standard name
-  modality_maps:
-    images:
-      rgb_front: front_rgb
-    state:
-      qpos: joint_positions
-      tcp_pose: ee_pose
-    action_modes:
-      cartesian_delta: ee_delta
 
   # Remote policy config can also live here, but Python callables such as
   # `obs_builder` still need to be passed from code.
@@ -49,25 +40,18 @@ model:
   init:
     default_prompt: fold the cloth
 
-  # Describe the model's native interface before embodia remapping.
-  model_spec:
+  # Same compact shape on the model side.
+  interface:
     name: your_model
-    required_image_keys:
-      - rgb_front
-    required_state_keys:
-      - qpos
-    output_action_mode: cartesian_delta
+    images:
+      front_rgb: rgb_front
+    state:
+      joint_positions: qpos
+    action_modes:
+      ee_delta: cartesian_delta
+    output_action_mode: ee_delta
 
   # embodia method name -> your existing method name
   method_aliases:
     reset: clear_state
     step: infer
-
-  # native name -> embodia standard name
-  modality_maps:
-    images:
-      rgb_front: front_rgb
-    state:
-      qpos: joint_positions
-    action_modes:
-      cartesian_delta: ee_delta

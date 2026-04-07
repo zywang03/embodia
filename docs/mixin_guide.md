@@ -2,7 +2,7 @@
 
 This guide explains the embodia mixin configuration surface.
 
-The same config can live in three places:
+embodia accepts two configuration styles:
 
 - class attributes such as `ROBOT_SPEC`, `MODEL_SPEC`, `METHOD_ALIASES`, and
   `MODALITY_MAPS`
@@ -11,7 +11,9 @@ The same config can live in three places:
 
 For low-intrusion integrations, `from_yaml(...)` or `from_config(...)` is
 usually the best default, because it keeps the wrapped class body focused on
-its native methods. The config meaning is the same in all three cases:
+its native methods.
+
+`from_config(...)` matches the Python-side runtime fields directly:
 
 - `*_SPEC` describes your native interface today
 - `METHOD_ALIASES` tells embodia which existing methods to call
@@ -24,8 +26,8 @@ you can also use `em.RobotSpecKey`, `em.ModelSpecKey`, and
 
 ## YAML-first shape
 
-If you want the config outside Python code entirely, the same fields can live
-in a YAML file and be loaded with:
+If you want the config outside Python code entirely, YAML uses one compact
+`interface:` block instead of separate `*_SPEC` and `MODALITY_MAPS` sections:
 
 ```python
 robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
@@ -34,6 +36,15 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
 
 The full commented example lives in
 [`docs/yaml_config_example.yml`](./yaml_config_example.yml).
+
+In YAML, the direction is intentionally different from `MODALITY_MAPS`:
+
+| Field | Direction |
+| --- | --- |
+| `interface.images` | embodia standard key -> your native key |
+| `interface.state` | embodia standard key -> your native key |
+| `interface.action_modes` | embodia standard mode -> your native mode |
+| `interface.output_action_mode` | embodia standard mode |
 
 ## Direction rules
 

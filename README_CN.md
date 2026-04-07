@@ -71,7 +71,7 @@ robot = YourRobot.from_config(
 )
 ```
 
-如果你希望把配置完全放到 Python 外面，也可以走 YAML。项目里已经有共享示例配置 [basic_runtime.yml](./examples/basic_runtime.yml) 和说明型配置 [yaml_config_example.yml](./docs/yaml_config_example.yml)。
+如果你希望把配置完全放到 Python 外面，也可以走 YAML。`from_yaml(...)` 使用一个更紧凑的 `interface:` 配置块，把 spec 和 key 映射合并到一起。项目里已经有共享示例配置 [basic_runtime.yml](./examples/basic_runtime.yml) 和说明型配置 [yaml_config_example.yml](./docs/yaml_config_example.yml)。
 
 ## 最小数据流
 

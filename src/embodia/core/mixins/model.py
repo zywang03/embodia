@@ -6,7 +6,10 @@ from collections.abc import Callable, Mapping
 from os import PathLike
 from typing import Any, Self
 
-from ..config_io import load_component_yaml_config
+from ..config_io import (
+    expand_component_yaml_interface_config,
+    load_component_yaml_config,
+)
 from ...runtime.checks import validate_model_spec as _validate_model_spec
 from ..errors import InterfaceValidationError
 from ..modalities import action_modes, images, state
@@ -30,9 +33,8 @@ class ModelMixin(_CommonInterfaceMixin):
     }
     _YAML_CONFIG_KEYS = {
         "init",
-        "model_spec",
+        "interface",
         "method_aliases",
-        "modality_maps",
     }
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -95,6 +97,11 @@ class ModelMixin(_CommonInterfaceMixin):
             loaded,
             allowed_keys=cls._YAML_CONFIG_KEYS,
             config_label=f"model YAML config at {path}",
+        )
+        loaded = expand_component_yaml_interface_config(
+            loaded,
+            component="model",
+            path=path,
         )
         init_config = loaded.pop("init", {})
         if not isinstance(init_config, Mapping):

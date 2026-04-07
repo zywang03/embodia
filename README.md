@@ -93,8 +93,9 @@ robot = YourRobot.from_config(
 )
 ```
 
-If you want that config completely outside Python code, the same structure can
-live in YAML through `from_yaml(...)`. A commented example lives in
+If you want that config completely outside Python code, `from_yaml(...)` uses a
+more compact `interface:` block that merges spec and modality remapping into
+one place. A commented example lives in
 [`docs/yaml_config_example.yml`](docs/yaml_config_example.yml), and the shared
 runtime example config used by several example scripts lives in
 [`examples/basic_runtime.yml`](examples/basic_runtime.yml).

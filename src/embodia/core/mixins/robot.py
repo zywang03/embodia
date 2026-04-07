@@ -16,7 +16,7 @@ from ...runtime.checks import (
     validate_robot_spec as _validate_robot_spec,
 )
 from ..errors import InterfaceValidationError
-from ..modalities import images, state, task
+from ..modalities import images, state
 from ..modalities._common import CONTROL_TARGETS
 from ..schema import Action, Frame, RobotSpec
 from ..transform import invert_mapping, remap_action, remap_robot_spec, robot_spec_to_dict
@@ -147,10 +147,6 @@ class RobotMixin(_CommonInterfaceMixin):
             ),
             state_key_map=cls._effective_modality_map(
                 state.STATE_KEYS,
-                modality_maps=modality_maps,
-            ),
-            task_key_map=cls._effective_modality_map(
-                task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
             command_kind_map=cls._effective_command_kind_map(
@@ -376,11 +372,6 @@ class RobotMixin(_CommonInterfaceMixin):
             owner_label="robot",
             required_keys=spec.all_state_keys(),
         )
-        task.ensure_frame_keys(
-            normalized_frame,
-            owner_label="robot",
-            required_keys=spec.task_keys,
-        )
         build_request = self._resolve_remote_policy_request_builder()
         policy_output = runner.infer(build_request(normalized_frame))
         setattr(self, "last_policy_output", policy_output)
@@ -413,7 +404,6 @@ class RobotMixin(_CommonInterfaceMixin):
             image_key_map=self.get_image_key_map(),
             target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
-            task_key_map=self.get_task_key_map(),
             command_kind_map=self.get_command_kind_map(),
         )
 
@@ -474,11 +464,6 @@ class RobotMixin(_CommonInterfaceMixin):
             owner_label="robot",
             required_keys=normalized_spec.all_state_keys(),
         )
-        task.ensure_frame_keys(
-            normalized_frame,
-            owner_label="robot",
-            required_keys=normalized_spec.task_keys,
-        )
         return normalized_frame
 
     def ensure_action_supported(
@@ -536,11 +521,6 @@ class RobotMixin(_CommonInterfaceMixin):
             owner_label="robot",
             required_keys=spec.all_state_keys(),
         )
-        task.ensure_frame_keys(
-            frame,
-            owner_label="robot",
-            required_keys=spec.task_keys,
-        )
         return frame
 
     def observe(self) -> Frame:
@@ -577,11 +557,6 @@ class RobotMixin(_CommonInterfaceMixin):
             frame,
             owner_label="robot",
             required_keys=spec.all_state_keys(),
-        )
-        task.ensure_frame_keys(
-            frame,
-            owner_label="robot",
-            required_keys=spec.task_keys,
         )
         return frame
 

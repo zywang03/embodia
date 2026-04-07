@@ -2,6 +2,7 @@
 # `RobotMixin.from_yaml(...)` automatically reads the top-level `robot:` block.
 # `ModelMixin.from_yaml(...)` automatically reads the top-level `model:` block.
 # This file only describes the shared runtime schema plus method aliases.
+# `schema.task` is optional model-side context. Robot specs do not declare it.
 
 schema:
   images:

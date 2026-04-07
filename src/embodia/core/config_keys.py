@@ -16,7 +16,6 @@ class RobotSpecKey(StrEnum):
     NAME = "name"
     IMAGE_KEYS = "image_keys"
     COMPONENTS = "components"
-    TASK_KEYS = "task_keys"
     META = "meta"
 
 

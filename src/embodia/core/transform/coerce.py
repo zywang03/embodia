@@ -231,7 +231,6 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
             components=[
                 coerce_component_spec(component) for component in value.components
             ],
-            task_keys=list(value.task_keys),
             meta=dict(value.meta),
         )
     if not isinstance(value, Mapping):
@@ -255,7 +254,6 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
             coerce_component_spec(item)
             for item in _copy_sequence(components, "robot_spec.components")
         ],
-        task_keys=_copy_sequence(value.get("task_keys", []), "robot_spec.task_keys"),
         meta=_copy_string_key_mapping(value.get("meta"), "robot_spec.meta"),
     )
 

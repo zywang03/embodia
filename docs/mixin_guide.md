@@ -20,6 +20,8 @@ The preferred direction is now:
 embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
 That means your native methods can stay named `infer`, `capture`, `home`, and so
 on, while embodia still has one collision-free internal dispatch path.
+`task` is model-side context, not robot capability, so robot specs no longer
+declare task-related fields.
 
 ## Method aliases
 

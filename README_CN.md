@@ -64,7 +64,7 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
 
 这个 YAML 只描述共享 schema 和方法别名，不承载构造参数。对 model 来说，
 embodia 会直接从 `schema:` 推导输入输出。如果模型需要额外条件输入，比如
-prompt，放到 `Frame.task` 里。
+prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 
 标准 action 结构现在是：
 

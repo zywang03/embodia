@@ -205,7 +205,6 @@ def remap_robot_spec(
     *,
     image_key_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
-    task_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> RobotSpec:
@@ -228,11 +227,6 @@ def remap_robot_spec(
             )
             for component in normalized.components
         ],
-        task_keys=_remap_name_list(
-            normalized.task_keys,
-            task_key_map or {},
-            "robot_spec.task_keys",
-        ),
         meta=dict(normalized.meta),
     )
 

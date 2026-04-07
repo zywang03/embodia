@@ -71,7 +71,8 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
 That YAML only describes the shared schema plus method aliases. Constructor
 arguments stay in Python code. On the model side, embodia derives required
 inputs and output targets directly from the shared `schema:` block. If a model
-needs extra conditioning such as a prompt, put it in `Frame.task`.
+needs extra conditioning such as a prompt, put it in `Frame.task`. Robot specs
+do not declare task-related capabilities.
 
 The normalized action shape is:
 

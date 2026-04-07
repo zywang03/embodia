@@ -90,7 +90,6 @@ def robot_spec_to_dict(spec: RobotSpec | Mapping[str, Any]) -> dict[str, Any]:
             component_spec_to_dict(component)
             for component in normalized.components
         ],
-        "task_keys": list(normalized.task_keys),
         "meta": dict(normalized.meta),
     }
 

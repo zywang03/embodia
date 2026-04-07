@@ -287,7 +287,6 @@ def _expand_robot_config(
             "name": name,
             "image_keys": list(shared["image_keys"]),
             "components": list(shared["components"]),
-            "task_keys": list(shared["task_keys"]),
             "meta": dict(shared["meta"]),
         },
         "modality_maps": {},

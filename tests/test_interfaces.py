@@ -211,7 +211,6 @@ class InterfaceTests(unittest.TestCase):
                         "state_keys": ["position"],
                     },
                 ],
-                "task_keys": ["prompt"],
             }
             METHOD_ALIASES = {
                 "observe": "capture",

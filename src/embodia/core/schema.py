@@ -237,7 +237,6 @@ class RobotSpec:
     name: str
     image_keys: list[str]
     components: list[ComponentSpec]
-    task_keys: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
     def get_component(self, name: str) -> ComponentSpec | None:
@@ -514,7 +513,6 @@ def validate_robot_spec(spec: RobotSpec) -> None:
 
     _ensure_non_empty_string(spec.name, "robot_spec.name")
     _ensure_string_list(spec.image_keys, "robot_spec.image_keys", allow_empty=True)
-    _ensure_string_list(spec.task_keys, "robot_spec.task_keys", allow_empty=True)
     _ensure_string_key_dict(spec.meta, "robot_spec.meta")
     if not isinstance(spec.components, list):
         raise InterfaceValidationError(

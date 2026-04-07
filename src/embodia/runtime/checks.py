@@ -133,13 +133,6 @@ def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
     if state_problem is not None:
         problems.append(state_problem)
 
-    task_problem = task.pair_problem(
-        available_keys=robot_spec.task_keys,
-        required_keys=model_spec.required_task_keys,
-    )
-    if task_problem is not None:
-        problems.append(task_problem)
-
     for output in model_spec.outputs:
         component = robot_spec.get_component(output.target)
         if component is None:
@@ -195,7 +188,6 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
     validate_frame(frame)
     images.ensure_frame_keys(frame, spec.image_keys, owner_label="robot")
     state.ensure_frame_keys(frame, spec.all_state_keys(), owner_label="robot")
-    task.ensure_frame_keys(frame, spec.task_keys, owner_label="robot")
 
 
 def check_model(model: object, *, sample_frame: Frame | None = None) -> None:

@@ -8,7 +8,7 @@ schema:
     - front_rgb
   task:
     - prompt
-  groups:
+  components:
     arm:
       kind: arm
       dof: 6
@@ -34,18 +34,6 @@ robot:
 
 model:
   name: your_model
-  requires:
-    images:
-      - front_rgb
-    state:
-      - joint_positions
-      - ee_pose
-      - position
-    task:
-      - prompt
-  outputs:
-    arm: cartesian_pose_delta
-    gripper: gripper_position
   method_aliases:
     reset: clear_state
-    step: infer
+    infer: predict_action

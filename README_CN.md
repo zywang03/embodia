@@ -62,7 +62,9 @@ robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
 model = YourModel.from_yaml("docs/yaml_config_example.yml")
 ```
 
-这个 YAML 只描述接口对齐，不承载构造参数。如果模型需要额外条件输入，比如 prompt，放到 `Frame.task` 里。
+这个 YAML 只描述共享 schema 和方法别名，不承载构造参数。对 model 来说，
+embodia 会直接从 `schema:` 推导输入输出。如果模型需要额外条件输入，比如
+prompt，放到 `Frame.task` 里。
 
 标准 action 结构现在是：
 
@@ -85,8 +87,8 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
 }
 ```
 
-现在的 `Action` 是一个按控制组组织的命令容器。gripper、hand、suction
-这类末端执行器都是一等控制组，不再作为临时附加通道塞进一个扁平动作向量里。
+现在的 `Action` 是一个按组件组织的命令容器。gripper、hand、suction
+这类末端执行器都是一等 robot 组件，不再作为临时附加通道塞进一个扁平动作向量里。
 
 最小的本地推理路径就是：
 
@@ -117,7 +119,7 @@ result = em.run_step(robot, model, runtime=runtime)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
 它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
-这个共享配置定义了 `arm` 和 `gripper` 两个控制组，Python 示例里每一步也都会输出对应的 `Action.commands`。
+这个共享配置定义了 `arm` 和 `gripper` 两个组件，Python 示例里每一步也都会输出对应的 `Action.commands`。
 
 ## 设计
 

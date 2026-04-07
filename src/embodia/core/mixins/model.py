@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from os import PathLike
+from types import SimpleNamespace
 from typing import Any, Self
 
 from ..config_io import (
@@ -28,22 +29,20 @@ class ModelMixin(_CommonInterfaceMixin):
     MODEL_SPEC: ModelSpec | Mapping[str, Any] | None = None
     GET_SPEC_METHOD = "get_spec"
     RESET_METHOD = "reset"
-    STEP_METHOD = "step"
-    STEP_CHUNK_METHOD: str | None = None
-    PLAN_METHOD: str | None = None
+    INFER_METHOD = "infer"
+    INFER_CHUNK_METHOD: str | None = "infer_chunk"
+    PLAN_METHOD: str | None = "plan"
 
     _METHOD_ALIAS_ATTRS: dict[str, str] = {
         "get_spec": "GET_SPEC_METHOD",
         "reset": "RESET_METHOD",
-        "step": "STEP_METHOD",
-        "step_chunk": "STEP_CHUNK_METHOD",
+        "infer": "INFER_METHOD",
+        "infer_chunk": "INFER_CHUNK_METHOD",
         "plan": "PLAN_METHOD",
     }
     _YAML_CONFIG_KEYS = {
         "schema",
         "name",
-        "requires",
-        "outputs",
         "method_aliases",
     }
 
@@ -206,7 +205,9 @@ class ModelMixin(_CommonInterfaceMixin):
         """Ensure frame keys satisfy the model spec."""
 
         normalized_frame = self.validate_frame(frame)
-        normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
+        normalized_spec = (
+            self.embodia_get_spec() if spec is None else self.validate_spec(spec)
+        )
         images.ensure_frame_keys(
             normalized_frame,
             owner_label="model",
@@ -232,7 +233,9 @@ class ModelMixin(_CommonInterfaceMixin):
         """Ensure emitted command kinds and dims match the model spec."""
 
         normalized_action = self.validate_action(action)
-        normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
+        normalized_spec = (
+            self.embodia_get_spec() if spec is None else self.validate_spec(spec)
+        )
         _ensure_action_matches_model_spec(normalized_action, normalized_spec)
         return normalized_action
 
@@ -259,13 +262,18 @@ class ModelMixin(_CommonInterfaceMixin):
             ),
         )
 
-    def get_spec(self) -> ModelSpec:
-        """Return a normalized, validated model spec from the wrapped class."""
+    def embodia_get_spec(self) -> ModelSpec:
+        """Return the normalized model spec used internally by embodia."""
 
         return self._get_runtime_spec()
 
-    def reset(self) -> None:
-        """Forward reset and enforce the embodia return contract."""
+    def get_spec(self) -> ModelSpec:
+        """Backward-compatible alias for :meth:`embodia_get_spec`."""
+
+        return self.embodia_get_spec()
+
+    def embodia_reset(self) -> None:
+        """Forward reset and enforce embodia's normalized reset contract."""
 
         raw_reset = self._resolve_impl("reset", "_reset_impl")
         result = raw_reset()
@@ -274,10 +282,35 @@ class ModelMixin(_CommonInterfaceMixin):
                 f"model reset() must return None, got {type(result).__name__}."
             )
 
-    def step(self, frame: Frame | Mapping[str, Any]) -> Action:
-        """Normalize inputs and outputs around the wrapped model step()."""
+    def reset(self) -> None:
+        """Backward-compatible alias for :meth:`embodia_reset`."""
 
-        raw_step = self._resolve_impl("step", "_step_impl")
+        self.embodia_reset()
+
+    @staticmethod
+    def _single_step_chunk_request() -> object:
+        """Build one minimal request object for chunk-to-step fallback."""
+
+        return SimpleNamespace(
+            request_step=0,
+            request_time_s=0.0,
+            history_start=0,
+            history_end=0,
+            active_chunk_length=0,
+            remaining_steps=0,
+            overlap_steps=0,
+            latency_steps=0,
+            request_trigger_steps=0,
+            plan_start_step=0,
+            history_actions=[],
+        )
+
+    def _validate_model_input_frame(
+        self,
+        frame: Frame | Mapping[str, Any],
+    ) -> tuple[Frame, ModelSpec]:
+        """Normalize one model input frame and ensure it satisfies the spec."""
+
         normalized_frame = self.validate_frame(frame)
         spec = self._get_runtime_spec()
         images.ensure_frame_keys(
@@ -295,9 +328,144 @@ class ModelMixin(_CommonInterfaceMixin):
             owner_label="model",
             required_keys=spec.required_task_keys,
         )
-        raw_action = raw_step(self.to_native_frame(normalized_frame))
-        normalized_action = self.validate_action(raw_action)
-        _ensure_action_matches_model_spec(normalized_action, spec)
-        return normalized_action
+        return normalized_frame, spec
+
+    def _coerce_action_plan(
+        self,
+        raw_plan: Action | Mapping[str, Any] | Sequence[Action | Mapping[str, Any]],
+        *,
+        spec: ModelSpec,
+    ) -> list[Action]:
+        """Normalize one step result or chunk result into validated actions."""
+
+        if isinstance(raw_plan, (Action, Mapping)):
+            items = [raw_plan]
+        elif isinstance(raw_plan, (str, bytes)) or not isinstance(raw_plan, Sequence):
+            raise InterfaceValidationError(
+                "model infer_chunk() must return one action-like object or a "
+                f"sequence of action-like objects, got {type(raw_plan).__name__}."
+            )
+        else:
+            items = list(raw_plan)
+
+        if not items:
+            raise InterfaceValidationError(
+                "model infer_chunk() must not return an empty chunk."
+            )
+
+        actions: list[Action] = []
+        for index, item in enumerate(items):
+            action = self.validate_action(item)
+            try:
+                _ensure_action_matches_model_spec(action, spec)
+            except InterfaceValidationError as exc:
+                raise InterfaceValidationError(
+                    f"invalid action at chunk index {index}: {exc}"
+                ) from exc
+            actions.append(action)
+        return actions
+
+    def embodia_infer(self, frame: Frame | Mapping[str, Any]) -> Action:
+        """Normalize inputs and outputs around one wrapped single-step inference."""
+
+        normalized_frame, spec = self._validate_model_input_frame(frame)
+        raw_infer = self._resolve_optional_impl("infer", "_infer_impl")
+
+        if callable(raw_infer):
+            raw_action = raw_infer(self.to_native_frame(normalized_frame))
+            normalized_action = self.validate_action(raw_action)
+            _ensure_action_matches_model_spec(normalized_action, spec)
+            return normalized_action
+
+        raw_step = self._resolve_optional_impl("step", "_step_impl")
+        if callable(raw_step):
+            raw_action = raw_step(self.to_native_frame(normalized_frame))
+            normalized_action = self.validate_action(raw_action)
+            _ensure_action_matches_model_spec(normalized_action, spec)
+            return normalized_action
+
+        raw_infer_chunk = self._resolve_optional_impl("infer_chunk", "_infer_chunk_impl")
+        if callable(raw_infer_chunk):
+            return self.embodia_infer_chunk(
+                normalized_frame,
+                self._single_step_chunk_request(),
+            )[0]
+
+        raw_step_chunk = self._resolve_optional_impl("step_chunk", "_step_chunk_impl")
+        if callable(raw_step_chunk):
+            return self.embodia_infer_chunk(
+                normalized_frame,
+                self._single_step_chunk_request(),
+            )[0]
+
+        raise InterfaceValidationError(
+            f"{type(self).__name__} must expose infer(frame) or infer_chunk(frame, request)."
+        )
+
+    def step(self, frame: Frame | Mapping[str, Any]) -> Action:
+        """Backward-compatible alias for :meth:`embodia_infer`."""
+
+        return self.embodia_infer(frame)
+
+    def embodia_infer_chunk(
+        self,
+        frame: Frame | Mapping[str, Any],
+        request: object,
+    ) -> list[Action]:
+        """Normalize inputs and outputs around one chunk-producing inference."""
+
+        normalized_frame, spec = self._validate_model_input_frame(frame)
+        raw_infer_chunk = self._resolve_optional_impl("infer_chunk", "_infer_chunk_impl")
+
+        if callable(raw_infer_chunk):
+            raw_plan = raw_infer_chunk(self.to_native_frame(normalized_frame), request)
+            return self._coerce_action_plan(raw_plan, spec=spec)
+
+        raw_step_chunk = self._resolve_optional_impl("step_chunk", "_step_chunk_impl")
+        if callable(raw_step_chunk):
+            raw_plan = raw_step_chunk(self.to_native_frame(normalized_frame), request)
+            return self._coerce_action_plan(raw_plan, spec=spec)
+
+        raw_infer = self._resolve_optional_impl("infer", "_infer_impl")
+        if callable(raw_infer):
+            raw_action = raw_infer(self.to_native_frame(normalized_frame))
+            normalized_action = self.validate_action(raw_action)
+            _ensure_action_matches_model_spec(normalized_action, spec)
+            return [normalized_action]
+
+        raw_step = self._resolve_optional_impl("step", "_step_impl")
+        if callable(raw_step):
+            raw_action = raw_step(self.to_native_frame(normalized_frame))
+            normalized_action = self.validate_action(raw_action)
+            _ensure_action_matches_model_spec(normalized_action, spec)
+            return [normalized_action]
+
+        raise InterfaceValidationError(
+            f"{type(self).__name__} must expose infer_chunk(frame, request) or infer(frame)."
+        )
+
+    def step_chunk(
+        self,
+        frame: Frame | Mapping[str, Any],
+        request: object,
+    ) -> list[Action]:
+        """Backward-compatible alias for :meth:`embodia_infer_chunk`."""
+
+        return self.embodia_infer_chunk(frame, request)
+
+    def embodia_plan(self, frame: Frame | Mapping[str, Any]) -> list[Action]:
+        """Return one normalized action plan when the wrapped model exposes one."""
+
+        normalized_frame, spec = self._validate_model_input_frame(frame)
+        raw_plan = self._resolve_optional_impl("plan", "_plan_impl")
+        if callable(raw_plan):
+            return self._coerce_action_plan(
+                raw_plan(self.to_native_frame(normalized_frame)),
+                spec=spec,
+            )
+        return self.embodia_infer_chunk(
+            normalized_frame,
+            self._single_step_chunk_request(),
+        )
 
 __all__ = ["ModelMixin"]

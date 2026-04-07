@@ -15,7 +15,7 @@ class RobotSpecKey(StrEnum):
 
     NAME = "name"
     IMAGE_KEYS = "image_keys"
-    GROUPS = "groups"
+    COMPONENTS = "components"
     TASK_KEYS = "task_keys"
     META = "meta"
 
@@ -38,8 +38,8 @@ class MethodAliasKey(StrEnum):
     OBSERVE = "observe"
     ACT = "act"
     RESET = "reset"
-    STEP = "step"
-    STEP_CHUNK = "step_chunk"
+    INFER = "infer"
+    INFER_CHUNK = "infer_chunk"
     PLAN = "plan"
 
 

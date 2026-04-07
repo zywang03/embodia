@@ -15,6 +15,11 @@ The preferred direction is now:
 - YAML describes the shared embodia schema only
 - your Python class keeps its own constructor and native methods
 - if your native names already match the schema, you do not need any remapping
+- model inputs and outputs are inferred from that shared schema
+
+embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
+That means your native methods can stay named `infer`, `capture`, `home`, and so
+on, while embodia still has one collision-free internal dispatch path.
 
 ## Method aliases
 
@@ -29,17 +34,19 @@ METHOD_ALIASES = {
 ```
 
 The same keys can also live in YAML under `robot.method_aliases` or
-`model.method_aliases`.
+`model.method_aliases`. On the model side, `infer` is the default native method
+name, so you only need `model.method_aliases.infer` when your class uses a
+different name.
 
 ## Shared schema
 
-Robot embodiment is described through control groups:
+Robot embodiment is described through components:
 
 ```python
 ROBOT_SPEC = {
     "name": "your_robot",
     "image_keys": ["front_rgb"],
-    "groups": [
+    "components": [
         {
             "name": "arm",
             "kind": "arm",
@@ -58,7 +65,7 @@ ROBOT_SPEC = {
 }
 ```
 
-Model outputs are declared against the same targets and command kinds:
+Model outputs should align with the same shared targets and command kinds:
 
 ```python
 MODEL_SPEC = {
@@ -71,6 +78,19 @@ MODEL_SPEC = {
     ],
 }
 ```
+
+When you use `from_yaml(...)`, you do not repeat that information inside the
+`model:` block. embodia derives:
+
+- `required_image_keys` from `schema.images`
+- `required_state_keys` from the union of `schema.components[*].state`
+- `required_task_keys` from `schema.task`
+- `outputs` from `schema.components[*].command_kinds`
+
+That YAML auto-derivation expects each component to declare exactly one
+command kind. If a component supports multiple command kinds and your model needs a
+more specific spec, declare `MODEL_SPEC` in Python instead of relying on YAML
+inference.
 
 The normalized runtime action is grouped by control target:
 
@@ -94,8 +114,8 @@ The normalized runtime action is grouped by control target:
 
 ## Optional Python-side remapping
 
-YAML no longer carries `bindings` or `interface` remapping blocks. If your
-native class already uses schema-standard names, that is the simplest setup.
+YAML no longer carries remapping blocks. If your native class already uses
+schema-standard names, that is the simplest setup.
 
 If your native names differ, keep remapping in Python code with `MODALITY_MAPS`:
 
@@ -120,7 +140,7 @@ existing projects into the shared schema.
 schema:
   images:
     - front_rgb
-  groups:
+  components:
     arm:
       kind: arm
       dof: 6
@@ -142,6 +162,12 @@ robot:
     observe: capture
     act: send_command
     reset: home
+
+model:
+  name: your_model
+  method_aliases:
+    reset: clear_state
+    infer: predict_action
 ```
 
 The full example lives in [`docs/yaml_config_example.yml`](./yaml_config_example.yml).

@@ -4,11 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
 from ..core.transform import coerce_action, coerce_frame
+from ._dispatch import (
+    MODEL_INFER_CHUNK_METHODS,
+    MODEL_INFER_METHODS,
+    MODEL_RESET_METHODS,
+    ROBOT_ACT_METHODS,
+    ROBOT_HAS_REMOTE_POLICY_METHODS,
+    ROBOT_OBSERVE_METHODS,
+    ROBOT_REMOTE_ACTION_METHODS,
+    format_method_options,
+    resolve_callable_method,
+)
 from .checks import validate_action, validate_frame
 
 ActionSource = Callable[[Frame], Action | Mapping[str, Any] | None]
@@ -55,6 +67,52 @@ def _call_action_fn(action_fn: ActionSource, frame: Frame) -> Action | Mapping[s
     return raw_action
 
 
+def _single_step_chunk_request() -> object:
+    """Build one minimal request object for chunk-to-step fallback."""
+
+    return SimpleNamespace(
+        request_step=0,
+        request_time_s=0.0,
+        history_start=0,
+        history_end=0,
+        active_chunk_length=0,
+        remaining_steps=0,
+        overlap_steps=0,
+        latency_steps=0,
+        request_trigger_steps=0,
+        plan_start_step=0,
+        history_actions=[],
+    )
+
+
+def _first_action_from_chunk_call(
+    infer_chunk: Callable[[Frame, object], object],
+    frame: Frame,
+) -> Action:
+    """Call one chunk-producing source and return the first action."""
+
+    try:
+        raw_plan = infer_chunk(frame, _single_step_chunk_request())
+    except Exception as exc:
+        raise InterfaceValidationError(
+            f"infer_chunk(frame, request) raised {type(exc).__name__}: {exc}"
+        ) from exc
+
+    if isinstance(raw_plan, (Action, Mapping)):
+        action = _as_action(raw_plan)
+        validate_action(action)
+        return action
+
+    if not isinstance(raw_plan, list) or not raw_plan:
+        raise InterfaceValidationError(
+            "infer_chunk(frame, request) must return a non-empty action chunk."
+        )
+
+    action = _as_action(raw_plan[0])
+    validate_action(action)
+    return action
+
+
 def _resolve_action_source(
     source: object | None,
     action_fn: ActionSource | None,
@@ -71,10 +129,14 @@ def _resolve_action_source(
 
     if source is None:
         if action_fn is None:
-            request_remote = getattr(robot, "_request_remote_policy_action", None)
-            if not callable(request_remote):
-                request_remote = getattr(robot, "request_remote_policy_action", None)
-            has_remote = getattr(robot, "has_remote_policy", None)
+            request_remote, _ = resolve_callable_method(
+                robot,
+                ROBOT_REMOTE_ACTION_METHODS,
+            )
+            has_remote, _ = resolve_callable_method(
+                robot,
+                ROBOT_HAS_REMOTE_POLICY_METHODS,
+            )
             if callable(request_remote) and callable(has_remote):
                 try:
                     enabled = bool(has_remote())
@@ -91,16 +153,31 @@ def _resolve_action_source(
             )
         return action_fn, False
 
-    step = getattr(source, "step", None)
-    if callable(step):
-        return step, True
+    reset_method, _ = resolve_callable_method(source, MODEL_RESET_METHODS)
+    can_reset = callable(reset_method)
+
+    infer, _ = resolve_callable_method(source, MODEL_INFER_METHODS)
+    if callable(infer):
+        return infer, can_reset
+
+    infer_chunk, _ = resolve_callable_method(source, MODEL_INFER_CHUNK_METHODS)
+    if callable(infer_chunk):
+        return (
+            lambda frame, _infer_chunk=infer_chunk: _first_action_from_chunk_call(
+                _infer_chunk,
+                frame,
+            ),
+            can_reset,
+        )
 
     if callable(source):
         return source, False
 
     raise InterfaceValidationError(
-        f"run_step() source must expose step(frame) or be callable(frame), got "
-        f"{type(source).__name__}."
+        "run_step() source must expose "
+        f"{format_method_options(MODEL_INFER_METHODS)}, "
+        f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, or be "
+        f"callable(frame), got {type(source).__name__}."
     )
 
 
@@ -121,7 +198,7 @@ def run_step(
 
     1. observe a frame from the robot, unless a frame is provided
     2. normalize and validate the frame
-    3. get one action from either ``source.step(frame)`` or ``source(frame)``
+    3. get one action from either ``source.infer(frame)`` or ``source(frame)``
     4. normalize and validate the action
     5. optionally execute the action on the robot
 
@@ -154,15 +231,44 @@ def run_step(
     )
     if reset_model and not can_reset:
         raise InterfaceValidationError(
-            "reset_model=True requires a source object with reset()/step(), "
-            "not a bare callable."
+            "reset_model=True requires a source object that exposes "
+            f"{format_method_options(MODEL_RESET_METHODS)} together with "
+            f"{format_method_options(MODEL_INFER_METHODS)} or "
+            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
         )
 
     if reset_model:
         assert model is not None
-        model.reset()
+        reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+        if not callable(reset) or reset_name is None:
+            raise InterfaceValidationError(
+                "reset_model=True requires a model object exposing "
+                f"{format_method_options(MODEL_RESET_METHODS)}."
+            )
+        try:
+            reset()
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(model).__name__}.{reset_name}() raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
-    raw_frame = robot.observe() if frame is None else frame
+    observe, observe_name = resolve_callable_method(robot, ROBOT_OBSERVE_METHODS)
+    if frame is None:
+        if not callable(observe) or observe_name is None:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__} must expose "
+                f"{format_method_options(ROBOT_OBSERVE_METHODS)}."
+            )
+        try:
+            raw_frame = observe()
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__}.{observe_name}() raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+    else:
+        raw_frame = frame
     normalized_frame = _as_frame(raw_frame)
     validate_frame(normalized_frame)
 
@@ -171,7 +277,19 @@ def run_step(
     validate_action(normalized_action)
 
     if execute_action:
-        robot.act(normalized_action)
+        act, act_name = resolve_callable_method(robot, ROBOT_ACT_METHODS)
+        if not callable(act) or act_name is None:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__} must expose "
+                f"{format_method_options(ROBOT_ACT_METHODS)}."
+            )
+        try:
+            act(normalized_action)
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__}.{act_name}(action) raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     return StepResult(frame=normalized_frame, action=normalized_action)
 

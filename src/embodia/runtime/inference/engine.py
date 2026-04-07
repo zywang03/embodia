@@ -9,6 +9,16 @@ from typing import Any
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
+from .._dispatch import (
+    MODEL_INFER_CHUNK_METHODS,
+    MODEL_INFER_METHODS,
+    MODEL_PLAN_METHODS,
+    MODEL_RESET_METHODS,
+    ROBOT_ACT_METHODS,
+    ROBOT_OBSERVE_METHODS,
+    format_method_options,
+    resolve_callable_method,
+)
 from ..checks import validate_action, validate_frame
 from ..flow import ActionSource, _resolve_action_source, run_step
 from .chunk_scheduler import ChunkScheduler
@@ -93,7 +103,19 @@ class InferenceRuntime:
         """Reset model state and any attached runtime components."""
 
         if model is not None:
-            model.reset()
+            reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+            if not callable(reset) or reset_name is None:
+                raise InterfaceValidationError(
+                    "InferenceRuntime.reset(model=...) requires the model to expose "
+                    f"{format_method_options(MODEL_RESET_METHODS)}."
+                )
+            try:
+                reset()
+            except Exception as exc:
+                raise InterfaceValidationError(
+                    f"{type(model).__name__}.{reset_name}() raised "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
 
         for optimizer in self.action_optimizers:
             reset_if_possible(optimizer)
@@ -137,7 +159,8 @@ class InferenceRuntime:
 
         Supported optional hooks are:
 
-        - ``step_chunk(frame, request)`` for overlap-conditioned chunk generation
+        - ``embodia_infer_chunk(frame, request)`` / ``infer_chunk(frame, request)``
+          for overlap-conditioned chunk generation
         - ``plan(frame)`` for simple chunk generation without request context
         """
 
@@ -148,42 +171,20 @@ class InferenceRuntime:
             candidates.append(action_source)
 
         for candidate in candidates:
-            resolve_optional = getattr(candidate, "_resolve_optional_impl", None)
-            if callable(resolve_optional):
-                try:
-                    step_chunk = resolve_optional("step_chunk", "_step_chunk_impl")
-                except AttributeError as exc:
-                    raise InterfaceValidationError(str(exc)) from exc
-                if callable(step_chunk):
-                    return (
-                        lambda _source, frame, request, _step_chunk=step_chunk: _step_chunk(
-                            frame,
-                            request,
-                        ),
-                        None,
-                    )
-
-                try:
-                    plan = resolve_optional("plan", "_plan_impl")
-                except AttributeError as exc:
-                    raise InterfaceValidationError(str(exc)) from exc
-                if callable(plan):
-                    return (
-                        None,
-                        lambda _source, frame, _plan=plan: _plan(frame),
-                    )
-
-            step_chunk = getattr(candidate, "step_chunk", None)
-            if callable(step_chunk):
+            infer_chunk, _ = resolve_callable_method(
+                candidate,
+                MODEL_INFER_CHUNK_METHODS,
+            )
+            if callable(infer_chunk):
                 return (
-                    lambda _source, frame, request, _step_chunk=step_chunk: _step_chunk(
+                    lambda _source, frame, request, _infer_chunk=infer_chunk: _infer_chunk(
                         frame,
                         request,
                     ),
                     None,
                 )
 
-            plan = getattr(candidate, "plan", None)
+            plan, _ = resolve_callable_method(candidate, MODEL_PLAN_METHODS)
             if callable(plan):
                 return (
                     None,
@@ -267,8 +268,10 @@ class InferenceRuntime:
         )
         if reset_model and not can_reset:
             raise InterfaceValidationError(
-                "reset_model=True requires a source object with reset()/step(), "
-                "not a bare callable."
+                "reset_model=True requires a source object exposing "
+                f"{format_method_options(MODEL_RESET_METHODS)} together with "
+                f"{format_method_options(MODEL_INFER_METHODS)} or "
+                f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
             )
 
         if reset_model:
@@ -293,7 +296,25 @@ class InferenceRuntime:
             raw_action = raw_result.action
             plan_refreshed = True
         else:
-            raw_frame = robot.observe() if frame is None else frame
+            if frame is None:
+                observe, observe_name = resolve_callable_method(
+                    robot,
+                    ROBOT_OBSERVE_METHODS,
+                )
+                if not callable(observe) or observe_name is None:
+                    raise InterfaceValidationError(
+                        f"{type(robot).__name__} must expose "
+                        f"{format_method_options(ROBOT_OBSERVE_METHODS)}."
+                    )
+                try:
+                    raw_frame = observe()
+                except Exception as exc:
+                    raise InterfaceValidationError(
+                        f"{type(robot).__name__}.{observe_name}() raised "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+            else:
+                raw_frame = frame
             normalized_frame = as_frame(raw_frame)
             validate_frame(normalized_frame)
 
@@ -319,7 +340,19 @@ class InferenceRuntime:
 
         should_execute = True if execute_action is None else execute_action
         if should_execute:
-            robot.act(optimized_action)
+            act, act_name = resolve_callable_method(robot, ROBOT_ACT_METHODS)
+            if not callable(act) or act_name is None:
+                raise InterfaceValidationError(
+                    f"{type(robot).__name__} must expose "
+                    f"{format_method_options(ROBOT_ACT_METHODS)}."
+                )
+            try:
+                act(optimized_action)
+            except Exception as exc:
+                raise InterfaceValidationError(
+                    f"{type(robot).__name__}.{act_name}(action) raised "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
 
         control_wait_s = 0.0
         if pace_control and self.realtime_controller is not None:

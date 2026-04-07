@@ -14,7 +14,7 @@ from typing import Any
 
 from .errors import InterfaceValidationError
 
-KNOWN_CONTROL_GROUP_KINDS: tuple[str, ...] = (
+KNOWN_COMPONENT_KINDS: tuple[str, ...] = (
     "arm",
     "gripper",
     "hand",
@@ -23,7 +23,7 @@ KNOWN_CONTROL_GROUP_KINDS: tuple[str, ...] = (
     "custom",
 )
 CUSTOM_COMMAND_KIND_PREFIX = "custom:"
-_USES_GROUP_DOF_META_KEY = "uses_group_dof"
+_USES_COMPONENT_DOF_META_KEY = "uses_component_dof"
 
 
 def _ensure_non_empty_string(value: object, field_name: str) -> str:
@@ -134,10 +134,10 @@ def _validate_command_kind_name(
     )
 
 
-def _kind_uses_group_dof(spec: CommandKindSpec) -> bool:
-    """Return whether one kind should match the owning control-group dof."""
+def _kind_uses_component_dof(spec: CommandKindSpec) -> bool:
+    """Return whether one kind should match the owning component dof."""
 
-    return bool(spec.meta.get(_USES_GROUP_DOF_META_KEY, False))
+    return bool(spec.meta.get(_USES_COMPONENT_DOF_META_KEY, False))
 
 
 @dataclass(slots=True)
@@ -154,9 +154,9 @@ class Frame:
 
 @dataclass(slots=True)
 class Command:
-    """One command for one control group.
+    """One command for one robot component.
 
-    ``target`` names the control group, for example ``"left_arm"`` or
+    ``target`` names the component, for example ``"left_arm"`` or
     ``"right_hand"``. ``kind`` is the main semantic identifier and is the
     primary hook into the command-kind registry.
     """
@@ -214,8 +214,8 @@ class Action:
 
 
 @dataclass(slots=True)
-class ControlGroupSpec:
-    """Description of one robot control group."""
+class ComponentSpec:
+    """Description of one controllable robot component."""
 
     name: str
     kind: str
@@ -225,7 +225,7 @@ class ControlGroupSpec:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def supports_command_kind(self, command_kind: str) -> bool:
-        """Return whether the group accepts ``command_kind``."""
+        """Return whether the component accepts ``command_kind``."""
 
         return command_kind in self.supported_command_kinds
 
@@ -236,37 +236,37 @@ class RobotSpec:
 
     name: str
     image_keys: list[str]
-    groups: list[ControlGroupSpec]
+    components: list[ComponentSpec]
     task_keys: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def get_group(self, name: str) -> ControlGroupSpec | None:
-        """Return one group by name when present."""
+    def get_component(self, name: str) -> ComponentSpec | None:
+        """Return one component by name when present."""
 
-        for group in self.groups:
-            if group.name == name:
-                return group
+        for component in self.components:
+            if component.name == name:
+                return component
         return None
 
     def all_supported_command_kinds(self) -> list[str]:
-        """Return unique command kinds supported across all groups."""
+        """Return unique command kinds supported across all components."""
 
         seen: set[str] = set()
         result: list[str] = []
-        for group in self.groups:
-            for command_kind in group.supported_command_kinds:
+        for component in self.components:
+            for command_kind in component.supported_command_kinds:
                 if command_kind not in seen:
                     seen.add(command_kind)
                     result.append(command_kind)
         return result
 
     def all_state_keys(self) -> list[str]:
-        """Return the unique state keys exposed across all groups."""
+        """Return the unique state keys exposed across all components."""
 
         seen: set[str] = set()
         result: list[str] = []
-        for group in self.groups:
-            for key in group.state_keys:
+        for component in self.components:
+            for key in component.state_keys:
                 if key not in seen:
                     seen.add(key)
                     result.append(key)
@@ -311,7 +311,7 @@ class CommandKindSpec:
     description: str = ""
     requires_ref_frame: bool = False
     default_dim: int | None = None
-    allowed_group_kinds: list[str] = field(default_factory=list)
+    allowed_component_kinds: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -333,9 +333,9 @@ def register_command_kind(spec: CommandKindSpec) -> None:
 
     if spec.default_dim is not None:
         _ensure_positive_int(spec.default_dim, "command_kind_spec.default_dim")
-    spec.allowed_group_kinds = _ensure_string_list(
-        spec.allowed_group_kinds,
-        "command_kind_spec.allowed_group_kinds",
+    spec.allowed_component_kinds = _ensure_string_list(
+        spec.allowed_component_kinds,
+        "command_kind_spec.allowed_component_kinds",
         allow_empty=True,
     )
     _ensure_string_key_dict(spec.meta, "command_kind_spec.meta")
@@ -460,47 +460,47 @@ def validate_action(action: Action) -> None:
     _ensure_string_key_dict(action.meta, "action.meta")
 
 
-def validate_control_group_spec(spec: ControlGroupSpec) -> None:
-    """Validate one robot control-group spec."""
+def validate_component_spec(spec: ComponentSpec) -> None:
+    """Validate one robot component spec."""
 
-    if not isinstance(spec, ControlGroupSpec):
+    if not isinstance(spec, ComponentSpec):
         raise InterfaceValidationError(
-            "spec must be a ControlGroupSpec instance, got "
+            "spec must be a ComponentSpec instance, got "
             f"{type(spec).__name__}."
         )
 
-    _ensure_non_empty_string(spec.name, "control_group_spec.name")
-    _ensure_non_empty_string(spec.kind, "control_group_spec.kind")
-    _ensure_positive_int(spec.dof, "control_group_spec.dof")
+    _ensure_non_empty_string(spec.name, "component_spec.name")
+    _ensure_non_empty_string(spec.kind, "component_spec.kind")
+    _ensure_positive_int(spec.dof, "component_spec.dof")
     supported = _ensure_string_list(
         spec.supported_command_kinds,
-        "control_group_spec.supported_command_kinds",
+        "component_spec.supported_command_kinds",
         allow_empty=False,
     )
     _ensure_string_list(
         spec.state_keys,
-        "control_group_spec.state_keys",
+        "component_spec.state_keys",
         allow_empty=True,
     )
-    _ensure_string_key_dict(spec.meta, "control_group_spec.meta")
+    _ensure_string_key_dict(spec.meta, "component_spec.meta")
 
     for index, command_kind in enumerate(supported):
         kind_name = _validate_command_kind_name(
             command_kind,
-            f"control_group_spec.supported_command_kinds[{index}]",
+            f"component_spec.supported_command_kinds[{index}]",
             allow_unregistered_custom=True,
         )
         if not is_known_command_kind(kind_name):
             continue
         kind_spec = get_command_kind_spec(kind_name)
         if (
-            kind_spec.allowed_group_kinds
-            and spec.kind not in kind_spec.allowed_group_kinds
+            kind_spec.allowed_component_kinds
+            and spec.kind not in kind_spec.allowed_component_kinds
         ):
             raise InterfaceValidationError(
-                f"control_group_spec {spec.name!r} has kind {spec.kind!r}, which "
-                f"is incompatible with command kind {kind_name!r}; allowed group "
-                f"kinds: {kind_spec.allowed_group_kinds!r}."
+                f"component_spec {spec.name!r} has kind {spec.kind!r}, which "
+                f"is incompatible with command kind {kind_name!r}; allowed component "
+                f"kinds: {kind_spec.allowed_component_kinds!r}."
             )
 
 
@@ -516,26 +516,28 @@ def validate_robot_spec(spec: RobotSpec) -> None:
     _ensure_string_list(spec.image_keys, "robot_spec.image_keys", allow_empty=True)
     _ensure_string_list(spec.task_keys, "robot_spec.task_keys", allow_empty=True)
     _ensure_string_key_dict(spec.meta, "robot_spec.meta")
-    if not isinstance(spec.groups, list):
+    if not isinstance(spec.components, list):
         raise InterfaceValidationError(
-            f"robot_spec.groups must be a list, got {type(spec.groups).__name__}."
+            f"robot_spec.components must be a list, got "
+            f"{type(spec.components).__name__}."
         )
-    if not spec.groups:
-        raise InterfaceValidationError("robot_spec.groups must not be empty.")
+    if not spec.components:
+        raise InterfaceValidationError("robot_spec.components must not be empty.")
 
     seen_names: set[str] = set()
-    for index, group in enumerate(spec.groups):
+    for index, component in enumerate(spec.components):
         try:
-            validate_control_group_spec(group)
+            validate_component_spec(component)
         except InterfaceValidationError as exc:
             raise InterfaceValidationError(
-                f"invalid robot_spec.groups[{index}]: {exc}"
+                f"invalid robot_spec.components[{index}]: {exc}"
             ) from exc
-        if group.name in seen_names:
+        if component.name in seen_names:
             raise InterfaceValidationError(
-                f"robot_spec.groups contains duplicate group {group.name!r}."
+                f"robot_spec.components contains duplicate component "
+                f"{component.name!r}."
             )
-        seen_names.add(group.name)
+        seen_names.add(component.name)
 
 
 def validate_model_output_spec(spec: ModelOutputSpec) -> None:
@@ -621,34 +623,35 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
     validate_robot_spec(spec)
 
     for command in action.commands:
-        group = spec.get_group(command.target)
-        if group is None:
+        component = spec.get_component(command.target)
+        if component is None:
             raise InterfaceValidationError(
-                f"robot {spec.name!r} does not define control group "
+                f"robot {spec.name!r} does not define component "
                 f"{command.target!r}."
             )
-        if command.kind not in group.supported_command_kinds:
+        if command.kind not in component.supported_command_kinds:
             raise InterfaceValidationError(
-                f"robot {spec.name!r} group {group.name!r} does not support "
+                f"robot {spec.name!r} component {component.name!r} does not support "
                 f"command kind {command.kind!r}; supported kinds: "
-                f"{group.supported_command_kinds!r}."
+                f"{component.supported_command_kinds!r}."
             )
         if not is_known_command_kind(command.kind):
             continue
         kind_spec = get_command_kind_spec(command.kind)
         if (
-            kind_spec.allowed_group_kinds
-            and group.kind not in kind_spec.allowed_group_kinds
+            kind_spec.allowed_component_kinds
+            and component.kind not in kind_spec.allowed_component_kinds
         ):
             raise InterfaceValidationError(
-                f"command kind {command.kind!r} is not allowed for robot group "
-                f"{group.name!r} of kind {group.kind!r}; allowed group kinds: "
-                f"{kind_spec.allowed_group_kinds!r}."
+                f"command kind {command.kind!r} is not allowed for robot component "
+                f"{component.name!r} of kind {component.kind!r}; allowed component "
+                f"kinds: {kind_spec.allowed_component_kinds!r}."
             )
-        if _kind_uses_group_dof(kind_spec) and len(command.value) != group.dof:
+        if _kind_uses_component_dof(kind_spec) and len(command.value) != component.dof:
             raise InterfaceValidationError(
-                f"command kind {command.kind!r} for robot group {group.name!r} "
-                f"must match group dof={group.dof}, got dim={len(command.value)}."
+                f"command kind {command.kind!r} for robot component "
+                f"{component.name!r} must match component dof={component.dof}, got "
+                f"dim={len(command.value)}."
             )
 
 
@@ -697,78 +700,78 @@ def _builtin_command_kind_specs() -> tuple[CommandKindSpec, ...]:
         CommandKindSpec(
             name="joint_position",
             description="Absolute joint position command.",
-            allowed_group_kinds=["arm", "hand", "base", "custom"],
-            meta={_USES_GROUP_DOF_META_KEY: True},
+            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="joint_position_delta",
             description="Joint position delta command.",
-            allowed_group_kinds=["arm", "hand", "base", "custom"],
-            meta={_USES_GROUP_DOF_META_KEY: True},
+            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="joint_velocity",
             description="Joint velocity command.",
-            allowed_group_kinds=["arm", "hand", "base", "custom"],
-            meta={_USES_GROUP_DOF_META_KEY: True},
+            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="cartesian_pose",
             description="End-effector cartesian pose command.",
-            allowed_group_kinds=["arm", "custom"],
+            allowed_component_kinds=["arm", "custom"],
         ),
         CommandKindSpec(
             name="cartesian_pose_delta",
             description="End-effector cartesian pose delta command.",
-            allowed_group_kinds=["arm", "custom"],
+            allowed_component_kinds=["arm", "custom"],
         ),
         CommandKindSpec(
             name="cartesian_twist",
             description="End-effector cartesian twist command.",
             default_dim=6,
-            allowed_group_kinds=["arm", "custom"],
+            allowed_component_kinds=["arm", "custom"],
         ),
         CommandKindSpec(
             name="gripper_position",
             description="Absolute gripper position command.",
             default_dim=1,
-            allowed_group_kinds=["gripper", "custom"],
+            allowed_component_kinds=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_position_delta",
             description="Gripper position delta command.",
             default_dim=1,
-            allowed_group_kinds=["gripper", "custom"],
+            allowed_component_kinds=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_velocity",
             description="Gripper velocity command.",
             default_dim=1,
-            allowed_group_kinds=["gripper", "custom"],
+            allowed_component_kinds=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_open_close",
             description="Binary or scalar open/close gripper command.",
             default_dim=1,
-            allowed_group_kinds=["gripper", "custom"],
+            allowed_component_kinds=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="hand_joint_position",
             description="Absolute dexterous-hand joint position command.",
-            allowed_group_kinds=["hand", "custom"],
-            meta={_USES_GROUP_DOF_META_KEY: True},
+            allowed_component_kinds=["hand", "custom"],
+            meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="hand_joint_position_delta",
             description="Dexterous-hand joint position delta command.",
-            allowed_group_kinds=["hand", "custom"],
-            meta={_USES_GROUP_DOF_META_KEY: True},
+            allowed_component_kinds=["hand", "custom"],
+            meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="eef_activation",
             description="Generic end-effector activation command.",
             default_dim=1,
-            allowed_group_kinds=["gripper", "hand", "suction", "custom"],
+            allowed_component_kinds=["gripper", "hand", "suction", "custom"],
         ),
     )
 
@@ -787,11 +790,11 @@ __all__ = [
     "Action",
     "COMMAND_KIND_REGISTRY",
     "CUSTOM_COMMAND_KIND_PREFIX",
+    "ComponentSpec",
     "Command",
     "CommandKindSpec",
-    "ControlGroupSpec",
     "Frame",
-    "KNOWN_CONTROL_GROUP_KINDS",
+    "KNOWN_COMPONENT_KINDS",
     "ModelOutputSpec",
     "ModelSpec",
     "RobotSpec",
@@ -803,7 +806,7 @@ __all__ = [
     "register_command_kind",
     "validate_action",
     "validate_command",
-    "validate_control_group_spec",
+    "validate_component_spec",
     "validate_frame",
     "validate_model_output_spec",
     "validate_model_spec",

@@ -40,6 +40,14 @@ from ..core.arraylike import (
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
 from ..core.transform import coerce_frame, model_spec_to_dict
+from ..runtime._dispatch import (
+    MODEL_GET_SPEC_METHODS,
+    MODEL_INFER_METHODS,
+    MODEL_RESET_METHODS,
+    ROBOT_GET_SPEC_METHODS,
+    format_method_options,
+    resolve_callable_method,
+)
 from ..runtime.checks import validate_frame
 from .openpi_transform import (
     OpenPITransform,
@@ -388,7 +396,7 @@ class EmbodiaModelPolicyAdapter:
                 "server_metadata['embodia'] must be a mapping when provided."
             )
 
-        get_spec = getattr(self.model, "get_spec", None)
+        get_spec, _ = resolve_callable_method(self.model, MODEL_GET_SPEC_METHODS)
         if callable(get_spec):
             embodia_meta.setdefault("model_spec", model_spec_to_dict(get_spec()))
 
@@ -403,7 +411,7 @@ class EmbodiaModelPolicyAdapter:
     def reset(self) -> None:
         """Reset the wrapped model when it exposes ``reset()``."""
 
-        reset = getattr(self.model, "reset", None)
+        reset, _ = resolve_callable_method(self.model, MODEL_RESET_METHODS)
         if callable(reset):
             reset()
 
@@ -414,13 +422,14 @@ class EmbodiaModelPolicyAdapter:
         if self._action_plan_provider is not None:
             raw_plan = self._action_plan_provider(self.model, frame)
         else:
-            step = getattr(self.model, "step", None)
-            if not callable(step):
+            infer, _ = resolve_callable_method(self.model, MODEL_INFER_METHODS)
+            if not callable(infer):
                 raise InterfaceValidationError(
-                    f"{type(self.model).__name__} must expose step(frame) to be "
+                    f"{type(self.model).__name__} must expose "
+                    f"{format_method_options(MODEL_INFER_METHODS)} to be "
                     "served through EmbodiaModelPolicyAdapter."
                 )
-            raw_plan = step(frame)
+            raw_plan = infer(frame)
 
         actions = _coerce_embodia_action_plan(raw_plan)
         response = self._response_builder(actions, frame)
@@ -579,16 +588,16 @@ def configure_robot_remote_policy(
         resolved_action_target = action_target
         resolved_command_kind = command_kind
         if resolved_action_target is None or resolved_command_kind is None:
-            get_spec = getattr(robot, "get_spec", None)
+            get_spec, _ = resolve_callable_method(robot, ROBOT_GET_SPEC_METHODS)
             if callable(get_spec):
                 spec = get_spec()
-                groups = getattr(spec, "groups", None)
-                if isinstance(groups, list) and len(groups) == 1:
-                    group = groups[0]
+                components = getattr(spec, "components", None)
+                if isinstance(components, list) and len(components) == 1:
+                    component = components[0]
                     if resolved_action_target is None:
-                        resolved_action_target = getattr(group, "name", None)
+                        resolved_action_target = getattr(component, "name", None)
                     supported_command_kinds = getattr(
-                        group,
+                        component,
                         "supported_command_kinds",
                         None,
                     )
@@ -602,13 +611,13 @@ def configure_robot_remote_policy(
             raise InterfaceValidationError(
                 "configure_robot_remote_policy() requires action_target=... when "
                 "transform is not provided and the robot spec does not expose "
-                "exactly one control group."
+                "exactly one component."
             )
         if not isinstance(resolved_command_kind, str) or not resolved_command_kind.strip():
             raise InterfaceValidationError(
                 "configure_robot_remote_policy() requires command_kind=... when "
                 "transform is not provided and the robot spec does not expose "
-                "exactly one supported command kind for its only control group."
+                "exactly one supported command kind for its only component."
             )
         response_to_action = lambda response: openpi_first_action(
             response,

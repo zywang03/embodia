@@ -230,6 +230,11 @@ class RobotMixin(_CommonInterfaceMixin):
 
         return self.has_remote_policy()
 
+    def embodia_has_remote_policy(self) -> bool:
+        """Internal embodia-prefixed alias for remote-policy availability."""
+
+        return self.has_remote_policy()
+
     def has_remote_policy(self) -> bool:
         """Return whether a remote policy backend has been configured."""
 
@@ -344,7 +349,7 @@ class RobotMixin(_CommonInterfaceMixin):
             )
         return method
 
-    def _request_remote_policy_action(
+    def embodia_request_remote_policy_action(
         self,
         frame: Frame | Mapping[str, Any] | None = None,
     ) -> Action:
@@ -357,8 +362,10 @@ class RobotMixin(_CommonInterfaceMixin):
                 "Configure it with configure_remote_policy(...)."
             )
 
-        normalized_frame = self.observe() if frame is None else self.validate_frame(frame)
-        spec = self._get_runtime_spec()
+        normalized_frame = (
+            self.embodia_observe() if frame is None else self.validate_frame(frame)
+        )
+        spec = self.embodia_get_spec()
         images.ensure_frame_keys(
             normalized_frame,
             owner_label="robot",
@@ -388,7 +395,15 @@ class RobotMixin(_CommonInterfaceMixin):
     ) -> Action:
         """Backward-compatible alias for embodia's internal remote action path."""
 
-        return self._request_remote_policy_action(frame)
+        return self.embodia_request_remote_policy_action(frame)
+
+    def _request_remote_policy_action(
+        self,
+        frame: Frame | Mapping[str, Any] | None = None,
+    ) -> Action:
+        """Backward-compatible alias kept for older internal embodia call sites."""
+
+        return self.embodia_request_remote_policy_action(frame)
 
     def normalize_spec(self, spec: RobotSpec | Mapping[str, Any]) -> RobotSpec:
         """Transform a robot spec-like value into :class:`RobotSpec`."""
@@ -446,7 +461,9 @@ class RobotMixin(_CommonInterfaceMixin):
         """Ensure frame keys satisfy the robot spec."""
 
         normalized_frame = self.validate_frame(frame)
-        normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
+        normalized_spec = (
+            self.embodia_get_spec() if spec is None else self.validate_spec(spec)
+        )
         images.ensure_frame_keys(
             normalized_frame,
             owner_label="robot",
@@ -472,7 +489,9 @@ class RobotMixin(_CommonInterfaceMixin):
         """Ensure command kinds and dims are supported by the robot spec."""
 
         normalized_action = self.validate_action(action)
-        normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
+        normalized_spec = (
+            self.embodia_get_spec() if spec is None else self.validate_spec(spec)
+        )
         _ensure_action_supported_by_robot(normalized_action, normalized_spec)
         return normalized_action
 
@@ -491,17 +510,22 @@ class RobotMixin(_CommonInterfaceMixin):
             ),
         )
 
-    def get_spec(self) -> RobotSpec:
-        """Return a normalized, validated robot spec from the wrapped class."""
+    def embodia_get_spec(self) -> RobotSpec:
+        """Return the normalized robot spec used internally by embodia."""
 
         return self._get_runtime_spec()
 
-    def observe(self) -> Frame:
-        """Return a normalized, validated frame from the wrapped class."""
+    def get_spec(self) -> RobotSpec:
+        """Backward-compatible alias for :meth:`embodia_get_spec`."""
+
+        return self.embodia_get_spec()
+
+    def embodia_observe(self) -> Frame:
+        """Return the normalized frame used internally by embodia."""
 
         raw_observe = self._resolve_impl("observe", "_observe_impl")
         frame = self.validate_frame(raw_observe())
-        spec = self._get_runtime_spec()
+        spec = self.embodia_get_spec()
         images.ensure_frame_keys(
             frame,
             owner_label="robot",
@@ -519,21 +543,31 @@ class RobotMixin(_CommonInterfaceMixin):
         )
         return frame
 
-    def act(self, action: Action | Mapping[str, Any]) -> None:
+    def observe(self) -> Frame:
+        """Backward-compatible alias for :meth:`embodia_observe`."""
+
+        return self.embodia_observe()
+
+    def embodia_act(self, action: Action | Mapping[str, Any]) -> None:
         """Normalize and validate an action before forwarding it."""
 
         raw_act = self._resolve_impl("act", "_act_impl")
         normalized_action = self.validate_action(action)
-        spec = self._get_runtime_spec()
+        spec = self.embodia_get_spec()
         _ensure_action_supported_by_robot(normalized_action, spec)
         raw_act(self.to_native_action(normalized_action))
 
-    def reset(self) -> Frame:
-        """Return a normalized, validated reset frame from the wrapped class."""
+    def act(self, action: Action | Mapping[str, Any]) -> None:
+        """Backward-compatible alias for :meth:`embodia_act`."""
+
+        self.embodia_act(action)
+
+    def embodia_reset(self) -> Frame:
+        """Return the normalized reset frame used internally by embodia."""
 
         raw_reset = self._resolve_impl("reset", "_reset_impl")
         frame = self.validate_frame(raw_reset())
-        spec = self._get_runtime_spec()
+        spec = self.embodia_get_spec()
         images.ensure_frame_keys(
             frame,
             owner_label="robot",
@@ -550,6 +584,11 @@ class RobotMixin(_CommonInterfaceMixin):
             required_keys=spec.task_keys,
         )
         return frame
+
+    def reset(self) -> Frame:
+        """Backward-compatible alias for :meth:`embodia_reset`."""
+
+        return self.embodia_reset()
 
 
 __all__ = ["RobotMixin"]

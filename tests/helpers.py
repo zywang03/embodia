@@ -15,7 +15,7 @@ class DummyRobot(RobotMixin):
         return {
             "name": "dummy_robot",
             "image_keys": ["front_rgb"],
-            "groups": [
+            "components": [
                 {
                     "name": "arm",
                     "kind": "arm",

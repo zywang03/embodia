@@ -34,8 +34,22 @@ class ModelProtocol(Protocol):
     def reset(self) -> None:
         """Reset any internal model state."""
 
-    def step(self, frame: Frame) -> Action:
+    def infer(self, frame: Frame) -> Action:
         """Consume one frame and produce one action."""
 
 
-__all__ = ["ModelProtocol", "RobotProtocol"]
+@runtime_checkable
+class ChunkModelProtocol(Protocol):
+    """Structural interface for chunk-producing model implementations."""
+
+    def get_spec(self) -> ModelSpec:
+        """Return a static description of model requirements."""
+
+    def reset(self) -> None:
+        """Reset any internal model state."""
+
+    def infer_chunk(self, frame: Frame, request: object) -> list[Action]:
+        """Consume one frame and produce one action chunk."""
+
+
+__all__ = ["ChunkModelProtocol", "ModelProtocol", "RobotProtocol"]

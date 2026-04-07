@@ -29,7 +29,7 @@ class RuntimeRobot(em.RobotMixin):
         return {
             "name": "runtime_robot",
             "image_keys": ["front_rgb"],
-            "groups": [
+            "components": [
                 {
                     "name": "arm",
                     "kind": "arm",

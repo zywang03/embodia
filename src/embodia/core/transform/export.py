@@ -7,8 +7,8 @@ from typing import Any
 
 from ..schema import (
     Action,
+    ComponentSpec,
     Command,
-    ControlGroupSpec,
     Frame,
     ModelOutputSpec,
     ModelSpec,
@@ -17,7 +17,7 @@ from ..schema import (
 from .coerce import (
     coerce_action,
     coerce_command,
-    coerce_control_group_spec,
+    coerce_component_spec,
     coerce_frame,
     coerce_model_output_spec,
     coerce_model_spec,
@@ -63,12 +63,12 @@ def action_to_dict(action: Action | Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def control_group_spec_to_dict(
-    spec: ControlGroupSpec | Mapping[str, Any],
+def component_spec_to_dict(
+    spec: ComponentSpec | Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Export a control-group spec-like object into a plain dictionary."""
+    """Export a component spec-like object into a plain dictionary."""
 
-    normalized = coerce_control_group_spec(spec)
+    normalized = coerce_component_spec(spec)
     return {
         "name": normalized.name,
         "kind": normalized.kind,
@@ -86,8 +86,9 @@ def robot_spec_to_dict(spec: RobotSpec | Mapping[str, Any]) -> dict[str, Any]:
     return {
         "name": normalized.name,
         "image_keys": list(normalized.image_keys),
-        "groups": [
-            control_group_spec_to_dict(group) for group in normalized.groups
+        "components": [
+            component_spec_to_dict(component)
+            for component in normalized.components
         ],
         "task_keys": list(normalized.task_keys),
         "meta": dict(normalized.meta),
@@ -124,8 +125,8 @@ def model_spec_to_dict(spec: ModelSpec | Mapping[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "action_to_dict",
+    "component_spec_to_dict",
     "command_to_dict",
-    "control_group_spec_to_dict",
     "frame_to_dict",
     "model_output_spec_to_dict",
     "model_spec_to_dict",

@@ -8,8 +8,8 @@ from typing import Any
 from ..errors import InterfaceValidationError
 from ..schema import (
     Action,
+    ComponentSpec,
     Command,
-    ControlGroupSpec,
     Frame,
     ModelOutputSpec,
     ModelSpec,
@@ -18,7 +18,7 @@ from ..schema import (
 from .coerce import (
     coerce_action,
     coerce_command,
-    coerce_control_group_spec,
+    coerce_component_spec,
     coerce_frame,
     coerce_model_output_spec,
     coerce_model_spec,
@@ -172,29 +172,29 @@ def remap_action(
     )
 
 
-def remap_control_group_spec(
-    spec: ControlGroupSpec | Mapping[str, Any],
+def remap_component_spec(
+    spec: ComponentSpec | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-) -> ControlGroupSpec:
-    """Rename a control-group spec."""
+) -> ComponentSpec:
+    """Rename a component spec."""
 
-    normalized = coerce_control_group_spec(spec)
-    return ControlGroupSpec(
+    normalized = coerce_component_spec(spec)
+    return ComponentSpec(
         name=_remap_name(normalized.name, target_map or {}),
         kind=normalized.kind,
         dof=normalized.dof,
         supported_command_kinds=_remap_name_list(
             normalized.supported_command_kinds,
             command_kind_map or {},
-            "control_group_spec.supported_command_kinds",
+            "component_spec.supported_command_kinds",
         ),
         state_keys=_remap_name_list(
             normalized.state_keys,
             state_key_map or {},
-            "control_group_spec.state_keys",
+            "component_spec.state_keys",
         ),
         meta=dict(normalized.meta),
     )
@@ -209,7 +209,7 @@ def remap_robot_spec(
     command_kind_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> RobotSpec:
-    """Rename robot spec keys and control-group names according to mappings."""
+    """Rename robot spec keys and component names according to mappings."""
 
     normalized = coerce_robot_spec(spec)
     return RobotSpec(
@@ -219,14 +219,14 @@ def remap_robot_spec(
             image_key_map or {},
             "robot_spec.image_keys",
         ),
-        groups=[
-            remap_control_group_spec(
-                group,
+        components=[
+            remap_component_spec(
+                component,
                 target_map=target_map,
                 state_key_map=state_key_map,
                 command_kind_map=command_kind_map,
             )
-            for group in normalized.groups
+            for component in normalized.components
         ],
         task_keys=_remap_name_list(
             normalized.task_keys,
@@ -299,7 +299,7 @@ __all__ = [
     "invert_mapping",
     "remap_action",
     "remap_command",
-    "remap_control_group_spec",
+    "remap_component_spec",
     "remap_frame",
     "remap_mapping_keys",
     "remap_model_output_spec",

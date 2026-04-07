@@ -90,7 +90,7 @@ class InterfaceTests(unittest.TestCase):
             name="custom:test_duplicate_registration",
             description="test kind",
             default_dim=2,
-            allowed_group_kinds=["custom"],
+            allowed_component_kinds=["custom"],
         )
         em.register_command_kind(spec)
 
@@ -161,7 +161,7 @@ class InterfaceTests(unittest.TestCase):
         with self.assertRaises(em.InterfaceValidationError) as ctx:
             em.check_pair(robot, model, sample_frame=robot.reset())
 
-        self.assertIn("missing required control group", str(ctx.exception))
+        self.assertIn("missing required component", str(ctx.exception))
 
     def test_mixin_must_be_leftmost_direct_base(self) -> None:
         class VendorRobot:
@@ -195,7 +195,7 @@ class InterfaceTests(unittest.TestCase):
             ROBOT_SPEC = {
                 "name": "vendor_robot",
                 "image_keys": ["front_rgb"],
-                "groups": [
+                "components": [
                     {
                         "name": "arm",
                         "kind": "arm",
@@ -276,7 +276,6 @@ class InterfaceTests(unittest.TestCase):
             }
             METHOD_ALIASES = {
                 "reset": "clear_state",
-                "step": "infer",
             }
             MODALITY_MAPS = {
                 em.CONTROL_TARGETS: {

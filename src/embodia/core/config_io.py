@@ -175,41 +175,6 @@ def _validate_keys(
     )
 
 
-def _invert_unique_mapping(
-    mapping: Mapping[str, str],
-    *,
-    field_name: str,
-) -> dict[str, str]:
-    """Invert one ``standard -> native`` mapping into ``native -> standard``."""
-
-    result: dict[str, str] = {}
-    for standard_name, native_name in mapping.items():
-        if native_name in result:
-            raise InterfaceValidationError(
-                f"{field_name} maps multiple embodia names to the same native "
-                f"name {native_name!r}, which is ambiguous."
-            )
-        result[native_name] = standard_name
-    return result
-
-
-def _merge_string_mapping(
-    destination: dict[str, str],
-    source: Mapping[str, str],
-    *,
-    field_name: str,
-) -> None:
-    """Merge one ``mapping[str, str]`` while detecting collisions."""
-
-    for key, value in source.items():
-        existing = destination.get(key)
-        if existing is not None and existing != value:
-            raise InterfaceValidationError(
-                f"{field_name} maps {key!r} to both {existing!r} and {value!r}."
-            )
-        destination[key] = value
-
-
 def _expand_shared_schema(
     schema: Mapping[str, Any],
     *,
@@ -220,7 +185,7 @@ def _expand_shared_schema(
     _validate_keys(
         schema,
         field_name=field_name,
-        allowed_keys={"images", "task", "meta", "groups"},
+        allowed_keys={"images", "task", "meta", "components"},
     )
 
     image_keys = _copy_string_list(
@@ -238,62 +203,63 @@ def _expand_shared_schema(
         field_name=f"{field_name}.meta",
     )
 
-    groups = _copy_named_mapping(
-        schema.get("groups"),
-        field_name=f"{field_name}.groups",
+    components = _copy_named_mapping(
+        schema.get("components"),
+        field_name=f"{field_name}.components",
         allow_empty=False,
     )
 
-    expanded_groups: list[dict[str, Any]] = []
-    group_index: dict[str, dict[str, Any]] = {}
+    expanded_components: list[dict[str, Any]] = []
+    component_index: dict[str, dict[str, Any]] = {}
 
-    for group_name, raw_group in groups.items():
+    for component_name, raw_component in components.items():
         _validate_keys(
-            raw_group,
-            field_name=f"{field_name}.groups[{group_name!r}]",
+            raw_component,
+            field_name=f"{field_name}.components[{component_name!r}]",
             allowed_keys={"kind", "dof", "state", "command_kinds", "meta"},
         )
         kind = _ensure_non_empty_string(
-            raw_group.get("kind"),
-            field_name=f"{field_name}.groups[{group_name!r}].kind",
+            raw_component.get("kind"),
+            field_name=f"{field_name}.components[{component_name!r}].kind",
         )
-        dof = raw_group.get("dof")
+        dof = raw_component.get("dof")
         if isinstance(dof, bool) or not isinstance(dof, int) or dof <= 0:
             raise InterfaceValidationError(
-                f"{field_name}.groups[{group_name!r}].dof must be a positive int."
+                f"{field_name}.components[{component_name!r}].dof must be a "
+                "positive int."
             )
         state_keys = _copy_string_list(
-            raw_group.get("state", []),
-            field_name=f"{field_name}.groups[{group_name!r}].state",
+            raw_component.get("state", []),
+            field_name=f"{field_name}.components[{component_name!r}].state",
             allow_empty=True,
         )
         command_kinds = _copy_string_list(
-            raw_group.get("command_kinds"),
-            field_name=f"{field_name}.groups[{group_name!r}].command_kinds",
+            raw_component.get("command_kinds"),
+            field_name=f"{field_name}.components[{component_name!r}].command_kinds",
             allow_empty=False,
         )
-        group_meta = _copy_mapping(
-            raw_group.get("meta", {}),
-            field_name=f"{field_name}.groups[{group_name!r}].meta",
+        component_meta = _copy_mapping(
+            raw_component.get("meta", {}),
+            field_name=f"{field_name}.components[{component_name!r}].meta",
         )
 
         expanded = {
-            "name": group_name,
+            "name": component_name,
             "kind": kind,
             "dof": dof,
             "supported_command_kinds": command_kinds,
             "state_keys": state_keys,
-            "meta": group_meta,
+            "meta": component_meta,
         }
-        expanded_groups.append(expanded)
-        group_index[group_name] = expanded
+        expanded_components.append(expanded)
+        component_index[component_name] = expanded
 
     return {
         "image_keys": image_keys,
         "task_keys": task_keys,
         "meta": meta,
-        "groups": expanded_groups,
-        "group_index": group_index,
+        "components": expanded_components,
+        "component_index": component_index,
     }
 
 
@@ -320,7 +286,7 @@ def _expand_robot_config(
         "robot_spec": {
             "name": name,
             "image_keys": list(shared["image_keys"]),
-            "groups": list(shared["groups"]),
+            "components": list(shared["components"]),
             "task_keys": list(shared["task_keys"]),
             "meta": dict(shared["meta"]),
         },
@@ -339,7 +305,7 @@ def _expand_model_config(
     _validate_keys(
         loaded,
         field_name=field_name,
-        allowed_keys={"name", "requires", "outputs", "method_aliases"},
+        allowed_keys={"name", "method_aliases"},
     )
 
     shared = _expand_shared_schema(schema, field_name=f"{field_name}.schema")
@@ -348,64 +314,26 @@ def _expand_model_config(
         field_name=f"{field_name}.name",
     )
 
-    requires = loaded.get("requires", {})
-    if not isinstance(requires, Mapping):
-        raise InterfaceValidationError(
-            f"{field_name}.requires must be a mapping, got {type(requires).__name__}."
-        )
-    _validate_keys(
-        requires,
-        field_name=f"{field_name}.requires",
-        allowed_keys={"images", "state", "task"},
-    )
-
     all_state_keys: list[str] = []
-    for group in shared["groups"]:
-        for state_key in group["state_keys"]:
+    for component in shared["components"]:
+        for state_key in component["state_keys"]:
             if state_key not in all_state_keys:
                 all_state_keys.append(state_key)
 
-    required_image_keys = _copy_string_list(
-        requires.get("images", list(shared["image_keys"])),
-        field_name=f"{field_name}.requires.images",
-        allow_empty=True,
-    )
-    required_state_keys = _copy_string_list(
-        requires.get("state", all_state_keys),
-        field_name=f"{field_name}.requires.state",
-        allow_empty=True,
-    )
-    required_task_keys = _copy_string_list(
-        requires.get("task", list(shared["task_keys"])),
-        field_name=f"{field_name}.requires.task",
-        allow_empty=True,
-    )
-
-    outputs = _copy_string_mapping(
-        loaded.get("outputs"),
-        field_name=f"{field_name}.outputs",
-        allow_empty=False,
-    )
     expanded_outputs: list[dict[str, Any]] = []
-    for target, command_kind in outputs.items():
-        group = shared["group_index"].get(target)
-        if group is None:
-            expected = ", ".join(repr(name) for name in sorted(shared["group_index"]))
+    for component in shared["components"]:
+        supported_command_kinds = list(component["supported_command_kinds"])
+        if len(supported_command_kinds) != 1:
             raise InterfaceValidationError(
-                f"{field_name}.outputs contains unknown target {target!r}. "
-                f"Expected one of: {expected}."
-            )
-        if command_kind not in group["supported_command_kinds"]:
-            raise InterfaceValidationError(
-                f"{field_name}.outputs[{target!r}] uses command kind "
-                f"{command_kind!r}, but shared schema group {target!r} only "
-                f"supports {group['supported_command_kinds']!r}."
+                f"{field_name}.schema.components[{component['name']!r}] must declare "
+                "exactly one command kind when model spec is inferred from the "
+                f"shared schema, got {supported_command_kinds!r}."
             )
         expanded_outputs.append(
             {
-                "target": target,
-                "command_kind": command_kind,
-                "dim": group["dof"],
+                "target": component["name"],
+                "command_kind": supported_command_kinds[0],
+                "dim": component["dof"],
                 "meta": {},
             }
         )
@@ -413,9 +341,9 @@ def _expand_model_config(
     return {
         "model_spec": {
             "name": name,
-            "required_image_keys": required_image_keys,
-            "required_state_keys": required_state_keys,
-            "required_task_keys": required_task_keys,
+            "required_image_keys": list(shared["image_keys"]),
+            "required_state_keys": all_state_keys,
+            "required_task_keys": list(shared["task_keys"]),
             "outputs": expanded_outputs,
             "meta": dict(shared["meta"]),
         },
@@ -455,8 +383,6 @@ def expand_component_yaml_config(
         )
 
     copied.pop("name", None)
-    copied.pop("requires", None)
-    copied.pop("outputs", None)
     copied.update(expanded)
     return copied
 

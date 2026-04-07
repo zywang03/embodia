@@ -9,8 +9,8 @@ from ..arraylike import optional_array_to_list
 from ..errors import InterfaceValidationError
 from ..schema import (
     Action,
+    ComponentSpec,
     Command,
-    ControlGroupSpec,
     Frame,
     ModelOutputSpec,
     ModelSpec,
@@ -170,13 +170,13 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
     )
 
 
-def coerce_control_group_spec(
-    value: ControlGroupSpec | Mapping[str, Any],
-) -> ControlGroupSpec:
-    """Normalize a control-group spec-like value."""
+def coerce_component_spec(
+    value: ComponentSpec | Mapping[str, Any],
+) -> ComponentSpec:
+    """Normalize a component spec-like value."""
 
-    if isinstance(value, ControlGroupSpec):
-        return ControlGroupSpec(
+    if isinstance(value, ComponentSpec):
+        return ComponentSpec(
             name=value.name,
             kind=value.kind,
             dof=value.dof,
@@ -186,7 +186,7 @@ def coerce_control_group_spec(
         )
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
-            "control group spec must be ControlGroupSpec or mapping, got "
+            "component spec must be ComponentSpec or mapping, got "
             f"{type(value).__name__}."
         )
 
@@ -197,27 +197,27 @@ def coerce_control_group_spec(
         supported_command_kinds = value.get("supported_command_kinds")
     except KeyError as exc:
         raise InterfaceValidationError(
-            f"control group spec mapping is missing required field {exc.args[0]!r}."
+            f"component spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
     if supported_command_kinds is None:
         raise InterfaceValidationError(
-            "control group spec mapping is missing required field "
+            "component spec mapping is missing required field "
             "'supported_command_kinds'."
         )
 
-    return ControlGroupSpec(
+    return ComponentSpec(
         name=name,
         kind=kind,
         dof=dof,
         supported_command_kinds=_copy_sequence(
             supported_command_kinds,
-            "control_group_spec.supported_command_kinds",
+            "component_spec.supported_command_kinds",
         ),
         state_keys=_copy_sequence(
             value.get("state_keys", []),
-            "control_group_spec.state_keys",
+            "component_spec.state_keys",
         ),
-        meta=_copy_string_key_mapping(value.get("meta"), "control_group_spec.meta"),
+        meta=_copy_string_key_mapping(value.get("meta"), "component_spec.meta"),
     )
 
 
@@ -228,7 +228,9 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
         return RobotSpec(
             name=value.name,
             image_keys=list(value.image_keys),
-            groups=[coerce_control_group_spec(group) for group in value.groups],
+            components=[
+                coerce_component_spec(component) for component in value.components
+            ],
             task_keys=list(value.task_keys),
             meta=dict(value.meta),
         )
@@ -240,7 +242,7 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
     try:
         name = value["name"]
         image_keys = value["image_keys"]
-        groups = value["groups"]
+        components = value["components"]
     except KeyError as exc:
         raise InterfaceValidationError(
             f"robot spec mapping is missing required field {exc.args[0]!r}."
@@ -249,7 +251,10 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
     return RobotSpec(
         name=name,
         image_keys=_copy_sequence(image_keys, "robot_spec.image_keys"),
-        groups=[coerce_control_group_spec(item) for item in _copy_sequence(groups, "robot_spec.groups")],
+        components=[
+            coerce_component_spec(item)
+            for item in _copy_sequence(components, "robot_spec.components")
+        ],
         task_keys=_copy_sequence(value.get("task_keys", []), "robot_spec.task_keys"),
         meta=_copy_string_key_mapping(value.get("meta"), "robot_spec.meta"),
     )
@@ -343,7 +348,7 @@ def coerce_model_spec(value: ModelSpec | Mapping[str, Any]) -> ModelSpec:
 __all__ = [
     "coerce_action",
     "coerce_command",
-    "coerce_control_group_spec",
+    "coerce_component_spec",
     "coerce_frame",
     "coerce_model_output_spec",
     "coerce_model_spec",

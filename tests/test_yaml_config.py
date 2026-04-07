@@ -42,21 +42,21 @@ class YamlConfigTests(unittest.TestCase):
         path = self._write_config(
             {
                 "robot": {"method_aliases": {"observe": "capture"}},
-                "model": {"method_aliases": {"step": "infer"}},
+                "model": {"method_aliases": {"infer": "infer"}},
             }
         )
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             loaded = em.load_yaml_config(path, section="model")
 
-        self.assertEqual(loaded["method_aliases"]["step"], "infer")
+        self.assertEqual(loaded["method_aliases"]["infer"], "infer")
 
     def test_from_yaml_builds_grouped_specs_with_shared_schema(self) -> None:
         path = self._write_config(
             {
                 "schema": {
                     "images": ["front_rgb"],
-                    "groups": {
+                    "components": {
                         "arm": {
                             "kind": "arm",
                             "dof": 6,
@@ -82,18 +82,8 @@ class YamlConfigTests(unittest.TestCase):
                 },
                 "model": {
                     "name": "demo_model",
-                    "requires": {
-                        "images": ["front_rgb"],
-                        "state": ["joint_positions", "position"],
-                        "task": ["prompt"],
-                    },
-                    "outputs": {
-                        "arm": "cartesian_pose_delta",
-                        "gripper": "gripper_position",
-                    },
                     "method_aliases": {
                         "reset": "clear_state",
-                        "step": "infer",
                     },
                 },
             }
@@ -160,25 +150,35 @@ class YamlConfigTests(unittest.TestCase):
         self.assertEqual(robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
         self.assertIn("joint_positions", model.seen_frame.state)
         self.assertEqual(model.seen_frame.task["prompt"], "fold the cloth")
+        self.assertEqual(model.get_spec().required_image_keys, ["front_rgb"])
+        self.assertEqual(
+            model.get_spec().required_state_keys,
+            ["joint_positions", "position"],
+        )
+        self.assertEqual(model.get_spec().required_task_keys, ["prompt"])
+        self.assertEqual(
+            [(output.target, output.command_kind) for output in model.get_spec().outputs],
+            [("arm", "cartesian_pose_delta"), ("gripper", "gripper_position")],
+        )
 
-    def test_from_yaml_rejects_unknown_group_output(self) -> None:
+    def test_from_yaml_rejects_ambiguous_group_command_kinds(self) -> None:
         path = self._write_config(
             {
                 "schema": {
-                    "groups": {
+                    "components": {
                         "arm": {
                             "kind": "arm",
                             "dof": 6,
                             "state": ["joint_positions"],
-                            "command_kinds": ["cartesian_pose_delta"],
+                            "command_kinds": [
+                                "cartesian_pose_delta",
+                                "joint_position",
+                            ],
                         }
                     }
                 },
                 "model": {
                     "name": "demo_model",
-                    "outputs": {
-                        "gripper": "gripper_position",
-                    },
                 },
             }
         )
@@ -190,13 +190,13 @@ class YamlConfigTests(unittest.TestCase):
             with self.assertRaises(em.InterfaceValidationError) as ctx:
                 YourModel.from_yaml(path)
 
-        self.assertIn("unknown target", str(ctx.exception))
+        self.assertIn("exactly one command kind", str(ctx.exception))
 
     def test_from_yaml_rejects_unknown_runtime_field_before_init(self) -> None:
         path = self._write_config(
             {
                 "schema": {
-                    "groups": {
+                    "components": {
                         "arm": {
                             "kind": "arm",
                             "dof": 6,

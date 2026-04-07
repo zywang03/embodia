@@ -12,6 +12,15 @@ from typing import Any
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
+from .._dispatch import (
+    MODEL_INFER_CHUNK_METHODS,
+    MODEL_INFER_METHODS,
+    MODEL_RESET_METHODS,
+    ROBOT_ACT_METHODS,
+    ROBOT_OBSERVE_METHODS,
+    format_method_options,
+    resolve_callable_method,
+)
 from ..checks import validate_action, validate_frame
 from ..flow import ActionSource, _call_action_fn, _resolve_action_source
 from .chunk_scheduler import _RobustMeanEstimator
@@ -126,11 +135,25 @@ def profile_sync_inference(
     action_source, can_reset = _resolve_action_source(model, action_fn, robot=robot)
     if reset_model and not can_reset:
         raise InterfaceValidationError(
-            "reset_model=True requires a source object with reset()/step(), "
-            "not a bare callable."
+            "reset_model=True requires a source object exposing "
+            f"{format_method_options(MODEL_RESET_METHODS)} together with "
+            f"{format_method_options(MODEL_INFER_METHODS)} or "
+            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
         )
     if reset_model and model is not None:
-        model.reset()
+        reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+        if not callable(reset) or reset_name is None:
+            raise InterfaceValidationError(
+                "reset_model=True requires a model object exposing "
+                f"{format_method_options(MODEL_RESET_METHODS)}."
+            )
+        try:
+            reset()
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(model).__name__}.{reset_name}() raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     step_estimator = _RobustMeanEstimator(
         window_size=timing_window_size,
@@ -145,7 +168,19 @@ def profile_sync_inference(
 
     for _ in range(steps):
         step_start = float(clock())
-        raw_frame = robot.observe()
+        observe, observe_name = resolve_callable_method(robot, ROBOT_OBSERVE_METHODS)
+        if not callable(observe) or observe_name is None:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__} must expose "
+                f"{format_method_options(ROBOT_OBSERVE_METHODS)}."
+            )
+        try:
+            raw_frame = observe()
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(robot).__name__}.{observe_name}() raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         frame = as_frame(raw_frame)
         validate_frame(frame)
 
@@ -156,7 +191,19 @@ def profile_sync_inference(
         action = as_action(raw_action)
         validate_action(action)
         if execute_action:
-            robot.act(action)
+            act, act_name = resolve_callable_method(robot, ROBOT_ACT_METHODS)
+            if not callable(act) or act_name is None:
+                raise InterfaceValidationError(
+                    f"{type(robot).__name__} must expose "
+                    f"{format_method_options(ROBOT_ACT_METHODS)}."
+                )
+            try:
+                act(action)
+            except Exception as exc:
+                raise InterfaceValidationError(
+                    f"{type(robot).__name__}.{act_name}(action) raised "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
         step_end = float(clock())
 
         step_estimator.add(max(step_end - step_start, 0.0))

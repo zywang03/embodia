@@ -9,6 +9,7 @@ declared specs.
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from typing import Any
 
 from ..core.errors import InterfaceValidationError
@@ -21,12 +22,24 @@ from ..core.schema import (
     ensure_action_matches_model_spec,
     ensure_action_supported_by_robot,
     validate_action,
+    validate_component_spec,
     validate_command,
-    validate_control_group_spec,
     validate_frame,
     validate_model_output_spec,
     validate_model_spec,
     validate_robot_spec,
+)
+from ._dispatch import (
+    MODEL_GET_SPEC_METHODS,
+    MODEL_INFER_CHUNK_METHODS,
+    MODEL_INFER_METHODS,
+    MODEL_RESET_METHODS,
+    ROBOT_ACT_METHODS,
+    ROBOT_GET_SPEC_METHODS,
+    ROBOT_OBSERVE_METHODS,
+    ROBOT_RESET_METHODS,
+    format_method_options,
+    resolve_callable_method,
 )
 
 
@@ -36,20 +49,20 @@ def _object_label(obj: object) -> str:
     return f"{type(obj).__name__} instance"
 
 
-def _require_method(obj: object, method_name: str) -> Any:
-    """Fetch and validate a required callable attribute."""
+def _require_method(
+    obj: object,
+    method_names: tuple[str, ...],
+) -> tuple[Any, str]:
+    """Fetch the first required callable method from a priority list."""
 
-    if not hasattr(obj, method_name):
-        raise InterfaceValidationError(
-            f"{_object_label(obj)} is missing required method {method_name!r}."
-        )
+    method, resolved_name = resolve_callable_method(obj, method_names)
+    if callable(method) and resolved_name is not None:
+        return method, resolved_name
 
-    method = getattr(obj, method_name)
-    if not callable(method):
-        raise InterfaceValidationError(
-            f"{_object_label(obj)} attribute {method_name!r} exists but is not callable."
-        )
-    return method
+    raise InterfaceValidationError(
+        f"{_object_label(obj)} is missing required method "
+        f"{format_method_options(method_names)}."
+    )
 
 
 def _call_method(method: Any, obj: object, method_name: str, *args: object) -> Any:
@@ -83,6 +96,24 @@ def _ensure_signature_accepts(method: Any, method_name: str, *args: object) -> N
         ) from exc
 
 
+def _single_step_chunk_request() -> object:
+    """Build one minimal request object for chunk-model acceptance checks."""
+
+    return SimpleNamespace(
+        request_step=0,
+        request_time_s=0.0,
+        history_start=0,
+        history_end=0,
+        active_chunk_length=0,
+        remaining_steps=0,
+        overlap_steps=0,
+        latency_steps=0,
+        request_trigger_steps=0,
+        plan_start_step=0,
+        history_actions=[],
+    )
+
+
 def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
     """Return compatibility problems between a robot spec and a model spec."""
 
@@ -110,21 +141,21 @@ def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
         problems.append(task_problem)
 
     for output in model_spec.outputs:
-        group = robot_spec.get_group(output.target)
-        if group is None:
+        component = robot_spec.get_component(output.target)
+        if component is None:
             problems.append(
-                f"robot is missing required control group {output.target!r}."
+                f"robot is missing required component {output.target!r}."
             )
             continue
-        if output.command_kind not in group.supported_command_kinds:
+        if output.command_kind not in component.supported_command_kinds:
             problems.append(
-                f"control group {output.target!r} does not support model output "
+                f"component {output.target!r} does not support model output "
                 f"command kind {output.command_kind!r}; supported command kinds: "
-                f"{group.supported_command_kinds!r}."
+                f"{component.supported_command_kinds!r}."
             )
-        if output.dim != group.dof:
+        if output.dim != component.dof:
             problems.append(
-                f"control group {output.target!r} has dof={group.dof}, but model "
+                f"component {output.target!r} has dof={component.dof}, but model "
                 f"declares dim={output.dim}."
             )
 
@@ -134,20 +165,20 @@ def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
 def check_robot(robot: object, *, call_observe: bool = True) -> None:
     """Runtime-check whether an object is a compatible robot implementation."""
 
-    get_spec = _require_method(robot, "get_spec")
-    observe = _require_method(robot, "observe")
-    act = _require_method(robot, "act")
-    reset = _require_method(robot, "reset")
+    get_spec, get_spec_name = _require_method(robot, ROBOT_GET_SPEC_METHODS)
+    observe, observe_name = _require_method(robot, ROBOT_OBSERVE_METHODS)
+    act, act_name = _require_method(robot, ROBOT_ACT_METHODS)
+    reset, reset_name = _require_method(robot, ROBOT_RESET_METHODS)
 
-    _ensure_signature_accepts(get_spec, "get_spec")
-    _ensure_signature_accepts(observe, "observe")
-    _ensure_signature_accepts(act, "act", object())
-    _ensure_signature_accepts(reset, "reset")
+    _ensure_signature_accepts(get_spec, get_spec_name)
+    _ensure_signature_accepts(observe, observe_name)
+    _ensure_signature_accepts(act, act_name, object())
+    _ensure_signature_accepts(reset, reset_name)
 
-    spec = _call_method(get_spec, robot, "get_spec")
+    spec = _call_method(get_spec, robot, get_spec_name)
     if not isinstance(spec, RobotSpec):
         raise InterfaceValidationError(
-            f"{_object_label(robot)} get_spec() must return RobotSpec, "
+            f"{_object_label(robot)} {get_spec_name}() must return RobotSpec, "
             f"got {type(spec).__name__}."
         )
     validate_robot_spec(spec)
@@ -155,10 +186,10 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
     if not call_observe:
         return
 
-    frame = _call_method(observe, robot, "observe")
+    frame = _call_method(observe, robot, observe_name)
     if not isinstance(frame, Frame):
         raise InterfaceValidationError(
-            f"{_object_label(robot)} observe() must return Frame, "
+            f"{_object_label(robot)} {observe_name}() must return Frame, "
             f"got {type(frame).__name__}."
         )
     validate_frame(frame)
@@ -170,26 +201,39 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
 def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
     """Runtime-check whether an object is a compatible model implementation."""
 
-    get_spec = _require_method(model, "get_spec")
-    reset = _require_method(model, "reset")
-    step = _require_method(model, "step")
+    get_spec, get_spec_name = _require_method(model, MODEL_GET_SPEC_METHODS)
+    reset, reset_name = _require_method(model, MODEL_RESET_METHODS)
+    infer, infer_name = resolve_callable_method(model, MODEL_INFER_METHODS)
+    infer_chunk, infer_chunk_name = resolve_callable_method(
+        model,
+        MODEL_INFER_CHUNK_METHODS,
+    )
+    if not callable(infer) and not callable(infer_chunk):
+        raise InterfaceValidationError(
+            f"{_object_label(model)} must expose "
+            f"{format_method_options(MODEL_INFER_METHODS)} or "
+            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}."
+        )
 
-    _ensure_signature_accepts(get_spec, "get_spec")
-    _ensure_signature_accepts(reset, "reset")
-    _ensure_signature_accepts(step, "step", object())
+    _ensure_signature_accepts(get_spec, get_spec_name)
+    _ensure_signature_accepts(reset, reset_name)
+    if callable(infer) and infer_name is not None:
+        _ensure_signature_accepts(infer, infer_name, object())
+    if callable(infer_chunk) and infer_chunk_name is not None:
+        _ensure_signature_accepts(infer_chunk, infer_chunk_name, object(), object())
 
-    spec = _call_method(get_spec, model, "get_spec")
+    spec = _call_method(get_spec, model, get_spec_name)
     if not isinstance(spec, ModelSpec):
         raise InterfaceValidationError(
-            f"{_object_label(model)} get_spec() must return ModelSpec, "
+            f"{_object_label(model)} {get_spec_name}() must return ModelSpec, "
             f"got {type(spec).__name__}."
         )
     validate_model_spec(spec)
 
-    reset_result = _call_method(reset, model, "reset")
+    reset_result = _call_method(reset, model, reset_name)
     if reset_result is not None:
         raise InterfaceValidationError(
-            f"{_object_label(model)} reset() must return None, "
+            f"{_object_label(model)} {reset_name}() must return None, "
             f"got {type(reset_result).__name__}."
         )
 
@@ -213,14 +257,47 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
         owner_label="model",
     )
 
-    action = _call_method(step, model, "step", sample_frame)
-    if not isinstance(action, Action):
+    if callable(infer) and infer_name is not None:
+        action = _call_method(infer, model, infer_name, sample_frame)
+        if not isinstance(action, Action):
+            raise InterfaceValidationError(
+                f"{_object_label(model)} {infer_name}(frame) must return Action, "
+                f"got {type(action).__name__}."
+            )
+        validate_action(action)
+        ensure_action_matches_model_spec(action, spec)
+        return
+
+    assert callable(infer_chunk) and infer_chunk_name is not None
+    plan = _call_method(
+        infer_chunk,
+        model,
+        infer_chunk_name,
+        sample_frame,
+        _single_step_chunk_request(),
+    )
+    if isinstance(plan, Action):
+        actions = [plan]
+    elif isinstance(plan, list):
+        actions = plan
+    else:
         raise InterfaceValidationError(
-            f"{_object_label(model)} step(frame) must return Action, "
-            f"got {type(action).__name__}."
+            f"{_object_label(model)} {infer_chunk_name}(frame, request) must return "
+            f"list[Action], got {type(plan).__name__}."
         )
-    validate_action(action)
-    ensure_action_matches_model_spec(action, spec)
+    if not actions:
+        raise InterfaceValidationError(
+            f"{_object_label(model)} {infer_chunk_name}(frame, request) must not "
+            "return an empty chunk."
+        )
+    for index, action in enumerate(actions):
+        if not isinstance(action, Action):
+            raise InterfaceValidationError(
+                f"{_object_label(model)} {infer_chunk_name}(frame, request) returned "
+                f"non-Action item at index {index}: {type(action).__name__}."
+            )
+        validate_action(action)
+        ensure_action_matches_model_spec(action, spec)
 
 
 def check_pair(
@@ -234,8 +311,11 @@ def check_pair(
     check_robot(robot, call_observe=sample_frame is None)
     check_model(model, sample_frame=sample_frame)
 
-    robot_spec = robot.get_spec()
-    model_spec = model.get_spec()
+    robot_get_spec, robot_get_spec_name = _require_method(robot, ROBOT_GET_SPEC_METHODS)
+    model_get_spec, model_get_spec_name = _require_method(model, MODEL_GET_SPEC_METHODS)
+
+    robot_spec = _call_method(robot_get_spec, robot, robot_get_spec_name)
+    model_spec = _call_method(model_get_spec, model, model_get_spec_name)
 
     validate_robot_spec(robot_spec)
     validate_model_spec(model_spec)
@@ -255,8 +335,8 @@ __all__ = [
     "ensure_action_matches_model_spec",
     "ensure_action_supported_by_robot",
     "validate_action",
+    "validate_component_spec",
     "validate_command",
-    "validate_control_group_spec",
     "validate_frame",
     "validate_model_output_spec",
     "validate_model_spec",

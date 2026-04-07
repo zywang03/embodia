@@ -68,9 +68,10 @@ robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
 model = YourModel.from_yaml("docs/yaml_config_example.yml")
 ```
 
-That YAML only describes interface alignment. Constructor arguments stay in
-Python code. If a model needs extra conditioning such as a prompt, put it in
-`Frame.task`.
+That YAML only describes the shared schema plus method aliases. Constructor
+arguments stay in Python code. On the model side, embodia derives required
+inputs and output targets directly from the shared `schema:` block. If a model
+needs extra conditioning such as a prompt, put it in `Frame.task`.
 
 The normalized action shape is:
 
@@ -94,8 +95,8 @@ The normalized action shape is:
 ```
 
 `Action` is a small container of grouped commands. End-effectors such as
-grippers, hands, suction tools, or custom actuators are first-class control
-groups, not ad-hoc extra channels.
+grippers, hands, suction tools, or custom actuators are first-class robot
+components, not ad-hoc extra channels.
 
 The smallest local inference path is:
 
@@ -129,7 +130,7 @@ tools rather than the main user path.
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
-That shared config defines two control groups, `arm` and `gripper`, and the
+That shared config defines two components, `arm` and `gripper`, and the
 Python examples emit one grouped `Action.commands` payload per control step.
 
 ## Design

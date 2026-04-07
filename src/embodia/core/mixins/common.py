@@ -281,6 +281,10 @@ class _CommonInterfaceMixin:
             if callable(inherited_aliased):
                 return inherited_aliased
 
+        local_public = self._resolve_local_method(public_name)
+        if callable(local_public):
+            return local_public
+
         inherited = getattr(super(), public_name, None)
         if callable(inherited):
             return inherited
@@ -321,6 +325,10 @@ class _CommonInterfaceMixin:
                 f"{type(self).__name__} configured optional alias {public_name!r} "
                 f"-> {alias_name!r}, but {alias_name}() was not found."
             )
+
+        local_public = self._resolve_local_method(public_name)
+        if callable(local_public):
+            return local_public
 
         inherited = getattr(super(), public_name, None)
         if callable(inherited):
@@ -405,7 +413,7 @@ class _CommonInterfaceMixin:
         return self.get_modality_map(state.STATE_KEYS)
 
     def get_control_target_map(self) -> Mapping[str, str]:
-        """Map native control-group names to embodia-standard target names."""
+        """Map native component names to embodia-standard target names."""
 
         return self.get_modality_map(CONTROL_TARGETS)
 

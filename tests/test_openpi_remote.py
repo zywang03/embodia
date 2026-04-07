@@ -119,7 +119,7 @@ class OpenPIRemoteTests(unittest.TestCase):
             ROBOT_SPEC = {
                 "name": "demo_robot",
                 "image_keys": [],
-                "groups": [
+                "components": [
                     {
                         "name": "arm",
                         "kind": "arm",

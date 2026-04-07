@@ -51,35 +51,29 @@ class YamlConfigTests(unittest.TestCase):
 
         self.assertEqual(loaded["method_aliases"]["step"], "infer")
 
-    def test_from_yaml_builds_grouped_specs_and_maps_native_names(self) -> None:
+    def test_from_yaml_builds_grouped_specs_with_shared_schema(self) -> None:
         path = self._write_config(
             {
-                "robot": {
-                    "interface": {
-                        "name": "vendor_robot",
-                        "images": {"front_rgb": "rgb_front"},
-                        "task": {"prompt": "instruction"},
-                        "groups": {
-                            "arm": {
-                                "native_name": "vendor_arm",
-                                "kind": "arm",
-                                "dof": 6,
-                                "state": {"joint_positions": "qpos"},
-                                "command_kinds": {
-                                    "cartesian_pose_delta": "cartesian_delta"
-                                },
-                            },
-                            "gripper": {
-                                "native_name": "vendor_gripper",
-                                "kind": "gripper",
-                                "dof": 1,
-                                "state": {"position": "gripper_pos"},
-                                "command_kinds": {
-                                    "gripper_position": "gripper_position"
-                                },
-                            },
+                "schema": {
+                    "images": ["front_rgb"],
+                    "groups": {
+                        "arm": {
+                            "kind": "arm",
+                            "dof": 6,
+                            "state": ["joint_positions"],
+                            "command_kinds": ["cartesian_pose_delta"],
+                        },
+                        "gripper": {
+                            "kind": "gripper",
+                            "dof": 1,
+                            "state": ["position"],
+                            "command_kinds": ["gripper_position"],
                         },
                     },
+                    "task": ["prompt"],
+                },
+                "robot": {
+                    "name": "demo_robot",
                     "method_aliases": {
                         "observe": "capture",
                         "act": "send_command",
@@ -87,28 +81,15 @@ class YamlConfigTests(unittest.TestCase):
                     },
                 },
                 "model": {
-                    "interface": {
-                        "name": "vendor_model",
-                        "images": {"front_rgb": "rgb_front"},
-                        "state": {
-                            "joint_positions": "qpos",
-                            "position": "gripper_pos",
-                        },
-                        "task": {"prompt": "instruction"},
-                        "outputs": {
-                            "arm": {
-                                "native_name": "vendor_arm",
-                                "command_kind": "cartesian_pose_delta",
-                                "native_command_kind": "cartesian_delta",
-                                "dim": 6,
-                            },
-                            "gripper": {
-                                "native_name": "vendor_gripper",
-                                "command_kind": "gripper_position",
-                                "native_command_kind": "gripper_position",
-                                "dim": 1,
-                            },
-                        },
+                    "name": "demo_model",
+                    "requires": {
+                        "images": ["front_rgb"],
+                        "state": ["joint_positions", "position"],
+                        "task": ["prompt"],
+                    },
+                    "outputs": {
+                        "arm": "cartesian_pose_delta",
+                        "gripper": "gripper_position",
                     },
                     "method_aliases": {
                         "reset": "clear_state",
@@ -126,9 +107,12 @@ class YamlConfigTests(unittest.TestCase):
             def capture(self):
                 return {
                     "timestamp_ns": 1,
-                    "images": {"rgb_front": None},
-                    "state": {"qpos": [0.0] * 6, "gripper_pos": 0.5},
-                    "task": {"instruction": "fold the cloth"},
+                    "images": {"front_rgb": None},
+                    "state": {
+                        "joint_positions": [0.0] * 6,
+                        "position": 0.5,
+                    },
+                    "task": {"prompt": "fold the cloth"},
                 }
 
             def send_command(self, action):
@@ -140,6 +124,7 @@ class YamlConfigTests(unittest.TestCase):
         class YourModel(em.ModelMixin):
             def __init__(self, gain: float = 0.0) -> None:
                 self.gain = gain
+                self.seen_frame = None
 
             def clear_state(self):
                 return None
@@ -149,12 +134,12 @@ class YamlConfigTests(unittest.TestCase):
                 return {
                     "commands": [
                         {
-                            "target": "vendor_arm",
-                            "kind": "cartesian_delta",
+                            "target": "arm",
+                            "kind": "cartesian_pose_delta",
                             "value": [self.gain] * 6,
                         },
                         {
-                            "target": "vendor_gripper",
+                            "target": "gripper",
                             "kind": "gripper_position",
                             "value": [0.3],
                         },
@@ -172,70 +157,58 @@ class YamlConfigTests(unittest.TestCase):
         self.assertEqual(robot.label, "from_yaml")
         self.assertEqual(model.gain, 0.5)
         self.assertEqual(result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
-        self.assertEqual(robot.last_action.get_command("vendor_gripper").value, [0.3])  # type: ignore[union-attr]
-        self.assertIn("qpos", model.seen_frame.state)
-        self.assertEqual(model.seen_frame.task["instruction"], "fold the cloth")
+        self.assertEqual(robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
+        self.assertIn("joint_positions", model.seen_frame.state)
+        self.assertEqual(model.seen_frame.task["prompt"], "fold the cloth")
 
-    def test_from_yaml_rejects_ambiguous_native_names_in_interface(self) -> None:
+    def test_from_yaml_rejects_unknown_group_output(self) -> None:
         path = self._write_config(
             {
-                "robot": {
-                    "interface": {
-                        "name": "robot",
-                        "groups": {
-                            "left_arm": {
-                                "native_name": "arm",
-                                "kind": "arm",
-                                "dof": 6,
-                                "state": {"left_qpos": "left_qpos"},
-                                "command_kinds": {
-                                    "cartesian_pose_delta": "cartesian_delta"
-                                },
-                            },
-                            "right_arm": {
-                                "native_name": "arm",
-                                "kind": "arm",
-                                "dof": 6,
-                                "state": {"right_qpos": "right_qpos"},
-                                "command_kinds": {
-                                    "cartesian_pose_delta": "cartesian_delta"
-                                },
-                            },
-                        },
+                "schema": {
+                    "groups": {
+                        "arm": {
+                            "kind": "arm",
+                            "dof": 6,
+                            "state": ["joint_positions"],
+                            "command_kinds": ["cartesian_pose_delta"],
+                        }
                     }
-                }
+                },
+                "model": {
+                    "name": "demo_model",
+                    "outputs": {
+                        "gripper": "gripper_position",
+                    },
+                },
             }
         )
 
-        class YourRobot(em.RobotMixin):
+        class YourModel(em.ModelMixin):
             pass
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             with self.assertRaises(em.InterfaceValidationError) as ctx:
-                YourRobot.from_yaml(path)
+                YourModel.from_yaml(path)
 
-        self.assertIn("maps", str(ctx.exception))
-        self.assertIn("native_name", str(ctx.exception))
+        self.assertIn("unknown target", str(ctx.exception))
 
     def test_from_yaml_rejects_unknown_runtime_field_before_init(self) -> None:
         path = self._write_config(
             {
+                "schema": {
+                    "groups": {
+                        "arm": {
+                            "kind": "arm",
+                            "dof": 6,
+                            "state": ["joint_positions"],
+                            "command_kinds": ["cartesian_pose_delta"],
+                        }
+                    }
+                },
                 "robot": {
-                    "interface": {
-                        "name": "robot",
-                        "groups": {
-                            "arm": {
-                                "kind": "arm",
-                                "dof": 6,
-                                "state": {"joint_positions": "joint_positions"},
-                                "command_kinds": {
-                                    "cartesian_pose_delta": "cartesian_pose_delta"
-                                },
-                            }
-                        },
-                    },
+                    "name": "robot",
                     "unsupported": True,
-                }
+                },
             }
         )
 

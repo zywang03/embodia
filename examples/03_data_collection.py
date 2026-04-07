@@ -25,10 +25,10 @@ class YourRobot(em.RobotMixin):
         self.step_index += 1
         return {
             "timestamp_ns": time.time_ns(),
-            "images": {"rgb_front": None},
+            "images": {"front_rgb": None},
             "state": {
-                "qpos": [float(self.step_index)] * 6,
-                "gripper_pos": min(self.step_index * 0.1, 1.0),
+                "joint_positions": [float(self.step_index)] * 6,
+                "position": min(self.step_index * 0.1, 1.0),
             },
             "meta": {"step_index": self.step_index},
         }

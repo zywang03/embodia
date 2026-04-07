@@ -1,8 +1,7 @@
 """Modality-specific helpers used by embodia's runtime layer."""
 
-from . import action_modes, images, meta, state, task
+from . import images, meta, state, task
 from ._common import (
-    ACTION_MODES,
     COMMAND_KINDS,
     CONTROL_TARGETS,
     IMAGE_KEYS,
@@ -13,7 +12,6 @@ from ._common import (
 )
 
 __all__ = [
-    "ACTION_MODES",
     "COMMAND_KINDS",
     "CONTROL_TARGETS",
     "IMAGE_KEYS",
@@ -21,7 +19,6 @@ __all__ = [
     "ModalityToken",
     "STATE_KEYS",
     "TASK_KEYS",
-    "action_modes",
     "images",
     "meta",
     "state",

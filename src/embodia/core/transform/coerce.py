@@ -127,7 +127,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
             f"command mapping is missing required field {exc.args[0]!r}."
         ) from exc
 
-    kind = value.get("kind", value.get("mode"))
+    kind = value.get("kind")
     if kind is None:
         raise InterfaceValidationError(
             "command mapping is missing required field 'kind'."
@@ -194,10 +194,7 @@ def coerce_control_group_spec(
         name = value["name"]
         kind = value["kind"]
         dof = value["dof"]
-        supported_command_kinds = value.get(
-            "supported_command_kinds",
-            value.get("action_modes"),
-        )
+        supported_command_kinds = value.get("supported_command_kinds")
     except KeyError as exc:
         raise InterfaceValidationError(
             f"control group spec mapping is missing required field {exc.args[0]!r}."
@@ -283,7 +280,7 @@ def coerce_model_output_spec(
         raise InterfaceValidationError(
             f"model output spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
-    command_kind = value.get("command_kind", value.get("mode"))
+    command_kind = value.get("command_kind")
     if command_kind is None:
         raise InterfaceValidationError(
             "model output spec mapping is missing required field 'command_kind'."

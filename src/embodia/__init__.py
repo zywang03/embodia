@@ -10,7 +10,6 @@ from .core.config_io import (
 from .core.errors import InterfaceValidationError
 from .core.mixins import ModelMixin, RobotMixin
 from .core.modalities import (
-    ACTION_MODES,
     COMMAND_KINDS,
     CONTROL_TARGETS,
     IMAGE_KEYS,
@@ -32,13 +31,10 @@ from .core.schema import (
     ModelOutputSpec,
     ModelSpec,
     RobotSpec,
-    action_from_legacy,
-    command_from_legacy,
     get_command_kind_spec,
     is_custom_command_kind_name,
     is_known_command_kind,
     register_command_kind,
-    single_command_action,
 )
 from .core.transform import (
     action_to_dict,
@@ -102,7 +98,6 @@ from .runtime.inference import (
 
 __all__ = [
     "Action",
-    "ACTION_MODES",
     "COMMAND_KIND_REGISTRY",
     "COMMAND_KINDS",
     "ActionEnsembler",
@@ -146,9 +141,7 @@ __all__ = [
     "ModalityToken",
     "STATE_KEYS",
     "TASK_KEYS",
-    "action_from_legacy",
     "action_to_dict",
-    "command_from_legacy",
     "command_to_dict",
     "StepResult",
     "check_model",
@@ -185,7 +178,6 @@ __all__ = [
     "require_yaml",
     "robot_spec_to_dict",
     "run_step",
-    "single_command_action",
     "validate_action",
     "validate_command",
     "validate_control_group_spec",

@@ -1,101 +1,40 @@
-# Minimal embodia runtime config.
-#
-# Mapping direction inside this file is always:
-#   embodia_standard_name: your_native_name
-#
-# In other words:
-# - images/state/task use "standard key -> native key"
-# - command_kinds use "standard kind -> native kind"
-#
-# Common group kinds:
-#   arm / gripper / hand / suction / base / custom
-#
-# Common command kinds:
-#   joint_position
-#   joint_position_delta
-#   joint_velocity
-#   cartesian_pose
-#   cartesian_pose_delta
-#   cartesian_twist
-#   gripper_position
-#   gripper_position_delta
-#   gripper_velocity
-#   gripper_open_close
-#   hand_joint_position
-#   hand_joint_position_delta
-#   eef_activation
+schema:
+  images:
+    - front_rgb
+  groups:
+    arm:
+      kind: arm
+      dof: 6
+      state:
+        - joint_positions
+      command_kinds:
+        - cartesian_pose_delta
+    gripper:
+      kind: gripper
+      dof: 1
+      state:
+        - position
+      command_kinds:
+        - gripper_position
 
 robot:
-  interface:
-    # Free-form identifier for this robot embodiment.
-    name: vendor_robot
-
-    images:
-      # embodia_image_key: native_robot_image_key
-      front_rgb: rgb_front
-
-    groups:
-      # Group name is the embodia-standard control target.
-      arm:
-        # What this control group is.
-        kind: arm
-
-        # Degrees of freedom for commands sent to this group.
-        dof: 6
-
-        state:
-          # embodia_state_key: native_robot_state_key
-          joint_positions: qpos
-
-        command_kinds:
-          # embodia_command_kind: native_robot_command_kind
-          cartesian_pose_delta: cartesian_delta
-
-      gripper:
-        kind: gripper
-        dof: 1
-        state:
-          position: gripper_pos
-        command_kinds:
-          gripper_position: gripper_position
-
+  name: vendor_robot
   method_aliases:
-    # embodia_method: your_existing_method_name
     observe: capture
     act: send_command
     reset: home
 
 model:
-  interface:
-    # Free-form identifier for this model.
-    name: vendor_model
-
+  name: vendor_model
+  requires:
     images:
-      # embodia_image_key: native_model_image_key
-      front_rgb: rgb_front
-
+      - front_rgb
     state:
-      # embodia_state_key: native_model_state_key
-      joint_positions: qpos
-      position: gripper_pos
-
-    outputs:
-      # Output target must match one robot group name after normalization.
-      arm:
-        # Standard command kind produced by the model.
-        command_kind: cartesian_pose_delta
-
-        # Output vector dimension for this target.
-        dim: 6
-
-        # Native kind used by the wrapped model implementation.
-        native_command_kind: cartesian_delta
-
-      gripper:
-        command_kind: gripper_position
-        dim: 1
-        native_command_kind: gripper_position
-
+      - joint_positions
+      - position
+  outputs:
+    arm: cartesian_pose_delta
+    gripper: gripper_position
   method_aliases:
     reset: clear_state
     step: infer

@@ -16,7 +16,7 @@ class OpenPIRemoteTests(unittest.TestCase):
         plan = em_openpi_remote.openpi_actions_to_action_plan(
             {"actions": [[1, 2, 3], [4, 5, 6]]},
             target="arm",
-            mode="joint_position",
+            kind="joint_position",
             dt=0.05,
             ref_frame="tool",
         )
@@ -49,11 +49,11 @@ class OpenPIRemoteTests(unittest.TestCase):
 
         self.assertEqual(response["actions"][0], [0.1, 0.2, 0.3])
         self.assertEqual(response["embodia"]["action_target"], "arm")
-        self.assertEqual(response["embodia"]["action_mode"], "joint_position")
+        self.assertEqual(response["embodia"]["action_kind"], "joint_position")
 
     def test_openpi_transform_converts_obs_and_actions(self) -> None:
         transform = em_openpi_remote.OpenPITransform(
-            action_mode="joint_position",
+            command_kind="joint_position",
             action_target="arm",
             dt=0.1,
         )
@@ -157,7 +157,7 @@ class OpenPIRemoteTests(unittest.TestCase):
                 robot,
                 obs_builder=em.frame_to_dict,
                 action_target="arm",
-                action_mode="joint_position",
+                command_kind="joint_position",
                 dt=0.05,
             )
 

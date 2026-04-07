@@ -23,10 +23,10 @@ class YourRobot(em.RobotMixin):
         self.step_index += 1
         return {
             "timestamp_ns": time.time_ns(),
-            "images": {"rgb_front": None},
+            "images": {"front_rgb": None},
             "state": {
-                "qpos": [float(self.step_index)] * 6,
-                "gripper_pos": min(self.step_index * 0.1, 1.0),
+                "joint_positions": [float(self.step_index)] * 6,
+                "position": min(self.step_index * 0.1, 1.0),
             },
         }
 
@@ -48,15 +48,15 @@ class YourModel(em.ModelMixin):
         self.step_index = 0
 
     def infer(self, frame: object) -> dict[str, object]:
-        qpos0 = float(frame.state["qpos"][0])
-        gripper_pos = float(frame.state["gripper_pos"])
+        qpos0 = float(frame.state["joint_positions"][0])
+        gripper_pos = float(frame.state["position"])
         offset = float(self.step_index * 2)
         self.step_index += 1
         return {
             "commands": [
                 {
                     "target": "arm",
-                    "kind": "cartesian_delta",
+                    "kind": "cartesian_pose_delta",
                     "value": [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
                 },
                 {
@@ -67,48 +67,6 @@ class YourModel(em.ModelMixin):
             ],
             "dt": 0.05,
         }
-
-    def _step_chunk_impl(
-        self,
-        frame: em.Frame,
-        request: em.ChunkRequest,
-    ) -> list[dict[str, object]]:
-        """Private chunk hook so sync mode can also demonstrate overlap refresh."""
-
-        seed_action = em.coerce_action(self.step(frame))
-        seed_arm = seed_action.get_command("arm")
-        seed_gripper = seed_action.get_command("gripper")
-        assert seed_arm is not None
-        assert seed_gripper is not None
-        if request.history_actions:
-            plan = [em.action_to_dict(action) for action in request.history_actions]
-            last_arm = request.history_actions[-1].get_command("arm")
-            assert last_arm is not None
-            next_value = float(last_arm.value[0] + 1.0)
-        else:
-            plan = []
-            next_value = float(seed_arm.value[0])
-
-        while len(plan) < 4:
-            plan.append(
-                {
-                    "commands": [
-                        {
-                            "target": "arm",
-                            "kind": seed_arm.kind,
-                            "value": [next_value] + [0.0] * (len(seed_arm.value) - 1),
-                        },
-                        {
-                            "target": "gripper",
-                            "kind": seed_gripper.kind,
-                            "value": list(seed_gripper.value),
-                        },
-                    ],
-                    "dt": seed_action.dt,
-                }
-            )
-            next_value += 1.0
-        return plan
 
 
 def arm_value0(action: em.Action) -> float:

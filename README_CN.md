@@ -71,13 +71,13 @@ model = YourModel.from_yaml("docs/yaml_config_example.yml")
     "commands": [
         {
             "target": "arm",
-            "mode": "ee_delta",
+            "kind": "cartesian_pose_delta",
             "value": [...],
             "ref_frame": "tool",
         },
         {
             "target": "gripper",
-            "mode": "scalar_position",
+            "kind": "gripper_position",
             "value": [0.5],
         },
     ],
@@ -123,8 +123,4 @@ result = em.run_step(robot, model, runtime=runtime)
 
 embodia 的中心始终是统一运行时数据流。最核心的对象是 `Frame`、`Action`、`RobotProtocol`、`ModelProtocol`、`RobotMixin`、`ModelMixin`、`run_step()` 和 `InferenceRuntime`。推荐的边界是：robot 和 model 继续做自己的 native 工作，embodia 负责外围的对齐、映射、校验和运行时流转。
 
-如果你需要更多细节，可以继续看：
-
-- [`docs/mixin_guide.md`](./docs/mixin_guide.md)
-- [`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml)
-- [`docs/examples_guide.md`](./docs/examples_guide.md)
+如果你需要更多细节，可以继续看 [`docs/mixin_guide.md`](./docs/mixin_guide.md)、[`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml) 和 [`docs/examples_guide.md`](./docs/examples_guide.md)。

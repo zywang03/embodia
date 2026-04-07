@@ -546,7 +546,7 @@ def configure_robot_remote_policy(
     wait_for_server: bool | None = None,
     obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
     action_target: str | None = None,
-    action_mode: str | None = None,
+    command_kind: str | None = None,
     dt: float | None = None,
     ref_frame: str | None = None,
     transform: OpenPITransform | None = None,
@@ -563,11 +563,11 @@ def configure_robot_remote_policy(
 
     if transform is not None and any(
         value is not None
-        for value in (obs_builder, action_target, action_mode, dt, ref_frame)
+        for value in (obs_builder, action_target, command_kind, dt, ref_frame)
     ):
         raise InterfaceValidationError(
             "configure_robot_remote_policy() accepts either transform=... or "
-            "obs_builder=/action_target=/action_mode=/dt=/ref_frame, not both."
+            "obs_builder=/action_target=/command_kind=/dt=/ref_frame, not both."
         )
 
     response_to_action: Callable[[object], Action]
@@ -577,8 +577,8 @@ def configure_robot_remote_policy(
         response_to_action = transform.first_action_from_response
     else:
         resolved_action_target = action_target
-        resolved_action_mode = action_mode
-        if resolved_action_target is None or resolved_action_mode is None:
+        resolved_command_kind = command_kind
+        if resolved_action_target is None or resolved_command_kind is None:
             get_spec = getattr(robot, "get_spec", None)
             if callable(get_spec):
                 spec = get_spec()
@@ -587,29 +587,33 @@ def configure_robot_remote_policy(
                     group = groups[0]
                     if resolved_action_target is None:
                         resolved_action_target = getattr(group, "name", None)
-                    modes = getattr(group, "action_modes", None)
+                    supported_command_kinds = getattr(
+                        group,
+                        "supported_command_kinds",
+                        None,
+                    )
                     if (
-                        resolved_action_mode is None
-                        and isinstance(modes, list)
-                        and len(modes) == 1
+                        resolved_command_kind is None
+                        and isinstance(supported_command_kinds, list)
+                        and len(supported_command_kinds) == 1
                     ):
-                        resolved_action_mode = modes[0]
+                        resolved_command_kind = supported_command_kinds[0]
         if not isinstance(resolved_action_target, str) or not resolved_action_target.strip():
             raise InterfaceValidationError(
                 "configure_robot_remote_policy() requires action_target=... when "
                 "transform is not provided and the robot spec does not expose "
                 "exactly one control group."
             )
-        if not isinstance(resolved_action_mode, str) or not resolved_action_mode.strip():
+        if not isinstance(resolved_command_kind, str) or not resolved_command_kind.strip():
             raise InterfaceValidationError(
-                "configure_robot_remote_policy() requires action_mode=... when "
+                "configure_robot_remote_policy() requires command_kind=... when "
                 "transform is not provided and the robot spec does not expose "
-                "exactly one action mode for its only control group."
+                "exactly one supported command kind for its only control group."
             )
         response_to_action = lambda response: openpi_first_action(
             response,
             target=resolved_action_target,
-            mode=resolved_action_mode,
+            kind=resolved_command_kind,
             dt=0.1 if dt is None else dt,
             ref_frame=ref_frame,
         )

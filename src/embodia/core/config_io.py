@@ -54,6 +54,14 @@ def _copy_mapping(value: Mapping[object, object], *, field_name: str) -> dict[st
     return result
 
 
+def _ensure_non_empty_string(value: object, *, field_name: str) -> str:
+    """Validate one non-empty string field."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise InterfaceValidationError(f"{field_name} must be a non-empty string.")
+    return value
+
+
 def _copy_string_mapping(
     value: object,
     *,
@@ -87,47 +95,33 @@ def _copy_string_mapping(
     return result
 
 
-def _ensure_non_empty_string(value: object, *, field_name: str) -> str:
-    """Validate one non-empty string field."""
-
-    if not isinstance(value, str) or not value.strip():
-        raise InterfaceValidationError(f"{field_name} must be a non-empty string.")
-    return value
-
-
-def _invert_unique_mapping(
-    mapping: Mapping[str, str],
+def _copy_string_list(
+    value: object,
     *,
     field_name: str,
-) -> dict[str, str]:
-    """Invert one ``standard -> native`` mapping into ``native -> standard``."""
+    allow_empty: bool = True,
+) -> list[str]:
+    """Validate and copy one ``list[str]`` block."""
 
-    result: dict[str, str] = {}
-    for standard_name, native_name in mapping.items():
-        if native_name in result:
+    if not isinstance(value, list):
+        raise InterfaceValidationError(
+            f"{field_name} must be a list[str], got {type(value).__name__}."
+        )
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        text = _ensure_non_empty_string(item, field_name=f"{field_name}[{index}]")
+        if text in seen:
             raise InterfaceValidationError(
-                f"{field_name} maps multiple embodia names to the same native "
-                f"name {native_name!r}, which is ambiguous."
+                f"{field_name} contains duplicate entry {text!r}."
             )
-        result[native_name] = standard_name
+        seen.add(text)
+        result.append(text)
+
+    if not allow_empty and not result:
+        raise InterfaceValidationError(f"{field_name} must not be empty.")
     return result
-
-
-def _merge_string_mapping(
-    destination: dict[str, str],
-    source: Mapping[str, str],
-    *,
-    field_name: str,
-) -> None:
-    """Merge one ``mapping[str, str]`` while detecting ambiguous collisions."""
-
-    for key, value in source.items():
-        existing = destination.get(key)
-        if existing is not None and existing != value:
-            raise InterfaceValidationError(
-                f"{field_name} maps {key!r} to both {existing!r} and {value!r}."
-            )
-        destination[key] = value
 
 
 def _copy_named_mapping(
@@ -158,19 +152,18 @@ def _copy_named_mapping(
 
     if not allow_empty and not result:
         raise InterfaceValidationError(f"{field_name} must not be empty.")
-
     return result
 
 
-def _validate_interface_keys(
-    interface: Mapping[str, Any],
+def _validate_keys(
+    value: Mapping[str, Any],
     *,
     field_name: str,
     allowed_keys: set[str],
 ) -> None:
-    """Ensure one YAML ``interface`` block only uses supported keys."""
+    """Ensure one mapping only uses supported keys."""
 
-    unknown = sorted(key for key in interface if key not in allowed_keys)
+    unknown = sorted(key for key in value if key not in allowed_keys)
     if not unknown:
         return
 
@@ -182,300 +175,288 @@ def _validate_interface_keys(
     )
 
 
-def _expand_robot_interface_config(
-    interface: Mapping[str, Any],
+def _invert_unique_mapping(
+    mapping: Mapping[str, str],
+    *,
+    field_name: str,
+) -> dict[str, str]:
+    """Invert one ``standard -> native`` mapping into ``native -> standard``."""
+
+    result: dict[str, str] = {}
+    for standard_name, native_name in mapping.items():
+        if native_name in result:
+            raise InterfaceValidationError(
+                f"{field_name} maps multiple embodia names to the same native "
+                f"name {native_name!r}, which is ambiguous."
+            )
+        result[native_name] = standard_name
+    return result
+
+
+def _merge_string_mapping(
+    destination: dict[str, str],
+    source: Mapping[str, str],
+    *,
+    field_name: str,
+) -> None:
+    """Merge one ``mapping[str, str]`` while detecting collisions."""
+
+    for key, value in source.items():
+        existing = destination.get(key)
+        if existing is not None and existing != value:
+            raise InterfaceValidationError(
+                f"{field_name} maps {key!r} to both {existing!r} and {value!r}."
+            )
+        destination[key] = value
+
+
+def _expand_shared_schema(
+    schema: Mapping[str, Any],
     *,
     field_name: str,
 ) -> dict[str, Any]:
-    """Expand one compact robot-side YAML interface block."""
+    """Expand one shared runtime schema block."""
 
-    _validate_interface_keys(
-        interface,
+    _validate_keys(
+        schema,
         field_name=field_name,
-        allowed_keys={"name", "images", "task", "meta", "groups"},
+        allowed_keys={"images", "task", "meta", "groups"},
     )
 
-    name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
-    images = _copy_string_mapping(
-        interface.get("images", {}),
+    image_keys = _copy_string_list(
+        schema.get("images", []),
         field_name=f"{field_name}.images",
+        allow_empty=True,
     )
-    task = _copy_string_mapping(
-        interface.get("task", {}),
+    task_keys = _copy_string_list(
+        schema.get("task", []),
         field_name=f"{field_name}.task",
+        allow_empty=True,
     )
-    meta = _copy_string_mapping(
-        interface.get("meta", {}),
+    meta = _copy_mapping(
+        schema.get("meta", {}),
         field_name=f"{field_name}.meta",
     )
 
     groups = _copy_named_mapping(
-        interface.get("groups"),
+        schema.get("groups"),
         field_name=f"{field_name}.groups",
         allow_empty=False,
     )
-    robot_groups: list[dict[str, Any]] = []
-    state_maps: dict[str, str] = {}
-    command_kind_maps: dict[str, str] = {}
-    control_target_maps: dict[str, str] = {}
 
-    for standard_name, group_config in groups.items():
-        _validate_interface_keys(
-            group_config,
-            field_name=f"{field_name}.groups[{standard_name!r}]",
-            allowed_keys={
-                "kind",
-                "dof",
-                "state",
-                "command_kinds",
-                "action_modes",
-                "meta",
-                "native_name",
-            },
+    expanded_groups: list[dict[str, Any]] = []
+    group_index: dict[str, dict[str, Any]] = {}
+
+    for group_name, raw_group in groups.items():
+        _validate_keys(
+            raw_group,
+            field_name=f"{field_name}.groups[{group_name!r}]",
+            allowed_keys={"kind", "dof", "state", "command_kinds", "meta"},
         )
         kind = _ensure_non_empty_string(
-            group_config.get("kind"),
-            field_name=f"{field_name}.groups[{standard_name!r}].kind",
+            raw_group.get("kind"),
+            field_name=f"{field_name}.groups[{group_name!r}].kind",
         )
-        dof = group_config.get("dof")
+        dof = raw_group.get("dof")
         if isinstance(dof, bool) or not isinstance(dof, int) or dof <= 0:
             raise InterfaceValidationError(
-                f"{field_name}.groups[{standard_name!r}].dof must be a positive int."
+                f"{field_name}.groups[{group_name!r}].dof must be a positive int."
             )
-        group_state = _copy_string_mapping(
-            group_config.get("state", {}),
-            field_name=f"{field_name}.groups[{standard_name!r}].state",
+        state_keys = _copy_string_list(
+            raw_group.get("state", []),
+            field_name=f"{field_name}.groups[{group_name!r}].state",
+            allow_empty=True,
         )
-        raw_group_command_kinds = group_config.get(
-            "command_kinds",
-            group_config.get("action_modes"),
-        )
-        if raw_group_command_kinds is None:
-            raise InterfaceValidationError(
-                f"{field_name}.groups[{standard_name!r}].command_kinds is required."
-            )
-        group_command_kinds = _copy_string_mapping(
-            raw_group_command_kinds,
-            field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
+        command_kinds = _copy_string_list(
+            raw_group.get("command_kinds"),
+            field_name=f"{field_name}.groups[{group_name!r}].command_kinds",
             allow_empty=False,
         )
         group_meta = _copy_mapping(
-            group_config.get("meta", {}),
-            field_name=f"{field_name}.groups[{standard_name!r}].meta",
-        )
-        native_name = _ensure_non_empty_string(
-            group_config.get("native_name", standard_name),
-            field_name=f"{field_name}.groups[{standard_name!r}].native_name",
-        )
-        _merge_string_mapping(
-            state_maps,
-            _invert_unique_mapping(
-                group_state,
-                field_name=f"{field_name}.groups[{standard_name!r}].state",
-            ),
-            field_name=f"{field_name}.groups[{standard_name!r}].state",
-        )
-        _merge_string_mapping(
-            command_kind_maps,
-            _invert_unique_mapping(
-                group_command_kinds,
-                field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
-            ),
-            field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
-        )
-        _merge_string_mapping(
-            control_target_maps,
-            {native_name: standard_name},
-            field_name=f"{field_name}.groups[{standard_name!r}].native_name",
-        )
-        robot_groups.append(
-            {
-                "name": standard_name,
-                "kind": kind,
-                "dof": dof,
-                "supported_command_kinds": list(group_command_kinds.values()),
-                "state_keys": list(group_state.values()),
-                "meta": group_meta,
-            }
+            raw_group.get("meta", {}),
+            field_name=f"{field_name}.groups[{group_name!r}].meta",
         )
 
+        expanded = {
+            "name": group_name,
+            "kind": kind,
+            "dof": dof,
+            "supported_command_kinds": command_kinds,
+            "state_keys": state_keys,
+            "meta": group_meta,
+        }
+        expanded_groups.append(expanded)
+        group_index[group_name] = expanded
+
     return {
-        "robot_spec": {
-            "name": name,
-            "image_keys": list(images.values()),
-            "groups": robot_groups,
-            "task_keys": list(task.values()),
-            "meta": {},
-        },
-        "modality_maps": {
-            "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
-            "control_targets": control_target_maps,
-            "state": state_maps,
-            "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
-            "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
-            "command_kinds": command_kind_maps,
-        },
+        "image_keys": image_keys,
+        "task_keys": task_keys,
+        "meta": meta,
+        "groups": expanded_groups,
+        "group_index": group_index,
     }
 
 
-def _expand_model_interface_config(
-    interface: Mapping[str, Any],
+def _expand_robot_config(
+    loaded: Mapping[str, Any],
+    schema: Mapping[str, Any],
     *,
     field_name: str,
 ) -> dict[str, Any]:
-    """Expand one compact model-side YAML interface block."""
+    """Expand one robot YAML section into runtime config."""
 
-    _validate_interface_keys(
-        interface,
+    _validate_keys(
+        loaded,
         field_name=field_name,
-        allowed_keys={
-            "name",
-            "images",
-            "state",
-            "task",
-            "meta",
-            "outputs",
+        allowed_keys={"name", "method_aliases", "remote_policy"},
+    )
+
+    shared = _expand_shared_schema(schema, field_name=f"{field_name}.schema")
+    name = _ensure_non_empty_string(
+        loaded.get("name", "robot"),
+        field_name=f"{field_name}.name",
+    )
+    return {
+        "robot_spec": {
+            "name": name,
+            "image_keys": list(shared["image_keys"]),
+            "groups": list(shared["groups"]),
+            "task_keys": list(shared["task_keys"]),
+            "meta": dict(shared["meta"]),
         },
+        "modality_maps": {},
+    }
+
+
+def _expand_model_config(
+    loaded: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    """Expand one model YAML section into runtime config."""
+
+    _validate_keys(
+        loaded,
+        field_name=field_name,
+        allowed_keys={"name", "requires", "outputs", "method_aliases"},
     )
 
-    name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
-    images = _copy_string_mapping(
-        interface.get("images", {}),
-        field_name=f"{field_name}.images",
-    )
-    state = _copy_string_mapping(
-        interface.get("state", {}),
-        field_name=f"{field_name}.state",
-    )
-    task = _copy_string_mapping(
-        interface.get("task", {}),
-        field_name=f"{field_name}.task",
-    )
-    meta = _copy_string_mapping(
-        interface.get("meta", {}),
-        field_name=f"{field_name}.meta",
+    shared = _expand_shared_schema(schema, field_name=f"{field_name}.schema")
+    name = _ensure_non_empty_string(
+        loaded.get("name", "model"),
+        field_name=f"{field_name}.name",
     )
 
-    outputs = _copy_named_mapping(
-        interface.get("outputs"),
+    requires = loaded.get("requires", {})
+    if not isinstance(requires, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name}.requires must be a mapping, got {type(requires).__name__}."
+        )
+    _validate_keys(
+        requires,
+        field_name=f"{field_name}.requires",
+        allowed_keys={"images", "state", "task"},
+    )
+
+    all_state_keys: list[str] = []
+    for group in shared["groups"]:
+        for state_key in group["state_keys"]:
+            if state_key not in all_state_keys:
+                all_state_keys.append(state_key)
+
+    required_image_keys = _copy_string_list(
+        requires.get("images", list(shared["image_keys"])),
+        field_name=f"{field_name}.requires.images",
+        allow_empty=True,
+    )
+    required_state_keys = _copy_string_list(
+        requires.get("state", all_state_keys),
+        field_name=f"{field_name}.requires.state",
+        allow_empty=True,
+    )
+    required_task_keys = _copy_string_list(
+        requires.get("task", list(shared["task_keys"])),
+        field_name=f"{field_name}.requires.task",
+        allow_empty=True,
+    )
+
+    outputs = _copy_string_mapping(
+        loaded.get("outputs"),
         field_name=f"{field_name}.outputs",
         allow_empty=False,
     )
-    model_outputs: list[dict[str, Any]] = []
-    command_kind_maps: dict[str, str] = {}
-    control_target_maps: dict[str, str] = {}
-
-    for standard_target, output_config in outputs.items():
-        _validate_interface_keys(
-            output_config,
-            field_name=f"{field_name}.outputs[{standard_target!r}]",
-            allowed_keys={
-                "command_kind",
-                "mode",
-                "dim",
-                "meta",
-                "native_name",
-                "native_command_kind",
-                "native_mode",
-            },
-        )
-        command_kind = _ensure_non_empty_string(
-            output_config.get("command_kind", output_config.get("mode")),
-            field_name=f"{field_name}.outputs[{standard_target!r}].command_kind",
-        )
-        dim = output_config.get("dim")
-        if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
+    expanded_outputs: list[dict[str, Any]] = []
+    for target, command_kind in outputs.items():
+        group = shared["group_index"].get(target)
+        if group is None:
+            expected = ", ".join(repr(name) for name in sorted(shared["group_index"]))
             raise InterfaceValidationError(
-                f"{field_name}.outputs[{standard_target!r}].dim must be a positive int."
+                f"{field_name}.outputs contains unknown target {target!r}. "
+                f"Expected one of: {expected}."
             )
-        output_meta = _copy_mapping(
-            output_config.get("meta", {}),
-            field_name=f"{field_name}.outputs[{standard_target!r}].meta",
-        )
-        native_name = _ensure_non_empty_string(
-            output_config.get("native_name", standard_target),
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
-        )
-        native_command_kind = _ensure_non_empty_string(
-            output_config.get(
-                "native_command_kind",
-                output_config.get("native_mode", command_kind),
-            ),
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_command_kind",
-        )
-        _merge_string_mapping(
-            control_target_maps,
-            {native_name: standard_target},
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
-        )
-        _merge_string_mapping(
-            command_kind_maps,
-            {native_command_kind: command_kind},
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_command_kind",
-        )
-        model_outputs.append(
+        if command_kind not in group["supported_command_kinds"]:
+            raise InterfaceValidationError(
+                f"{field_name}.outputs[{target!r}] uses command kind "
+                f"{command_kind!r}, but shared schema group {target!r} only "
+                f"supports {group['supported_command_kinds']!r}."
+            )
+        expanded_outputs.append(
             {
-                "target": standard_target,
+                "target": target,
                 "command_kind": command_kind,
-                "dim": dim,
-                "meta": output_meta,
+                "dim": group["dof"],
+                "meta": {},
             }
         )
 
     return {
         "model_spec": {
             "name": name,
-            "required_image_keys": list(images.values()),
-            "required_state_keys": list(state.values()),
-            "required_task_keys": list(task.values()),
-            "outputs": model_outputs,
-            "meta": {},
+            "required_image_keys": required_image_keys,
+            "required_state_keys": required_state_keys,
+            "required_task_keys": required_task_keys,
+            "outputs": expanded_outputs,
+            "meta": dict(shared["meta"]),
         },
-        "modality_maps": {
-            "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
-            "state": _invert_unique_mapping(state, field_name=f"{field_name}.state"),
-            "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
-            "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
-            "control_targets": control_target_maps,
-            "command_kinds": command_kind_maps,
-        },
+        "modality_maps": {},
     }
 
 
-def expand_component_yaml_interface_config(
+def expand_component_yaml_config(
     loaded: Mapping[str, Any],
     *,
     component: str,
     path: str | PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    """Expand one compact YAML ``interface`` block into runtime config fields."""
+    """Expand one component YAML mapping into runtime config fields."""
 
     copied = _copy_mapping(loaded, field_name=f"{path or '<config>'}:{component}")
-    raw_interface = copied.pop("interface", None)
-    field_name = (
-        f"{Path(path)}:{component}.interface"
-        if path is not None
-        else f"{component}.interface"
-    )
-    if raw_interface is None:
+    raw_schema = copied.pop("schema", None)
+    if raw_schema is None:
         raise InterfaceValidationError(
-            f"{field_name} is required. YAML-based embodia config must declare "
-            "one compact 'interface' block."
+            f"{Path(path) if path is not None else '<config>'}:{component} is "
+            "missing the required shared 'schema' block."
         )
-    if not isinstance(raw_interface, Mapping):
+    if not isinstance(raw_schema, Mapping):
         raise InterfaceValidationError(
-            f"{field_name} must be a mapping, got {type(raw_interface).__name__}."
+            f"{Path(path) if path is not None else '<config>'}:schema must be a "
+            f"mapping, got {type(raw_schema).__name__}."
         )
 
+    field_name = f"{Path(path)}:{component}" if path is not None else component
     if component == "robot":
-        expanded = _expand_robot_interface_config(raw_interface, field_name=field_name)
+        expanded = _expand_robot_config(copied, raw_schema, field_name=field_name)
     elif component == "model":
-        expanded = _expand_model_interface_config(raw_interface, field_name=field_name)
+        expanded = _expand_model_config(copied, raw_schema, field_name=field_name)
     else:
         raise InterfaceValidationError(
-            f"Unsupported component {component!r} when expanding YAML interface."
+            f"Unsupported component {component!r} when expanding YAML config."
         )
 
+    copied.pop("name", None)
+    copied.pop("requires", None)
+    copied.pop("outputs", None)
     copied.update(expanded)
     return copied
 
@@ -537,15 +518,7 @@ def load_component_yaml_config(
     *,
     component: str,
 ) -> dict[str, Any]:
-    """Load config for one embodia component from a YAML file.
-
-    This supports two shapes:
-
-    1. a multi-component file with top-level sections such as ``robot`` and
-       ``model``
-    2. a direct single-component mapping containing fields such as
-       ``interface`` and ``method_aliases``
-    """
+    """Load config for one embodia component from a YAML file."""
 
     loaded = load_yaml_config(path)
     component_value = loaded.get(component)
@@ -555,7 +528,19 @@ def load_component_yaml_config(
                 f"YAML section {component!r} at {Path(path)} must be a mapping, "
                 f"got {type(component_value).__name__}."
             )
-        return _copy_mapping(component_value, field_name=f"{Path(path)}:{component}")
+        result = _copy_mapping(component_value, field_name=f"{Path(path)}:{component}")
+        shared_schema = loaded.get("schema")
+        if shared_schema is not None:
+            if not isinstance(shared_schema, Mapping):
+                raise InterfaceValidationError(
+                    f"YAML section 'schema' at {Path(path)} must be a mapping, got "
+                    f"{type(shared_schema).__name__}."
+                )
+            result["schema"] = _copy_mapping(
+                shared_schema,
+                field_name=f"{Path(path)}:schema",
+            )
+        return result
 
     known_components = {"robot", "model"}
     present_components = sorted(
@@ -568,12 +553,11 @@ def load_component_yaml_config(
             f"YAML config at {Path(path)} contains top-level sections "
             f"{present_components!r}, but is missing section {component!r}."
         )
-
     return loaded
 
 
 __all__ = [
-    "expand_component_yaml_interface_config",
+    "expand_component_yaml_config",
     "is_yaml_available",
     "load_component_yaml_config",
     "load_yaml_config",

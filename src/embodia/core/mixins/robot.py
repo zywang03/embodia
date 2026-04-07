@@ -8,7 +8,7 @@ from os import PathLike
 from typing import Any, Self
 
 from ..config_io import (
-    expand_component_yaml_interface_config,
+    expand_component_yaml_config,
     load_component_yaml_config,
 )
 from ...runtime.checks import (
@@ -42,7 +42,8 @@ class RobotMixin(_CommonInterfaceMixin):
         "reset": "RESET_METHOD",
     }
     _YAML_CONFIG_KEYS = {
-        "interface",
+        "schema",
+        "name",
         "method_aliases",
         "remote_policy",
     }
@@ -117,7 +118,7 @@ class RobotMixin(_CommonInterfaceMixin):
             allowed_keys=cls._YAML_CONFIG_KEYS,
             config_label=f"robot YAML config at {path}",
         )
-        loaded = expand_component_yaml_interface_config(
+        loaded = expand_component_yaml_config(
             loaded,
             component="robot",
             path=path,

@@ -23,10 +23,10 @@ class YourRobot(em.RobotMixin):
         self.step_index += 1
         return {
             "timestamp_ns": time.time_ns(),
-            "images": {"rgb_front": None},
+            "images": {"front_rgb": None},
             "state": {
-                "qpos": [float(self.step_index)] * 6,
-                "gripper_pos": min(self.step_index * 0.1, 1.0),
+                "joint_positions": [float(self.step_index)] * 6,
+                "position": min(self.step_index * 0.1, 1.0),
             },
         }
 
@@ -50,13 +50,13 @@ class YourModel(em.ModelMixin):
     def infer(self, frame: object) -> dict[str, object]:
         targets = [0.0, 3.0, 6.0, 9.0, 12.0]
         base = targets[self.step_index % len(targets)]
-        gripper_pos = float(frame.state["gripper_pos"])
+        gripper_pos = float(frame.state["position"])
         self.step_index += 1
         return {
             "commands": [
                 {
                     "target": "arm",
-                    "kind": "cartesian_delta",
+                    "kind": "cartesian_pose_delta",
                     "value": [base] * 6,
                 },
                 {

@@ -7,7 +7,7 @@ from os import PathLike
 from typing import Any, Self
 
 from ..config_io import (
-    expand_component_yaml_interface_config,
+    expand_component_yaml_config,
     load_component_yaml_config,
 )
 from ...runtime.checks import (
@@ -40,7 +40,10 @@ class ModelMixin(_CommonInterfaceMixin):
         "plan": "PLAN_METHOD",
     }
     _YAML_CONFIG_KEYS = {
-        "interface",
+        "schema",
+        "name",
+        "requires",
+        "outputs",
         "method_aliases",
     }
 
@@ -105,7 +108,7 @@ class ModelMixin(_CommonInterfaceMixin):
             allowed_keys=cls._YAML_CONFIG_KEYS,
             config_label=f"model YAML config at {path}",
         )
-        loaded = expand_component_yaml_interface_config(
+        loaded = expand_component_yaml_config(
             loaded,
             component="model",
             path=path,

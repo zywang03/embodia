@@ -32,13 +32,9 @@ STATE_KEYS = ModalityToken(
     "state",
     legacy_attr="STATE_KEY_MAP",
 )
-ACTION_MODES = ModalityToken(
-    "action_modes",
-    legacy_attr="ACTION_MODE_MAP",
-)
 COMMAND_KINDS = ModalityToken(
     "command_kinds",
-    legacy_attr="ACTION_MODE_MAP",
+    legacy_attr="COMMAND_KIND_MAP",
 )
 TASK_KEYS = ModalityToken(
     "task",
@@ -54,7 +50,6 @@ KNOWN_MODALITIES = (
     CONTROL_TARGETS,
     STATE_KEYS,
     COMMAND_KINDS,
-    ACTION_MODES,
     TASK_KEYS,
     META_KEYS,
 )
@@ -132,7 +127,7 @@ def resolve_modality_mapping(
 
     Preferred public form:
 
-    ``MODALITY_MAPS = {IMAGE_KEYS: {...}, STATE_KEYS: {...}, ACTION_MODES: {...}}``
+    ``MODALITY_MAPS = {IMAGE_KEYS: {...}, STATE_KEYS: {...}, COMMAND_KINDS: {...}}``
 
     String keys such as ``"images"`` and legacy top-level attributes such as
     ``IMAGE_KEY_MAP`` remain supported for compatibility.
@@ -162,7 +157,6 @@ def resolve_modality_mapping(
 
 
 __all__ = [
-    "ACTION_MODES",
     "COMMAND_KINDS",
     "CONTROL_TARGETS",
     "IMAGE_KEYS",

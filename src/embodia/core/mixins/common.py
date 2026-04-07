@@ -12,7 +12,6 @@ from ...runtime.checks import (
 from ..errors import InterfaceValidationError
 from ..modalities import images, meta, state, task
 from ..modalities._common import (
-    ACTION_MODES,
     COMMAND_KINDS,
     CONTROL_TARGETS,
     KNOWN_MODALITIES,
@@ -211,16 +210,10 @@ class _CommonInterfaceMixin:
         *,
         modality_maps: Mapping[str, Mapping[str, str]] | None = None,
     ) -> Mapping[str, str]:
-        """Resolve command-kind mappings while accepting old action-mode config."""
+        """Resolve the active command-kind mapping."""
 
-        resolved = cls._effective_modality_map(
-            COMMAND_KINDS,
-            modality_maps=modality_maps,
-        )
-        if resolved:
-            return resolved
         return cls._effective_modality_map(
-            ACTION_MODES,
+            COMMAND_KINDS,
             modality_maps=modality_maps,
         )
 
@@ -416,18 +409,10 @@ class _CommonInterfaceMixin:
 
         return self.get_modality_map(CONTROL_TARGETS)
 
-    def get_action_mode_map(self) -> Mapping[str, str]:
-        """Compatibility alias for older action-mode naming."""
-
-        return self.get_command_kind_map()
-
     def get_command_kind_map(self) -> Mapping[str, str]:
         """Map native command kinds to embodia-standard command kinds."""
 
-        resolved = self.get_modality_map(COMMAND_KINDS)
-        if resolved:
-            return resolved
-        return self.get_modality_map(ACTION_MODES)
+        return self.get_modality_map(COMMAND_KINDS)
 
     def get_task_key_map(self) -> Mapping[str, str]:
         """Map native task keys to embodia-standard task keys."""

@@ -138,7 +138,7 @@ def openpi_actions_to_action_plan(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
     target: str = "arm",
-    mode: str,
+    kind: str,
     dt: float = 0.1,
     ref_frame: str | None = None,
 ) -> list[Action]:
@@ -147,7 +147,7 @@ def openpi_actions_to_action_plan(
     plan = [
         Action.single(
             target=target,
-            mode=mode,
+            kind=kind,
             value=row,
             ref_frame=ref_frame,
             dt=dt,
@@ -163,7 +163,7 @@ def openpi_first_action(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
     target: str = "arm",
-    mode: str,
+    kind: str,
     dt: float = 0.1,
     ref_frame: str | None = None,
 ) -> Action:
@@ -172,7 +172,7 @@ def openpi_first_action(
     return openpi_actions_to_action_plan(
         response_or_actions,
         target=target,
-        mode=mode,
+        kind=kind,
         dt=dt,
         ref_frame=ref_frame,
     )[0]
@@ -201,7 +201,7 @@ def openpi_response_from_action_plan(
     if include_embodia_metadata:
         response["embodia"] = {
             "action_target": first_command.target,
-            "action_mode": first_command.mode,
+            "action_kind": first_command.kind,
             "action_dt": actions[0].dt,
             "action_ref_frame": first_command.ref_frame,
             "chunk_size": len(actions),
@@ -218,7 +218,7 @@ class OpenPITransform:
     scattering OpenPI-specific conversion details across multiple callbacks.
     """
 
-    action_mode: str
+    command_kind: str
     action_target: str = "arm"
     dt: float = 0.1
     ref_frame: str | None = None
@@ -234,9 +234,9 @@ class OpenPITransform:
             raise InterfaceValidationError(
                 "OpenPITransform.action_target must be a non-empty string."
             )
-        if not isinstance(self.action_mode, str) or not self.action_mode.strip():
+        if not isinstance(self.command_kind, str) or not self.command_kind.strip():
             raise InterfaceValidationError(
-                "OpenPITransform.action_mode must be a non-empty string."
+                "OpenPITransform.command_kind must be a non-empty string."
             )
         if isinstance(self.dt, bool) or not isinstance(self.dt, Real):
             raise InterfaceValidationError(
@@ -308,7 +308,7 @@ class OpenPITransform:
         return openpi_actions_to_action_plan(
             response_or_actions,
             target=self.action_target,
-            mode=self.action_mode,
+            kind=self.command_kind,
             dt=self.dt,
             ref_frame=self.ref_frame,
         )

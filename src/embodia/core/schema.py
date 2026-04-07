@@ -167,18 +167,6 @@ class Command:
     ref_frame: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def mode(self) -> str:
-        """Compatibility alias for older code that still uses ``mode``."""
-
-        return self.kind
-
-    @mode.setter
-    def mode(self, value: str) -> None:
-        """Compatibility alias setter."""
-
-        self.kind = value
-
 
 @dataclass(slots=True)
 class Action:
@@ -193,30 +181,20 @@ class Action:
         cls,
         *,
         target: str,
-        kind: str | None = None,
+        kind: str,
         value: list[float],
         dt: float = 0.1,
         ref_frame: str | None = None,
         command_meta: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
-        mode: str | None = None,
     ) -> Action:
-        """Build an action containing exactly one command.
+        """Build an action containing exactly one command."""
 
-        ``kind=...`` is the preferred argument. ``mode=...`` remains accepted
-        as a small migration helper for older code.
-        """
-
-        resolved_kind = _resolve_kind_or_legacy_mode(
-            kind=kind,
-            mode=mode,
-            field_name="Action.single()",
-        )
         return cls(
             commands=[
                 Command(
                     target=target,
-                    kind=resolved_kind,
+                    kind=kind,
                     value=list(value),
                     ref_frame=ref_frame,
                     meta={} if command_meta is None else dict(command_meta),
@@ -251,23 +229,6 @@ class ControlGroupSpec:
 
         return command_kind in self.supported_command_kinds
 
-    @property
-    def action_modes(self) -> list[str]:
-        """Compatibility alias for older ``action_modes`` naming."""
-
-        return self.supported_command_kinds
-
-    @action_modes.setter
-    def action_modes(self, value: list[str]) -> None:
-        """Compatibility alias setter."""
-
-        self.supported_command_kinds = value
-
-    def supports_mode(self, mode: str) -> bool:
-        """Compatibility alias for older code."""
-
-        return self.supports_command_kind(mode)
-
 
 @dataclass(slots=True)
 class RobotSpec:
@@ -299,11 +260,6 @@ class RobotSpec:
                     result.append(command_kind)
         return result
 
-    def all_action_modes(self) -> list[str]:
-        """Compatibility alias for older naming."""
-
-        return self.all_supported_command_kinds()
-
     def all_state_keys(self) -> list[str]:
         """Return the unique state keys exposed across all groups."""
 
@@ -325,18 +281,6 @@ class ModelOutputSpec:
     command_kind: str
     dim: int
     meta: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def mode(self) -> str:
-        """Compatibility alias for older code."""
-
-        return self.command_kind
-
-    @mode.setter
-    def mode(self, value: str) -> None:
-        """Compatibility alias setter."""
-
-        self.command_kind = value
 
 
 @dataclass(slots=True)
@@ -415,90 +359,6 @@ def is_known_command_kind(name: str) -> bool:
     """Return whether ``name`` is registered."""
 
     return name in COMMAND_KIND_REGISTRY
-
-
-def _resolve_kind_or_legacy_mode(
-    *,
-    kind: str | None,
-    mode: str | None,
-    field_name: str,
-) -> str:
-    """Resolve a preferred ``kind`` or legacy ``mode`` argument."""
-
-    if kind is not None and mode is not None and kind != mode:
-        raise InterfaceValidationError(
-            f"{field_name} received both kind={kind!r} and mode={mode!r}; "
-            "use only kind=... for new code."
-        )
-    resolved = kind if kind is not None else mode
-    if resolved is None:
-        raise InterfaceValidationError(f"{field_name} requires kind=....")
-    return resolved
-
-
-def command_from_legacy(
-    *,
-    target: str,
-    mode: str,
-    value: list[float],
-    ref_frame: str | None = None,
-    meta: dict[str, Any] | None = None,
-) -> Command:
-    """Build one new-style command from a legacy ``mode/value`` shape."""
-
-    return Command(
-        target=target,
-        kind=mode,
-        value=list(value),
-        ref_frame=ref_frame,
-        meta={} if meta is None else dict(meta),
-    )
-
-
-def action_from_legacy(
-    *,
-    target: str,
-    mode: str,
-    value: list[float],
-    dt: float = 0.1,
-    ref_frame: str | None = None,
-    command_meta: dict[str, Any] | None = None,
-    meta: dict[str, Any] | None = None,
-) -> Action:
-    """Build one single-command action from a legacy flat action shape."""
-
-    return Action.single(
-        target=target,
-        kind=mode,
-        value=value,
-        dt=dt,
-        ref_frame=ref_frame,
-        command_meta=command_meta,
-        meta=meta,
-    )
-
-
-def single_command_action(
-    *,
-    target: str,
-    kind: str,
-    value: list[float],
-    dt: float = 0.1,
-    ref_frame: str | None = None,
-    command_meta: dict[str, Any] | None = None,
-    meta: dict[str, Any] | None = None,
-) -> Action:
-    """Small convenience helper for one-command actions."""
-
-    return Action.single(
-        target=target,
-        kind=kind,
-        value=value,
-        dt=dt,
-        ref_frame=ref_frame,
-        command_meta=command_meta,
-        meta=meta,
-    )
 
 
 def validate_frame(frame: Frame) -> None:
@@ -935,15 +795,12 @@ __all__ = [
     "ModelOutputSpec",
     "ModelSpec",
     "RobotSpec",
-    "action_from_legacy",
-    "command_from_legacy",
     "ensure_action_matches_model_spec",
     "ensure_action_supported_by_robot",
     "get_command_kind_spec",
     "is_custom_command_kind_name",
     "is_known_command_kind",
     "register_command_kind",
-    "single_command_action",
     "validate_action",
     "validate_command",
     "validate_control_group_spec",

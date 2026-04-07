@@ -16,7 +16,7 @@ The examples follow one grouped-command schema throughout:
 - robot state is standardized into semantic keys such as `joint_positions` and `position`
 - robot embodiment is declared through control groups such as `arm` and `gripper`
 - every action step is an `Action` with one or more `commands`
-- each command addresses one control group through `target + mode + value`
+- each command addresses one control group through `target + kind + value`
 
 If you need more configuration detail, read
 [`docs/yaml_config_example.yml`](./yaml_config_example.yml) and

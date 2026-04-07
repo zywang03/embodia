@@ -129,22 +129,18 @@ def remap_command(
     *,
     target_map: Mapping[str, str] | None = None,
     kind_map: Mapping[str, str] | None = None,
-    mode_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
-    frame_map: Mapping[str, str] | None = None,
 ) -> Command:
     """Rename one command's target/kind/reference frame."""
 
     normalized = coerce_command(command)
-    active_ref_frame_map = ref_frame_map or frame_map or {}
-    active_kind_map = kind_map or mode_map or {}
     mapped_ref_frame = normalized.ref_frame
     if mapped_ref_frame is not None:
-        mapped_ref_frame = _remap_name(mapped_ref_frame, active_ref_frame_map)
+        mapped_ref_frame = _remap_name(mapped_ref_frame, ref_frame_map or {})
 
     return Command(
         target=_remap_name(normalized.target, target_map or {}),
-        kind=_remap_name(normalized.kind, active_kind_map),
+        kind=_remap_name(normalized.kind, kind_map or {}),
         value=list(normalized.value),
         ref_frame=mapped_ref_frame,
         meta=dict(normalized.meta),
@@ -156,9 +152,7 @@ def remap_action(
     *,
     target_map: Mapping[str, str] | None = None,
     kind_map: Mapping[str, str] | None = None,
-    mode_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
-    frame_map: Mapping[str, str] | None = None,
 ) -> Action:
     """Rename action commands according to mapping tables."""
 
@@ -169,9 +163,7 @@ def remap_action(
                 command,
                 target_map=target_map,
                 kind_map=kind_map,
-                mode_map=mode_map,
                 ref_frame_map=ref_frame_map,
-                frame_map=frame_map,
             )
             for command in normalized.commands
         ],
@@ -186,19 +178,17 @@ def remap_control_group_spec(
     target_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-    action_mode_map: Mapping[str, str] | None = None,
 ) -> ControlGroupSpec:
     """Rename a control-group spec."""
 
     normalized = coerce_control_group_spec(spec)
-    active_kind_map = command_kind_map or action_mode_map or {}
     return ControlGroupSpec(
         name=_remap_name(normalized.name, target_map or {}),
         kind=normalized.kind,
         dof=normalized.dof,
         supported_command_kinds=_remap_name_list(
             normalized.supported_command_kinds,
-            active_kind_map,
+            command_kind_map or {},
             "control_group_spec.supported_command_kinds",
         ),
         state_keys=_remap_name_list(
@@ -217,7 +207,6 @@ def remap_robot_spec(
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-    action_mode_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> RobotSpec:
     """Rename robot spec keys and control-group names according to mappings."""
@@ -236,7 +225,6 @@ def remap_robot_spec(
                 target_map=target_map,
                 state_key_map=state_key_map,
                 command_kind_map=command_kind_map,
-                action_mode_map=action_mode_map,
             )
             for group in normalized.groups
         ],
@@ -254,15 +242,13 @@ def remap_model_output_spec(
     *,
     target_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-    action_mode_map: Mapping[str, str] | None = None,
 ) -> ModelOutputSpec:
     """Rename a model-output spec."""
 
     normalized = coerce_model_output_spec(spec)
-    active_kind_map = command_kind_map or action_mode_map or {}
     return ModelOutputSpec(
         target=_remap_name(normalized.target, target_map or {}),
-        command_kind=_remap_name(normalized.command_kind, active_kind_map),
+        command_kind=_remap_name(normalized.command_kind, command_kind_map or {}),
         dim=normalized.dim,
         meta=dict(normalized.meta),
     )
@@ -275,7 +261,6 @@ def remap_model_spec(
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-    action_mode_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> ModelSpec:
     """Rename model spec keys and output definitions according to mappings."""
@@ -303,7 +288,6 @@ def remap_model_spec(
                 output,
                 target_map=target_map,
                 command_kind_map=command_kind_map,
-                action_mode_map=action_mode_map,
             )
             for output in normalized.outputs
         ],

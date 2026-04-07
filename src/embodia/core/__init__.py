@@ -5,7 +5,6 @@ from .config_io import load_component_yaml_config
 from .errors import InterfaceValidationError
 from .mixins import ModelMixin, RobotMixin
 from .modalities import (
-    ACTION_MODES,
     COMMAND_KINDS,
     CONTROL_TARGETS,
     IMAGE_KEYS,
@@ -25,13 +24,10 @@ from .schema import (
     ModelOutputSpec,
     ModelSpec,
     RobotSpec,
-    action_from_legacy,
-    command_from_legacy,
     get_command_kind_spec,
     is_custom_command_kind_name,
     is_known_command_kind,
     register_command_kind,
-    single_command_action,
 )
 from .transform import (
     action_to_dict,
@@ -61,7 +57,6 @@ from .transform import (
 
 __all__ = [
     "Action",
-    "ACTION_MODES",
     "COMMAND_KIND_REGISTRY",
     "COMMAND_KINDS",
     "CONTROL_TARGETS",
@@ -85,9 +80,7 @@ __all__ = [
     "RobotSpec",
     "ModalityToken",
     "STATE_KEYS",
-    "action_from_legacy",
     "action_to_dict",
-    "command_from_legacy",
     "coerce_action",
     "coerce_command",
     "coerce_control_group_spec",
@@ -115,5 +108,4 @@ __all__ = [
     "remap_robot_spec",
     "register_command_kind",
     "robot_spec_to_dict",
-    "single_command_action",
 ]

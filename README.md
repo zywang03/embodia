@@ -79,13 +79,13 @@ The normalized action shape is:
     "commands": [
         {
             "target": "arm",
-            "mode": "ee_delta",
+            "kind": "cartesian_pose_delta",
             "value": [...],
             "ref_frame": "tool",
         },
         {
             "target": "gripper",
-            "mode": "scalar_position",
+            "kind": "gripper_position",
             "value": [0.5],
         },
     ],
@@ -140,8 +140,6 @@ embodia is centered on unified runtime data flow. The core pieces are
 your robot and model keep doing their native work, while embodia handles
 alignment, remapping, validation, and runtime flow around them.
 
-If you need more detail, the extra docs are:
-
-- [`docs/mixin_guide.md`](./docs/mixin_guide.md) for config styles and mapping rules
-- [`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml) for a commented YAML example
-- [`docs/examples_guide.md`](./docs/examples_guide.md) for how the example scripts are organized
+If you need more detail, the extra docs are [`docs/mixin_guide.md`](./docs/mixin_guide.md),
+[`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml), and
+[`docs/examples_guide.md`](./docs/examples_guide.md).

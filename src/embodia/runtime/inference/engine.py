@@ -9,7 +9,8 @@ from typing import Any
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
-from .._dispatch import (
+from ..action_source import ActionSource, resolve_action_source as _resolve_action_source
+from ..dispatch import (
     POLICY_INFER_CHUNK_METHODS,
     POLICY_INFER_METHODS,
     POLICY_PLAN_METHODS,
@@ -20,7 +21,7 @@ from .._dispatch import (
     resolve_callable_method,
 )
 from ..checks import validate_action, validate_frame
-from ..flow import ActionSource, _resolve_action_source, run_step
+from ..flow import run_step
 from .chunk_scheduler import ChunkScheduler
 from .common import as_action, as_frame, reset_if_possible
 from .control import RealtimeController

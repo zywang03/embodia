@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
+import math
 from typing import Any
 
 from ...core.errors import InterfaceValidationError
-from ...core.schema import Action, Frame
-from ...core.transform import coerce_action, coerce_frame
+from ..coerce import as_action, as_frame
 
 
 def reset_if_possible(component: object) -> None:
@@ -32,22 +31,4 @@ def validate_positive_number(value: object, field_name: str) -> float:
     if number <= 0.0:
         raise InterfaceValidationError(f"{field_name} must be > 0, got {value!r}.")
     return number
-
-
-def as_frame(value: Frame | Mapping[str, Any]) -> Frame:
-    """Return a frame object without copying when already standardized."""
-
-    if isinstance(value, Frame):
-        return value
-    return coerce_frame(value)
-
-
-def as_action(value: Action | Mapping[str, Any]) -> Action:
-    """Return an action object without copying when already standardized."""
-
-    if isinstance(value, Action):
-        return value
-    return coerce_action(value)
-
-
 __all__ = ["as_action", "as_frame", "reset_if_possible", "validate_positive_number"]

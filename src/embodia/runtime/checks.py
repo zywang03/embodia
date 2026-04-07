@@ -8,10 +8,6 @@ declared specs.
 
 from __future__ import annotations
 
-import inspect
-from types import SimpleNamespace
-from typing import Any
-
 from ..core.errors import InterfaceValidationError
 from ..core.modalities import images, state, task
 from ..core.schema import (
@@ -29,7 +25,7 @@ from ..core.schema import (
     validate_policy_spec,
     validate_robot_spec,
 )
-from ._dispatch import (
+from .dispatch import (
     POLICY_GET_SPEC_METHODS,
     POLICY_INFER_CHUNK_METHODS,
     POLICY_INFER_METHODS,
@@ -41,77 +37,13 @@ from ._dispatch import (
     format_method_options,
     resolve_callable_method,
 )
-
-
-def _object_label(obj: object) -> str:
-    """Return a helpful label for error messages."""
-
-    return f"{type(obj).__name__} instance"
-
-
-def _require_method(
-    obj: object,
-    method_names: tuple[str, ...],
-) -> tuple[Any, str]:
-    """Fetch the first required callable method from a priority list."""
-
-    method, resolved_name = resolve_callable_method(obj, method_names)
-    if callable(method) and resolved_name is not None:
-        return method, resolved_name
-
-    raise InterfaceValidationError(
-        f"{_object_label(obj)} is missing required method "
-        f"{format_method_options(method_names)}."
-    )
-
-
-def _call_method(method: Any, obj: object, method_name: str, *args: object) -> Any:
-    """Call a checked method and wrap runtime errors consistently."""
-
-    try:
-        return method(*args)
-    except Exception as exc:
-        raise InterfaceValidationError(
-            f"{_object_label(obj)} {method_name}() raised "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
-
-
-def _ensure_signature_accepts(method: Any, method_name: str, *args: object) -> None:
-    """Check that a method can be called with the expected runtime arguments."""
-
-    try:
-        signature = inspect.signature(method)
-    except (TypeError, ValueError) as exc:
-        raise InterfaceValidationError(
-            f"Could not inspect signature of method {method_name!r}: {exc}."
-        ) from exc
-
-    try:
-        signature.bind(*args)
-    except TypeError as exc:
-        raise InterfaceValidationError(
-            f"Method {method_name!r} has incompatible signature {signature}; "
-            f"it must accept {len(args)} runtime argument(s)."
-        ) from exc
-
-
-def _single_step_chunk_request() -> object:
-    """Build one minimal request object for chunk-policy acceptance checks."""
-
-    return SimpleNamespace(
-        request_step=0,
-        request_time_s=0.0,
-        history_start=0,
-        history_end=0,
-        active_chunk_length=0,
-        remaining_steps=0,
-        overlap_steps=0,
-        latency_steps=0,
-        request_trigger_steps=0,
-        plan_start_step=0,
-        history_actions=[],
-    )
+from .check_utils import (
+    call_method as _call_method,
+    ensure_signature_accepts as _ensure_signature_accepts,
+    object_label as _object_label,
+    require_method as _require_method,
+    single_step_chunk_request as _single_step_chunk_request,
+)
 
 
 def _pair_problems(robot_spec: RobotSpec, policy_spec: PolicySpec) -> list[str]:

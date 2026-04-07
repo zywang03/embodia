@@ -56,12 +56,12 @@ class YourModel(em.ModelMixin):
             "commands": [
                 {
                     "target": "arm",
-                    "mode": "cartesian_delta",
+                    "kind": "cartesian_delta",
                     "value": [base] * 6,
                 },
                 {
                     "target": "gripper",
-                    "mode": "gripper_position",
+                    "kind": "gripper_position",
                     "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
                 },
             ],

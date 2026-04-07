@@ -128,21 +128,23 @@ def remap_command(
     command: Command | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
+    kind_map: Mapping[str, str] | None = None,
     mode_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
     frame_map: Mapping[str, str] | None = None,
 ) -> Command:
-    """Rename one command's target/mode/reference frame."""
+    """Rename one command's target/kind/reference frame."""
 
     normalized = coerce_command(command)
     active_ref_frame_map = ref_frame_map or frame_map or {}
+    active_kind_map = kind_map or mode_map or {}
     mapped_ref_frame = normalized.ref_frame
     if mapped_ref_frame is not None:
         mapped_ref_frame = _remap_name(mapped_ref_frame, active_ref_frame_map)
 
     return Command(
         target=_remap_name(normalized.target, target_map or {}),
-        mode=_remap_name(normalized.mode, mode_map or {}),
+        kind=_remap_name(normalized.kind, active_kind_map),
         value=list(normalized.value),
         ref_frame=mapped_ref_frame,
         meta=dict(normalized.meta),
@@ -153,6 +155,7 @@ def remap_action(
     action: Action | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
+    kind_map: Mapping[str, str] | None = None,
     mode_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
     frame_map: Mapping[str, str] | None = None,
@@ -165,6 +168,7 @@ def remap_action(
             remap_command(
                 command,
                 target_map=target_map,
+                kind_map=kind_map,
                 mode_map=mode_map,
                 ref_frame_map=ref_frame_map,
                 frame_map=frame_map,
@@ -181,19 +185,21 @@ def remap_control_group_spec(
     *,
     target_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
+    command_kind_map: Mapping[str, str] | None = None,
     action_mode_map: Mapping[str, str] | None = None,
 ) -> ControlGroupSpec:
     """Rename a control-group spec."""
 
     normalized = coerce_control_group_spec(spec)
+    active_kind_map = command_kind_map or action_mode_map or {}
     return ControlGroupSpec(
         name=_remap_name(normalized.name, target_map or {}),
         kind=normalized.kind,
         dof=normalized.dof,
-        action_modes=_remap_name_list(
-            normalized.action_modes,
-            action_mode_map or {},
-            "control_group_spec.action_modes",
+        supported_command_kinds=_remap_name_list(
+            normalized.supported_command_kinds,
+            active_kind_map,
+            "control_group_spec.supported_command_kinds",
         ),
         state_keys=_remap_name_list(
             normalized.state_keys,
@@ -210,6 +216,7 @@ def remap_robot_spec(
     image_key_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
+    command_kind_map: Mapping[str, str] | None = None,
     action_mode_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> RobotSpec:
@@ -228,6 +235,7 @@ def remap_robot_spec(
                 group,
                 target_map=target_map,
                 state_key_map=state_key_map,
+                command_kind_map=command_kind_map,
                 action_mode_map=action_mode_map,
             )
             for group in normalized.groups
@@ -245,14 +253,16 @@ def remap_model_output_spec(
     spec: ModelOutputSpec | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
+    command_kind_map: Mapping[str, str] | None = None,
     action_mode_map: Mapping[str, str] | None = None,
 ) -> ModelOutputSpec:
     """Rename a model-output spec."""
 
     normalized = coerce_model_output_spec(spec)
+    active_kind_map = command_kind_map or action_mode_map or {}
     return ModelOutputSpec(
         target=_remap_name(normalized.target, target_map or {}),
-        mode=_remap_name(normalized.mode, action_mode_map or {}),
+        command_kind=_remap_name(normalized.command_kind, active_kind_map),
         dim=normalized.dim,
         meta=dict(normalized.meta),
     )
@@ -264,6 +274,7 @@ def remap_model_spec(
     image_key_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
+    command_kind_map: Mapping[str, str] | None = None,
     action_mode_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> ModelSpec:
@@ -291,6 +302,7 @@ def remap_model_spec(
             remap_model_output_spec(
                 output,
                 target_map=target_map,
+                command_kind_map=command_kind_map,
                 action_mode_map=action_mode_map,
             )
             for output in normalized.outputs

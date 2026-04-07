@@ -36,6 +36,10 @@ ACTION_MODES = ModalityToken(
     "action_modes",
     legacy_attr="ACTION_MODE_MAP",
 )
+COMMAND_KINDS = ModalityToken(
+    "command_kinds",
+    legacy_attr="ACTION_MODE_MAP",
+)
 TASK_KEYS = ModalityToken(
     "task",
     legacy_attr="TASK_KEY_MAP",
@@ -49,6 +53,7 @@ KNOWN_MODALITIES = (
     IMAGE_KEYS,
     CONTROL_TARGETS,
     STATE_KEYS,
+    COMMAND_KINDS,
     ACTION_MODES,
     TASK_KEYS,
     META_KEYS,
@@ -158,6 +163,7 @@ def resolve_modality_mapping(
 
 __all__ = [
     "ACTION_MODES",
+    "COMMAND_KINDS",
     "CONTROL_TARGETS",
     "IMAGE_KEYS",
     "KNOWN_MODALITIES",

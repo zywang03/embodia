@@ -444,7 +444,7 @@ class ChunkScheduler:
             commands=[
                 Command(
                     target=command.target,
-                    mode=command.mode,
+                    kind=command.kind,
                     value=list(command.value),
                     ref_frame=command.ref_frame,
                     meta=dict(command.meta),

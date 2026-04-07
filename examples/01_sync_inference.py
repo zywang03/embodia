@@ -56,12 +56,12 @@ class YourModel(em.ModelMixin):
             "commands": [
                 {
                     "target": "arm",
-                    "mode": "cartesian_delta",
+                    "kind": "cartesian_delta",
                     "value": [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
                 },
                 {
                     "target": "gripper",
-                    "mode": "gripper_position",
+                    "kind": "gripper_position",
                     "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
                 },
             ],
@@ -95,12 +95,12 @@ class YourModel(em.ModelMixin):
                     "commands": [
                         {
                             "target": "arm",
-                            "mode": seed_arm.mode,
+                            "kind": seed_arm.kind,
                             "value": [next_value] + [0.0] * (len(seed_arm.value) - 1),
                         },
                         {
                             "target": "gripper",
-                            "mode": seed_gripper.mode,
+                            "kind": seed_gripper.kind,
                             "value": list(seed_gripper.value),
                         },
                     ],

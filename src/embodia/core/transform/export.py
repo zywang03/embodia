@@ -45,7 +45,7 @@ def command_to_dict(command: Command | Mapping[str, Any]) -> dict[str, Any]:
     normalized = coerce_command(command)
     return {
         "target": normalized.target,
-        "mode": normalized.mode,
+        "kind": normalized.kind,
         "value": list(normalized.value),
         "ref_frame": normalized.ref_frame,
         "meta": dict(normalized.meta),
@@ -73,7 +73,7 @@ def control_group_spec_to_dict(
         "name": normalized.name,
         "kind": normalized.kind,
         "dof": normalized.dof,
-        "action_modes": list(normalized.action_modes),
+        "supported_command_kinds": list(normalized.supported_command_kinds),
         "state_keys": list(normalized.state_keys),
         "meta": dict(normalized.meta),
     }
@@ -102,7 +102,7 @@ def model_output_spec_to_dict(
     normalized = coerce_model_output_spec(spec)
     return {
         "target": normalized.target,
-        "mode": normalized.mode,
+        "command_kind": normalized.command_kind,
         "dim": normalized.dim,
         "meta": dict(normalized.meta),
     }

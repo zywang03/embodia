@@ -109,7 +109,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
     if isinstance(value, Command):
         return Command(
             target=value.target,
-            mode=value.mode,
+            kind=value.kind,
             value=list(value.value),
             ref_frame=value.ref_frame,
             meta=dict(value.meta),
@@ -121,16 +121,21 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
     try:
         target = value["target"]
-        mode = value["mode"]
         command_value = value["value"]
     except KeyError as exc:
         raise InterfaceValidationError(
             f"command mapping is missing required field {exc.args[0]!r}."
         ) from exc
 
+    kind = value.get("kind", value.get("mode"))
+    if kind is None:
+        raise InterfaceValidationError(
+            "command mapping is missing required field 'kind'."
+        )
+
     return Command(
         target=target,
-        mode=mode,
+        kind=kind,
         value=_copy_float_vector(command_value, "command.value"),
         ref_frame=value.get("ref_frame"),
         meta=_copy_string_key_mapping(value.get("meta"), "command.meta"),
@@ -175,7 +180,7 @@ def coerce_control_group_spec(
             name=value.name,
             kind=value.kind,
             dof=value.dof,
-            action_modes=list(value.action_modes),
+            supported_command_kinds=list(value.supported_command_kinds),
             state_keys=list(value.state_keys),
             meta=dict(value.meta),
         )
@@ -189,19 +194,32 @@ def coerce_control_group_spec(
         name = value["name"]
         kind = value["kind"]
         dof = value["dof"]
-        action_modes = value["action_modes"]
-        state_keys = value["state_keys"]
+        supported_command_kinds = value.get(
+            "supported_command_kinds",
+            value.get("action_modes"),
+        )
     except KeyError as exc:
         raise InterfaceValidationError(
             f"control group spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
+    if supported_command_kinds is None:
+        raise InterfaceValidationError(
+            "control group spec mapping is missing required field "
+            "'supported_command_kinds'."
+        )
 
     return ControlGroupSpec(
         name=name,
         kind=kind,
         dof=dof,
-        action_modes=_copy_sequence(action_modes, "control_group_spec.action_modes"),
-        state_keys=_copy_sequence(state_keys, "control_group_spec.state_keys"),
+        supported_command_kinds=_copy_sequence(
+            supported_command_kinds,
+            "control_group_spec.supported_command_kinds",
+        ),
+        state_keys=_copy_sequence(
+            value.get("state_keys", []),
+            "control_group_spec.state_keys",
+        ),
         meta=_copy_string_key_mapping(value.get("meta"), "control_group_spec.meta"),
     )
 
@@ -248,7 +266,7 @@ def coerce_model_output_spec(
     if isinstance(value, ModelOutputSpec):
         return ModelOutputSpec(
             target=value.target,
-            mode=value.mode,
+            command_kind=value.command_kind,
             dim=value.dim,
             meta=dict(value.meta),
         )
@@ -260,16 +278,20 @@ def coerce_model_output_spec(
 
     try:
         target = value["target"]
-        mode = value["mode"]
         dim = value["dim"]
     except KeyError as exc:
         raise InterfaceValidationError(
             f"model output spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
+    command_kind = value.get("command_kind", value.get("mode"))
+    if command_kind is None:
+        raise InterfaceValidationError(
+            "model output spec mapping is missing required field 'command_kind'."
+        )
 
     return ModelOutputSpec(
         target=target,
-        mode=mode,
+        command_kind=command_kind,
         dim=dim,
         meta=_copy_string_key_mapping(value.get("meta"), "model_output_spec.meta"),
     )

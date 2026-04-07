@@ -34,7 +34,7 @@ class RuntimeRobot(em.RobotMixin):
                     "name": "arm",
                     "kind": "arm",
                     "dof": 6,
-                    "action_modes": ["ee_delta"],
+                    "supported_command_kinds": ["cartesian_pose_delta"],
                     "state_keys": ["joint_positions"],
                 }
             ],
@@ -67,7 +67,13 @@ class RuntimeModel(em.ModelMixin):
             "required_image_keys": ["front_rgb"],
             "required_state_keys": ["joint_positions"],
             "required_task_keys": [],
-            "outputs": [{"target": "arm", "mode": "ee_delta", "dim": 6}],
+            "outputs": [
+                {
+                    "target": "arm",
+                    "command_kind": "cartesian_pose_delta",
+                    "dim": 6,
+                }
+            ],
         }
 
     def _reset_impl(self) -> None:
@@ -78,7 +84,11 @@ class RuntimeModel(em.ModelMixin):
         del frame
         value = float(1 + self.step_index * 2)
         self.step_index += 1
-        return em.Action.single(target="arm", mode="ee_delta", value=[value] * 6)
+        return em.Action.single(
+            target="arm",
+            kind="cartesian_pose_delta",
+            value=[value] * 6,
+        )
 
     def _step_chunk_impl(
         self,
@@ -90,10 +100,14 @@ class RuntimeModel(em.ModelMixin):
             start = self.chunk_seed
             self.chunk_seed += 2.0
             return [
-                em.Action.single(target="arm", mode="ee_delta", value=[start] * 6),
                 em.Action.single(
                     target="arm",
-                    mode="ee_delta",
+                    kind="cartesian_pose_delta",
+                    value=[start] * 6,
+                ),
+                em.Action.single(
+                    target="arm",
+                    kind="cartesian_pose_delta",
                     value=[start + 1.0] * 6,
                 ),
             ]
@@ -101,7 +115,11 @@ class RuntimeModel(em.ModelMixin):
         last = arm_value(request.history_actions[-1])
         return [
             *request.history_actions,
-            em.Action.single(target="arm", mode="ee_delta", value=[last + 1.0] * 6),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[last + 1.0] * 6,
+            ),
         ]
 
 
@@ -113,11 +131,19 @@ class InferenceRuntimeTests(unittest.TestCase):
         ensembler = em.ActionEnsembler(current_weight=0.5)
 
         first = ensembler(
-            em.Action.single(target="arm", mode="ee_delta", value=[0.0, 2.0]),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[0.0, 2.0],
+            ),
             frame,
         )
         second = ensembler(
-            em.Action.single(target="arm", mode="ee_delta", value=[2.0, 4.0]),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[2.0, 4.0],
+            ),
             frame,
         )
 
@@ -129,15 +155,27 @@ class InferenceRuntimeTests(unittest.TestCase):
         interpolator = em.ActionInterpolator(steps=1)
 
         first = interpolator(
-            em.Action.single(target="arm", mode="ee_delta", value=[0.0, 0.0]),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[0.0, 0.0],
+            ),
             frame,
         )
         second = interpolator(
-            em.Action.single(target="arm", mode="ee_delta", value=[2.0, 4.0]),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[2.0, 4.0],
+            ),
             frame,
         )
         third = interpolator(
-            em.Action.single(target="arm", mode="ee_delta", value=[2.0, 4.0]),
+            em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[2.0, 4.0],
+            ),
             frame,
         )
 

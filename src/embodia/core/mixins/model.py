@@ -15,7 +15,7 @@ from ...runtime.checks import (
     validate_model_spec as _validate_model_spec,
 )
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, meta, state, task
+from ..modalities import images, meta, state, task
 from ..modalities._common import CONTROL_TARGETS
 from ..schema import Action, Frame, ModelSpec
 from ..transform import invert_mapping, model_spec_to_dict, remap_frame, remap_model_spec
@@ -140,9 +140,8 @@ class ModelMixin(_CommonInterfaceMixin):
                 task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
-            action_mode_map=cls._effective_modality_map(
-                action_modes.ACTION_MODES,
-                modality_maps=modality_maps,
+            command_kind_map=cls._effective_command_kind_map(
+                modality_maps=modality_maps
             ),
         )
         _validate_model_spec(normalized)
@@ -157,7 +156,7 @@ class ModelMixin(_CommonInterfaceMixin):
             target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
             task_key_map=self.get_task_key_map(),
-            action_mode_map=self.get_action_mode_map(),
+            command_kind_map=self.get_command_kind_map(),
         )
 
     def transform_spec(self, spec: ModelSpec | Mapping[str, Any]) -> ModelSpec:
@@ -227,7 +226,7 @@ class ModelMixin(_CommonInterfaceMixin):
         action: Action | Mapping[str, Any],
         spec: ModelSpec | Mapping[str, Any] | None = None,
     ) -> Action:
-        """Ensure action mode matches the model spec."""
+        """Ensure emitted command kinds and dims match the model spec."""
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)

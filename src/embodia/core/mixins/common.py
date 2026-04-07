@@ -10,8 +10,10 @@ from ...runtime.checks import (
     validate_frame as _validate_frame,
 )
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, meta, state, task
+from ..modalities import images, meta, state, task
 from ..modalities._common import (
+    ACTION_MODES,
+    COMMAND_KINDS,
     CONTROL_TARGETS,
     KNOWN_MODALITIES,
     ModalityToken,
@@ -202,6 +204,25 @@ class _CommonInterfaceMixin:
             return resolve_modality_mapping(cls, normalized_name)
         except TypeError as exc:
             raise InterfaceValidationError(str(exc)) from exc
+
+    @classmethod
+    def _effective_command_kind_map(
+        cls,
+        *,
+        modality_maps: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> Mapping[str, str]:
+        """Resolve command-kind mappings while accepting old action-mode config."""
+
+        resolved = cls._effective_modality_map(
+            COMMAND_KINDS,
+            modality_maps=modality_maps,
+        )
+        if resolved:
+            return resolved
+        return cls._effective_modality_map(
+            ACTION_MODES,
+            modality_maps=modality_maps,
+        )
 
     @classmethod
     def _validate_yaml_section_keys(
@@ -396,9 +417,17 @@ class _CommonInterfaceMixin:
         return self.get_modality_map(CONTROL_TARGETS)
 
     def get_action_mode_map(self) -> Mapping[str, str]:
-        """Map native action modes to embodia-standard action modes."""
+        """Compatibility alias for older action-mode naming."""
 
-        return self.get_modality_map(action_modes.ACTION_MODES)
+        return self.get_command_kind_map()
+
+    def get_command_kind_map(self) -> Mapping[str, str]:
+        """Map native command kinds to embodia-standard command kinds."""
+
+        resolved = self.get_modality_map(COMMAND_KINDS)
+        if resolved:
+            return resolved
+        return self.get_modality_map(ACTION_MODES)
 
     def get_task_key_map(self) -> Mapping[str, str]:
         """Map native task keys to embodia-standard task keys."""
@@ -444,7 +473,7 @@ class _CommonInterfaceMixin:
         return remap_action(
             action,
             target_map=self.get_control_target_map(),
-            mode_map=self.get_action_mode_map(),
+            kind_map=self.get_command_kind_map(),
         )
 
     def transform_action(self, action: Action | Mapping[str, Any]) -> Action:

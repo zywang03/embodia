@@ -23,7 +23,7 @@ class OpenPIRemoteTests(unittest.TestCase):
 
         first = plan[0].get_command("arm")
         assert first is not None
-        self.assertEqual(first.mode, "joint_position")
+        self.assertEqual(first.kind, "joint_position")
         self.assertEqual(first.value, [1.0, 2.0, 3.0])
         self.assertEqual(first.ref_frame, "tool")
 
@@ -32,14 +32,14 @@ class OpenPIRemoteTests(unittest.TestCase):
             [
                 em.Action.single(
                     target="arm",
-                    mode="joint_position",
+                    kind="joint_position",
                     value=[0.1, 0.2, 0.3],
                     dt=0.05,
                     ref_frame="tool",
                 ),
                 em.Action.single(
                     target="arm",
-                    mode="joint_position",
+                    kind="joint_position",
                     value=[0.4, 0.5, 0.6],
                     dt=0.05,
                     ref_frame="tool",
@@ -70,7 +70,7 @@ class OpenPIRemoteTests(unittest.TestCase):
         assert command is not None
 
         self.assertEqual(frame.state["joint_positions"], [0.0, 1.0, 2.0])
-        self.assertEqual(command.mode, "joint_position")
+        self.assertEqual(command.kind, "joint_position")
         self.assertEqual(command.value, [1.0, 2.0, 3.0])
 
     def test_build_model_policy_adapter_serves_grouped_action_model(self) -> None:
@@ -82,7 +82,11 @@ class OpenPIRemoteTests(unittest.TestCase):
                     "required_state_keys": ["joint_positions"],
                     "required_task_keys": [],
                     "outputs": [
-                        {"target": "arm", "mode": "joint_position", "dim": 3}
+                        {
+                            "target": "arm",
+                            "command_kind": "joint_position",
+                            "dim": 3,
+                        }
                     ],
                 }
 
@@ -93,7 +97,7 @@ class OpenPIRemoteTests(unittest.TestCase):
                 del frame
                 return em.Action.single(
                     target="arm",
-                    mode="joint_position",
+                    kind="joint_position",
                     value=[1.0, 2.0, 3.0],
                     dt=0.05,
                 )
@@ -120,7 +124,7 @@ class OpenPIRemoteTests(unittest.TestCase):
                         "name": "arm",
                         "kind": "arm",
                         "dof": 3,
-                        "action_modes": ["joint_position"],
+                        "supported_command_kinds": ["joint_position"],
                         "state_keys": ["joint_positions"],
                     }
                 ],

@@ -16,7 +16,7 @@ from ...runtime.checks import (
     validate_robot_spec as _validate_robot_spec,
 )
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, state, task
+from ..modalities import images, state, task
 from ..modalities._common import CONTROL_TARGETS
 from ..schema import Action, Frame, RobotSpec
 from ..transform import invert_mapping, remap_action, remap_robot_spec, robot_spec_to_dict
@@ -152,9 +152,8 @@ class RobotMixin(_CommonInterfaceMixin):
                 task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
-            action_mode_map=cls._effective_modality_map(
-                action_modes.ACTION_MODES,
-                modality_maps=modality_maps,
+            command_kind_map=cls._effective_command_kind_map(
+                modality_maps=modality_maps
             ),
         )
         _validate_robot_spec(normalized)
@@ -399,7 +398,7 @@ class RobotMixin(_CommonInterfaceMixin):
             target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
             task_key_map=self.get_task_key_map(),
-            action_mode_map=self.get_action_mode_map(),
+            command_kind_map=self.get_command_kind_map(),
         )
 
     def transform_spec(self, spec: RobotSpec | Mapping[str, Any]) -> RobotSpec:
@@ -469,7 +468,7 @@ class RobotMixin(_CommonInterfaceMixin):
         action: Action | Mapping[str, Any],
         spec: RobotSpec | Mapping[str, Any] | None = None,
     ) -> Action:
-        """Ensure the action mode is supported by the robot spec."""
+        """Ensure command kinds and dims are supported by the robot spec."""
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
@@ -485,9 +484,9 @@ class RobotMixin(_CommonInterfaceMixin):
                 self.get_control_target_map(),
                 "RobotMixin control target mapping",
             ),
-            mode_map=invert_mapping(
-                self.get_action_mode_map(),
-                "RobotMixin action mode mapping",
+            kind_map=invert_mapping(
+                self.get_command_kind_map(),
+                "RobotMixin command kind mapping",
             ),
         )
 

@@ -20,7 +20,7 @@ class DummyRobot(RobotMixin):
                     "name": "arm",
                     "kind": "arm",
                     "dof": 6,
-                    "action_modes": ["ee_delta"],
+                    "supported_command_kinds": ["cartesian_pose_delta"],
                     "state_keys": ["joint_positions"],
                 }
             ],
@@ -50,7 +50,7 @@ class DummyModel(ModelMixin):
             "outputs": [
                 {
                     "target": "arm",
-                    "mode": "ee_delta",
+                    "command_kind": "cartesian_pose_delta",
                     "dim": 6,
                 }
             ],
@@ -64,7 +64,7 @@ class DummyModel(ModelMixin):
             "commands": [
                 {
                     "target": "arm",
-                    "mode": "ee_delta",
+                    "kind": "cartesian_pose_delta",
                     "value": [0.0] * 6,
                 }
             ]

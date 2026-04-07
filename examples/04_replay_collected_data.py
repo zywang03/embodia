@@ -49,12 +49,12 @@ def scripted_action(frame: em.Frame) -> dict[str, object]:
         "commands": [
             {
                 "target": "arm",
-                "mode": "ee_delta",
+                "kind": "cartesian_pose_delta",
                 "value": [qpos0 * 0.01] * 6,
             },
             {
                 "target": "gripper",
-                "mode": "scalar_position",
+                "kind": "gripper_position",
                 "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
             },
         ],

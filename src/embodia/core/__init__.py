@@ -6,6 +6,7 @@ from .errors import InterfaceValidationError
 from .mixins import ModelMixin, RobotMixin
 from .modalities import (
     ACTION_MODES,
+    COMMAND_KINDS,
     CONTROL_TARGETS,
     IMAGE_KEYS,
     STATE_KEYS,
@@ -14,13 +15,23 @@ from .modalities import (
 from .protocols import ModelProtocol, RobotProtocol
 from .schema import (
     Action,
+    COMMAND_KIND_REGISTRY,
+    CUSTOM_COMMAND_KIND_PREFIX,
     Command,
+    CommandKindSpec,
     ControlGroupSpec,
     Frame,
     KNOWN_CONTROL_GROUP_KINDS,
     ModelOutputSpec,
     ModelSpec,
     RobotSpec,
+    action_from_legacy,
+    command_from_legacy,
+    get_command_kind_spec,
+    is_custom_command_kind_name,
+    is_known_command_kind,
+    register_command_kind,
+    single_command_action,
 )
 from .transform import (
     action_to_dict,
@@ -51,8 +62,12 @@ from .transform import (
 __all__ = [
     "Action",
     "ACTION_MODES",
+    "COMMAND_KIND_REGISTRY",
+    "COMMAND_KINDS",
     "CONTROL_TARGETS",
+    "CUSTOM_COMMAND_KIND_PREFIX",
     "Command",
+    "CommandKindSpec",
     "ControlGroupSpec",
     "Frame",
     "IMAGE_KEYS",
@@ -70,7 +85,9 @@ __all__ = [
     "RobotSpec",
     "ModalityToken",
     "STATE_KEYS",
+    "action_from_legacy",
     "action_to_dict",
+    "command_from_legacy",
     "coerce_action",
     "coerce_command",
     "coerce_control_group_spec",
@@ -81,7 +98,10 @@ __all__ = [
     "command_to_dict",
     "control_group_spec_to_dict",
     "frame_to_dict",
+    "get_command_kind_spec",
     "invert_mapping",
+    "is_custom_command_kind_name",
+    "is_known_command_kind",
     "load_component_yaml_config",
     "model_output_spec_to_dict",
     "model_spec_to_dict",
@@ -93,5 +113,7 @@ __all__ = [
     "remap_model_output_spec",
     "remap_model_spec",
     "remap_robot_spec",
+    "register_command_kind",
     "robot_spec_to_dict",
+    "single_command_action",
 ]

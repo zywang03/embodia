@@ -216,7 +216,7 @@ def _expand_robot_interface_config(
     )
     robot_groups: list[dict[str, Any]] = []
     state_maps: dict[str, str] = {}
-    action_mode_maps: dict[str, str] = {}
+    command_kind_maps: dict[str, str] = {}
     control_target_maps: dict[str, str] = {}
 
     for standard_name, group_config in groups.items():
@@ -227,6 +227,7 @@ def _expand_robot_interface_config(
                 "kind",
                 "dof",
                 "state",
+                "command_kinds",
                 "action_modes",
                 "meta",
                 "native_name",
@@ -245,9 +246,17 @@ def _expand_robot_interface_config(
             group_config.get("state", {}),
             field_name=f"{field_name}.groups[{standard_name!r}].state",
         )
-        group_action_modes = _copy_string_mapping(
+        raw_group_command_kinds = group_config.get(
+            "command_kinds",
             group_config.get("action_modes"),
-            field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+        )
+        if raw_group_command_kinds is None:
+            raise InterfaceValidationError(
+                f"{field_name}.groups[{standard_name!r}].command_kinds is required."
+            )
+        group_command_kinds = _copy_string_mapping(
+            raw_group_command_kinds,
+            field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
             allow_empty=False,
         )
         group_meta = _copy_mapping(
@@ -267,12 +276,12 @@ def _expand_robot_interface_config(
             field_name=f"{field_name}.groups[{standard_name!r}].state",
         )
         _merge_string_mapping(
-            action_mode_maps,
+            command_kind_maps,
             _invert_unique_mapping(
-                group_action_modes,
-                field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+                group_command_kinds,
+                field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
             ),
-            field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+            field_name=f"{field_name}.groups[{standard_name!r}].command_kinds",
         )
         _merge_string_mapping(
             control_target_maps,
@@ -284,7 +293,7 @@ def _expand_robot_interface_config(
                 "name": standard_name,
                 "kind": kind,
                 "dof": dof,
-                "action_modes": list(group_action_modes.values()),
+                "supported_command_kinds": list(group_command_kinds.values()),
                 "state_keys": list(group_state.values()),
                 "meta": group_meta,
             }
@@ -304,7 +313,7 @@ def _expand_robot_interface_config(
             "state": state_maps,
             "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
             "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
-            "action_modes": action_mode_maps,
+            "command_kinds": command_kind_maps,
         },
     }
 
@@ -353,18 +362,26 @@ def _expand_model_interface_config(
         allow_empty=False,
     )
     model_outputs: list[dict[str, Any]] = []
-    action_mode_maps: dict[str, str] = {}
+    command_kind_maps: dict[str, str] = {}
     control_target_maps: dict[str, str] = {}
 
     for standard_target, output_config in outputs.items():
         _validate_interface_keys(
             output_config,
             field_name=f"{field_name}.outputs[{standard_target!r}]",
-            allowed_keys={"mode", "dim", "meta", "native_name", "native_mode"},
+            allowed_keys={
+                "command_kind",
+                "mode",
+                "dim",
+                "meta",
+                "native_name",
+                "native_command_kind",
+                "native_mode",
+            },
         )
-        mode = _ensure_non_empty_string(
-            output_config.get("mode"),
-            field_name=f"{field_name}.outputs[{standard_target!r}].mode",
+        command_kind = _ensure_non_empty_string(
+            output_config.get("command_kind", output_config.get("mode")),
+            field_name=f"{field_name}.outputs[{standard_target!r}].command_kind",
         )
         dim = output_config.get("dim")
         if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
@@ -379,9 +396,12 @@ def _expand_model_interface_config(
             output_config.get("native_name", standard_target),
             field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
         )
-        native_mode = _ensure_non_empty_string(
-            output_config.get("native_mode", mode),
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_mode",
+        native_command_kind = _ensure_non_empty_string(
+            output_config.get(
+                "native_command_kind",
+                output_config.get("native_mode", command_kind),
+            ),
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_command_kind",
         )
         _merge_string_mapping(
             control_target_maps,
@@ -389,14 +409,14 @@ def _expand_model_interface_config(
             field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
         )
         _merge_string_mapping(
-            action_mode_maps,
-            {native_mode: mode},
-            field_name=f"{field_name}.outputs[{standard_target!r}].native_mode",
+            command_kind_maps,
+            {native_command_kind: command_kind},
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_command_kind",
         )
         model_outputs.append(
             {
                 "target": standard_target,
-                "mode": mode,
+                "command_kind": command_kind,
                 "dim": dim,
                 "meta": output_meta,
             }
@@ -417,7 +437,7 @@ def _expand_model_interface_config(
             "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
             "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
             "control_targets": control_target_maps,
-            "action_modes": action_mode_maps,
+            "command_kinds": command_kind_maps,
         },
     }
 

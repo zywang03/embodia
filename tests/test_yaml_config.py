@@ -65,15 +65,17 @@ class YamlConfigTests(unittest.TestCase):
                                 "kind": "arm",
                                 "dof": 6,
                                 "state": {"joint_positions": "qpos"},
-                                "action_modes": {"ee_delta": "cartesian_delta"},
+                                "command_kinds": {
+                                    "cartesian_pose_delta": "cartesian_delta"
+                                },
                             },
                             "gripper": {
                                 "native_name": "vendor_gripper",
                                 "kind": "gripper",
                                 "dof": 1,
                                 "state": {"position": "gripper_pos"},
-                                "action_modes": {
-                                    "scalar_position": "gripper_position"
+                                "command_kinds": {
+                                    "gripper_position": "gripper_position"
                                 },
                             },
                         },
@@ -96,14 +98,14 @@ class YamlConfigTests(unittest.TestCase):
                         "outputs": {
                             "arm": {
                                 "native_name": "vendor_arm",
-                                "mode": "ee_delta",
-                                "native_mode": "cartesian_delta",
+                                "command_kind": "cartesian_pose_delta",
+                                "native_command_kind": "cartesian_delta",
                                 "dim": 6,
                             },
                             "gripper": {
                                 "native_name": "vendor_gripper",
-                                "mode": "scalar_position",
-                                "native_mode": "gripper_position",
+                                "command_kind": "gripper_position",
+                                "native_command_kind": "gripper_position",
                                 "dim": 1,
                             },
                         },
@@ -148,12 +150,12 @@ class YamlConfigTests(unittest.TestCase):
                     "commands": [
                         {
                             "target": "vendor_arm",
-                            "mode": "cartesian_delta",
+                            "kind": "cartesian_delta",
                             "value": [self.gain] * 6,
                         },
                         {
                             "target": "vendor_gripper",
-                            "mode": "gripper_position",
+                            "kind": "gripper_position",
                             "value": [0.3],
                         },
                     ]
@@ -186,14 +188,18 @@ class YamlConfigTests(unittest.TestCase):
                                 "kind": "arm",
                                 "dof": 6,
                                 "state": {"left_qpos": "left_qpos"},
-                                "action_modes": {"ee_delta": "cartesian_delta"},
+                                "command_kinds": {
+                                    "cartesian_pose_delta": "cartesian_delta"
+                                },
                             },
                             "right_arm": {
                                 "native_name": "arm",
                                 "kind": "arm",
                                 "dof": 6,
                                 "state": {"right_qpos": "right_qpos"},
-                                "action_modes": {"ee_delta": "cartesian_delta"},
+                                "command_kinds": {
+                                    "cartesian_pose_delta": "cartesian_delta"
+                                },
                             },
                         },
                     }
@@ -222,7 +228,9 @@ class YamlConfigTests(unittest.TestCase):
                                 "kind": "arm",
                                 "dof": 6,
                                 "state": {"joint_positions": "joint_positions"},
-                                "action_modes": {"ee_delta": "ee_delta"},
+                                "command_kinds": {
+                                    "cartesian_pose_delta": "cartesian_pose_delta"
+                                },
                             }
                         },
                     },

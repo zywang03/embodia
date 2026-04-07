@@ -16,7 +16,7 @@ def _clone_command(command: Command) -> Command:
 
     return Command(
         target=command.target,
-        mode=command.mode,
+        kind=command.kind,
         value=list(command.value),
         ref_frame=command.ref_frame,
         meta=dict(command.meta),
@@ -44,7 +44,7 @@ def _compatible_command(left: Command, right: Command) -> bool:
 
     return (
         left.target == right.target
-        and left.mode == right.mode
+        and left.kind == right.kind
         and left.ref_frame == right.ref_frame
         and len(left.value) == len(right.value)
     )
@@ -96,7 +96,7 @@ def _blend_action(left: Action, right: Action, ratio: float) -> Action:
         blended_commands.append(
             Command(
                 target=command.target,
-                mode=command.mode,
+                kind=command.kind,
                 value=[
                     start + (target - start) * ratio
                     for start, target in zip(previous.value, command.value)

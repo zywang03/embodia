@@ -1,4 +1,8 @@
-"""Action-mode modality helpers."""
+"""Command-kind modality helpers.
+
+The module name stays for backward compatibility, but the canonical public
+terminology is now "command kind".
+"""
 
 from __future__ import annotations
 
@@ -6,12 +10,21 @@ from collections.abc import Mapping
 
 from ..errors import InterfaceValidationError
 from ..schema import Action, ModelSpec, RobotSpec
-from ._common import ACTION_MODES, resolve_modality_mapping
+from ._common import ACTION_MODES, COMMAND_KINDS, resolve_modality_mapping
 
 
 def get_mode_map(owner: object) -> Mapping[str, str]:
-    """Resolve the action-mode remapping table for a class or instance."""
+    """Compatibility alias for older action-mode naming."""
 
+    return get_command_kind_map(owner)
+
+
+def get_command_kind_map(owner: object) -> Mapping[str, str]:
+    """Resolve the command-kind remapping table for a class or instance."""
+
+    resolved = resolve_modality_mapping(owner, COMMAND_KINDS)
+    if resolved:
+        return resolved
     return resolve_modality_mapping(owner, ACTION_MODES)
 
 
@@ -31,12 +44,12 @@ def ensure_supported(
             raise InterfaceValidationError(
                 f"{owner_label}{detail} is missing control group {command.target!r}."
             )
-        if command.mode not in group.action_modes:
+        if command.kind not in group.supported_command_kinds:
             detail = "" if owner_name is None else f" {owner_name!r}"
             raise InterfaceValidationError(
                 f"control group {command.target!r} on {owner_label}{detail} does "
-                f"not support mode {command.mode!r}; supported modes: "
-                f"{group.action_modes!r}."
+                f"not support command kind {command.kind!r}; supported command "
+                f"kinds: {group.supported_command_kinds!r}."
             )
 
 
@@ -57,10 +70,10 @@ def ensure_model_output(
 
     for output in spec.outputs:
         command = next(item for item in action.commands if item.target == output.target)
-        if command.mode != output.mode:
+        if command.kind != output.command_kind:
             raise InterfaceValidationError(
-                f"model {spec.name!r} output {output.target!r} declared mode "
-                f"{output.mode!r}, but produced {command.mode!r}."
+                f"model {spec.name!r} output {output.target!r} declared command "
+                f"kind {output.command_kind!r}, but produced {command.kind!r}."
             )
 
 
@@ -75,10 +88,11 @@ def pair_problem(
         group = robot_spec.get_group(output.target)
         if group is None:
             return f"robot is missing required control group {output.target!r}."
-        if output.mode not in group.action_modes:
+        if output.command_kind not in group.supported_command_kinds:
             return (
                 f"control group {output.target!r} does not support model output "
-                f"mode {output.mode!r}; supported modes: {group.action_modes!r}."
+                f"command kind {output.command_kind!r}; supported command kinds: "
+                f"{group.supported_command_kinds!r}."
             )
         if output.dim != group.dof:
             return (
@@ -90,6 +104,8 @@ def pair_problem(
 
 __all__ = [
     "ACTION_MODES",
+    "COMMAND_KINDS",
+    "get_command_kind_map",
     "ensure_model_output",
     "ensure_supported",
     "get_mode_map",

@@ -19,13 +19,13 @@ class InterfaceTests(unittest.TestCase):
                 "commands": [
                     {
                         "target": "arm",
-                        "mode": "ee_delta",
+                        "kind": "cartesian_pose_delta",
                         "value": [0.1, 0.2, 0.3],
                         "ref_frame": "tool",
                     },
                     {
                         "target": "gripper",
-                        "mode": "scalar_position",
+                        "kind": "gripper_position",
                         "value": [0.8],
                     },
                 ],
@@ -34,7 +34,10 @@ class InterfaceTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(action.get_command("arm").mode, "ee_delta")  # type: ignore[union-attr]
+        self.assertEqual(
+            action.get_command("arm").kind,  # type: ignore[union-attr]
+            "cartesian_pose_delta",
+        )
         self.assertEqual(action.get_command("gripper").value, [0.8])  # type: ignore[union-attr]
         self.assertEqual(
             em.action_to_dict(action),
@@ -42,14 +45,14 @@ class InterfaceTests(unittest.TestCase):
                 "commands": [
                     {
                         "target": "arm",
-                        "mode": "ee_delta",
+                        "kind": "cartesian_pose_delta",
                         "value": [0.1, 0.2, 0.3],
                         "ref_frame": "tool",
                         "meta": {},
                     },
                     {
                         "target": "gripper",
-                        "mode": "scalar_position",
+                        "kind": "gripper_position",
                         "value": [0.8],
                         "ref_frame": None,
                         "meta": {},
@@ -63,8 +66,12 @@ class InterfaceTests(unittest.TestCase):
     def test_validate_action_rejects_duplicate_targets(self) -> None:
         action = em.Action(
             commands=[
-                em.Command(target="arm", mode="ee_delta", value=[0.0] * 6),
-                em.Command(target="arm", mode="joint_position", value=[0.0] * 6),
+                em.Command(
+                    target="arm",
+                    kind="cartesian_pose_delta",
+                    value=[0.0] * 6,
+                ),
+                em.Command(target="arm", kind="joint_position", value=[0.0] * 6),
             ]
         )
 
@@ -72,6 +79,44 @@ class InterfaceTests(unittest.TestCase):
             em.validate_action(action)
 
         self.assertIn("duplicate target", str(ctx.exception))
+
+    def test_command_kind_registry_exposes_builtins(self) -> None:
+        spec = em.get_command_kind_spec("joint_position")
+        self.assertEqual(spec.name, "joint_position")
+        self.assertTrue(em.is_known_command_kind("joint_position"))
+
+    def test_register_command_kind_rejects_duplicate_name(self) -> None:
+        spec = em.CommandKindSpec(
+            name="custom:test_duplicate_registration",
+            description="test kind",
+            default_dim=2,
+            allowed_group_kinds=["custom"],
+        )
+        em.register_command_kind(spec)
+
+        with self.assertRaises(ValueError):
+            em.register_command_kind(
+                em.CommandKindSpec(name="custom:test_duplicate_registration")
+            )
+
+    def test_validate_command_accepts_unregistered_custom_kind(self) -> None:
+        em.validate_command(
+            em.Command(
+                target="tool",
+                kind="custom:my_lab_synergy",
+                value=[0.1, 0.2],
+            )
+        )
+
+    def test_validate_command_rejects_unknown_non_custom_kind(self) -> None:
+        with self.assertRaises(em.InterfaceValidationError):
+            em.validate_command(
+                em.Command(
+                    target="arm",
+                    kind="definitely_unknown_kind",
+                    value=[0.0],
+                )
+            )
 
     def test_dummy_components_pass_pair_check(self) -> None:
         robot = DummyRobot()
@@ -95,7 +140,7 @@ class InterfaceTests(unittest.TestCase):
                     "outputs": [
                         {
                             "target": "gripper",
-                            "mode": "scalar_position",
+                            "command_kind": "gripper_position",
                             "dim": 1,
                         }
                     ],
@@ -108,7 +153,7 @@ class InterfaceTests(unittest.TestCase):
                 del frame
                 return em.Action.single(
                     target="gripper",
-                    mode="scalar_position",
+                    kind="gripper_position",
                     value=[1.0],
                 )
 
@@ -155,14 +200,14 @@ class InterfaceTests(unittest.TestCase):
                         "name": "arm",
                         "kind": "arm",
                         "dof": 6,
-                        "action_modes": ["ee_delta"],
+                        "supported_command_kinds": ["cartesian_pose_delta"],
                         "state_keys": ["joint_positions"],
                     },
                     {
                         "name": "gripper",
                         "kind": "gripper",
                         "dof": 1,
-                        "action_modes": ["scalar_position"],
+                        "supported_command_kinds": ["gripper_position"],
                         "state_keys": ["position"],
                     },
                 ],
@@ -182,9 +227,9 @@ class InterfaceTests(unittest.TestCase):
                     "qpos": "joint_positions",
                     "gripper_pos": "position",
                 },
-                em.ACTION_MODES: {
-                    "cartesian_delta": "ee_delta",
-                    "gripper_position": "scalar_position",
+                em.COMMAND_KINDS: {
+                    "cartesian_delta": "cartesian_pose_delta",
+                    "gripper_position": "gripper_position",
                 },
             }
 
@@ -198,12 +243,12 @@ class InterfaceTests(unittest.TestCase):
                     "commands": [
                         {
                             "target": "vendor_arm",
-                            "mode": "cartesian_delta",
+                            "kind": "cartesian_delta",
                             "value": [0.1] * 6,
                         },
                         {
                             "target": "vendor_gripper",
-                            "mode": "gripper_position",
+                            "kind": "gripper_position",
                             "value": [0.2],
                         },
                     ],
@@ -217,8 +262,16 @@ class InterfaceTests(unittest.TestCase):
                 "required_state_keys": ["joint_positions", "position"],
                 "required_task_keys": ["prompt"],
                 "outputs": [
-                    {"target": "arm", "mode": "ee_delta", "dim": 6},
-                    {"target": "gripper", "mode": "scalar_position", "dim": 1},
+                    {
+                        "target": "arm",
+                        "command_kind": "cartesian_pose_delta",
+                        "dim": 6,
+                    },
+                    {
+                        "target": "gripper",
+                        "command_kind": "gripper_position",
+                        "dim": 1,
+                    },
                 ],
             }
             METHOD_ALIASES = {
@@ -234,9 +287,9 @@ class InterfaceTests(unittest.TestCase):
                     "qpos": "joint_positions",
                     "gripper_pos": "position",
                 },
-                em.ACTION_MODES: {
-                    "cartesian_delta": "ee_delta",
-                    "gripper_position": "scalar_position",
+                em.COMMAND_KINDS: {
+                    "cartesian_delta": "cartesian_pose_delta",
+                    "gripper_position": "gripper_position",
                 },
             }
 
@@ -244,9 +297,15 @@ class InterfaceTests(unittest.TestCase):
         model = YourModel()
         result = em.run_step(robot, model)
 
-        self.assertEqual(result.action.get_command("arm").mode, "ee_delta")  # type: ignore[union-attr]
+        self.assertEqual(
+            result.action.get_command("arm").kind,  # type: ignore[union-attr]
+            "cartesian_pose_delta",
+        )
         self.assertEqual(result.action.get_command("gripper").value, [0.2])  # type: ignore[union-attr]
-        self.assertEqual(robot.last_action.get_command("vendor_arm").mode, "cartesian_delta")  # type: ignore[union-attr]
+        self.assertEqual(
+            robot.last_action.get_command("vendor_arm").kind,  # type: ignore[union-attr]
+            "cartesian_delta",
+        )
         self.assertEqual(model.seen.state["qpos"], [1.0] * 6)
         self.assertEqual(model.seen.task["prompt"], "fold")
 
@@ -257,7 +316,7 @@ class InterfaceTests(unittest.TestCase):
             del frame
             return em.Action.single(
                 target="arm",
-                mode="ee_delta",
+                kind="cartesian_pose_delta",
                 value=[1.0] * 6,
             )
 

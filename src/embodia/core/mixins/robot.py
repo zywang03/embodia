@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import inspect
-from numbers import Real
 from os import PathLike
 from typing import Any, Self
 
@@ -12,9 +11,13 @@ from ..config_io import (
     expand_component_yaml_interface_config,
     load_component_yaml_config,
 )
-from ...runtime.checks import validate_robot_spec as _validate_robot_spec
+from ...runtime.checks import (
+    ensure_action_supported_by_robot as _ensure_action_supported_by_robot,
+    validate_robot_spec as _validate_robot_spec,
+)
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, state
+from ..modalities import action_modes, images, state, task
+from ..modalities._common import CONTROL_TARGETS
 from ..schema import Action, Frame, RobotSpec
 from ..transform import invert_mapping, remap_action, remap_robot_spec, robot_spec_to_dict
 from .common import _CommonInterfaceMixin
@@ -25,18 +28,8 @@ class RobotMixin(_CommonInterfaceMixin):
 
     ROBOT_SPEC: RobotSpec | Mapping[str, Any] | None = None
     REMOTE_POLICY_ENABLED = False
-    REMOTE_POLICY_HOST = "localhost"
-    REMOTE_POLICY_PORT = 8000
-    REMOTE_POLICY_API_KEY: str | None = None
-    REMOTE_POLICY_RETRY_INTERVAL_S = 5.0
-    REMOTE_POLICY_CONNECT_TIMEOUT_S: float | None = None
-    REMOTE_POLICY_ADDITIONAL_HEADERS: Mapping[str, str] | None = None
-    REMOTE_POLICY_CONNECT_IMMEDIATELY = False
-    REMOTE_POLICY_WAIT_FOR_SERVER = True
-    REMOTE_POLICY_OBS_METHOD: str | None = None
-    REMOTE_POLICY_ACTION_MODE: str | None = None
-    REMOTE_POLICY_DT: float | str | None = None
-    REMOTE_POLICY_REF_FRAME: str | None = None
+    REMOTE_POLICY_REQUEST_METHOD: str | None = None
+    REMOTE_POLICY_RESPONSE_METHOD: str | None = None
     GET_SPEC_METHOD = "get_spec"
     OBSERVE_METHOD = "observe"
     ACT_METHOD = "act"
@@ -49,7 +42,6 @@ class RobotMixin(_CommonInterfaceMixin):
         "reset": "RESET_METHOD",
     }
     _YAML_CONFIG_KEYS = {
-        "init",
         "interface",
         "method_aliases",
         "remote_policy",
@@ -130,16 +122,8 @@ class RobotMixin(_CommonInterfaceMixin):
             component="robot",
             path=path,
         )
-        init_config = loaded.pop("init", {})
-        if not isinstance(init_config, Mapping):
-            raise InterfaceValidationError(
-                "YAML field 'init' must be a mapping when provided."
-            )
-
-        merged: dict[str, Any] = dict(init_config)
-        merged.update(loaded)
-        merged.update(overrides)
-        return cls.from_config(**merged)
+        loaded.update(overrides)
+        return cls.from_config(**loaded)
 
     @classmethod
     def _validate_robot_spec_config(
@@ -156,8 +140,16 @@ class RobotMixin(_CommonInterfaceMixin):
                 images.IMAGE_KEYS,
                 modality_maps=modality_maps,
             ),
+            target_map=cls._effective_modality_map(
+                CONTROL_TARGETS,
+                modality_maps=modality_maps,
+            ),
             state_key_map=cls._effective_modality_map(
                 state.STATE_KEYS,
+                modality_maps=modality_maps,
+            ),
+            task_key_map=cls._effective_modality_map(
+                task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
             action_mode_map=cls._effective_modality_map(
@@ -198,301 +190,124 @@ class RobotMixin(_CommonInterfaceMixin):
                 "RobotMixin.configure_remote_policy(...)."
             ) from exc
 
-        def ensure_optional_non_empty_string(
-            field_name: str,
-            *,
-            allow_none: bool = True,
-        ) -> None:
-            raw = copied.get(field_name)
-            if raw is None and allow_none:
-                return
-            if not isinstance(raw, str) or not raw.strip():
-                raise InterfaceValidationError(
-                    f"remote_policy.{field_name} must be a non-empty string."
-                )
+        raw_runner = copied.get("runner")
+        if raw_runner is not None:
+            cls._validate_remote_policy_runner(raw_runner)
 
-        def ensure_optional_positive_float(field_name: str) -> None:
-            raw = copied.get(field_name)
-            if raw is None:
-                return
-            if isinstance(raw, bool) or not isinstance(raw, Real):
-                raise InterfaceValidationError(
-                    f"remote_policy.{field_name} must be a real number, got "
-                    f"{type(raw).__name__}."
-                )
-            if float(raw) <= 0.0:
-                raise InterfaceValidationError(
-                    f"remote_policy.{field_name} must be > 0, got {raw!r}."
-                )
-
-        def ensure_optional_bool(field_name: str) -> None:
-            raw = copied.get(field_name)
-            if raw is None:
-                return
-            if not isinstance(raw, bool):
-                raise InterfaceValidationError(
-                    f"remote_policy.{field_name} must be a bool, got "
-                    f"{type(raw).__name__}."
-                )
-
-        ensure_optional_non_empty_string("host")
-        raw_port = copied.get("port")
-        if raw_port is not None and (
-            isinstance(raw_port, bool) or not isinstance(raw_port, int)
-        ):
+        raw_request_builder = copied.get("request_builder")
+        if raw_request_builder is not None and not callable(raw_request_builder):
             raise InterfaceValidationError(
-                f"remote_policy.port must be an int, got {type(raw_port).__name__}."
+                "remote_policy.request_builder must be callable when provided."
             )
 
-        raw_api_key = copied.get("api_key")
-        if raw_api_key is not None and not isinstance(raw_api_key, str):
+        raw_response_to_action = copied.get("response_to_action")
+        if raw_response_to_action is not None and not callable(raw_response_to_action):
             raise InterfaceValidationError(
-                "remote_policy.api_key must be a string or None, got "
-                f"{type(raw_api_key).__name__}."
+                "remote_policy.response_to_action must be callable when provided."
             )
 
-        ensure_optional_positive_float("retry_interval_s")
-        ensure_optional_positive_float("connect_timeout_s")
-        ensure_optional_positive_float("dt")
-        ensure_optional_bool("connect_immediately")
-        ensure_optional_bool("wait_for_server")
-        ensure_optional_bool("enabled")
-        ensure_optional_non_empty_string("action_mode")
-        ensure_optional_non_empty_string("ref_frame")
-
-        raw_headers = copied.get("additional_headers")
-        if raw_headers is not None:
-            cls._copy_string_mapping_cls(
-                raw_headers,
-                field_name="remote_policy.additional_headers",
-            )
-
-        raw_obs_builder = copied.get("obs_builder")
-        if raw_obs_builder is not None and not callable(raw_obs_builder):
+        raw_enabled = copied.get("enabled")
+        if raw_enabled is not None and not isinstance(raw_enabled, bool):
             raise InterfaceValidationError(
-                "remote_policy.obs_builder must be callable when provided."
+                "remote_policy.enabled must be a bool when provided."
             )
 
         return copied
 
-    def _import_openpi_remote(self) -> Any:
-        """Import the optional OpenPI remote helpers lazily."""
+    @classmethod
+    def _validate_remote_policy_runner(cls, runner: object) -> object:
+        """Validate one remote-policy runner by duck typing."""
 
-        from ...contrib import openpi_remote as em_openpi_remote
-
-        return em_openpi_remote
-
-    def _coerce_optional_bool(self, value: object, field_name: str) -> bool:
-        """Validate an optional boolean-like configuration field."""
-
-        if not isinstance(value, bool):
+        infer = getattr(runner, "infer", None)
+        if not callable(infer):
             raise InterfaceValidationError(
-                f"{field_name} must be a bool, got {type(value).__name__}."
+                "remote_policy.runner must expose infer(request)."
             )
-        return value
-
-    def _coerce_optional_positive_float(self, value: object, field_name: str) -> float:
-        """Validate a finite positive real number."""
-
-        if isinstance(value, bool) or not isinstance(value, Real):
-            raise InterfaceValidationError(
-                f"{field_name} must be a real number, got {type(value).__name__}."
-            )
-        number = float(value)
-        if number <= 0.0:
-            raise InterfaceValidationError(f"{field_name} must be > 0, got {value!r}.")
-        return number
-
-    def _embodia_init_remote_policy(
-        self,
-        *,
-        use_remote_policy: object | None = None,
-        remote_policy_host: object | None = None,
-        remote_policy_port: object | None = None,
-        remote_policy_api_key: object | None = None,
-        remote_policy_retry_interval_s: object | None = None,
-        remote_policy_connect_timeout_s: object | None = None,
-        remote_policy_additional_headers: object | None = None,
-        remote_policy_connect_immediately: object | None = None,
-        remote_policy_wait_for_server: object | None = None,
-    ) -> None:
-        """Initialize the hidden robot-side remote-policy backend."""
-
-        enabled = type(self).REMOTE_POLICY_ENABLED
-        if use_remote_policy is not None:
-            enabled = self._coerce_optional_bool(
-                use_remote_policy,
-                "use_remote_policy",
-            )
-
-        host = type(self).REMOTE_POLICY_HOST
-        if remote_policy_host is not None:
-            if not isinstance(remote_policy_host, str) or not remote_policy_host.strip():
-                raise InterfaceValidationError(
-                    "remote_policy_host must be a non-empty string."
-                )
-            host = remote_policy_host
-
-        port = type(self).REMOTE_POLICY_PORT
-        if remote_policy_port is not None:
-            if isinstance(remote_policy_port, bool) or not isinstance(
-                remote_policy_port, int
-            ):
-                raise InterfaceValidationError("remote_policy_port must be an int.")
-            port = remote_policy_port
-
-        api_key = type(self).REMOTE_POLICY_API_KEY
-        if remote_policy_api_key is not None:
-            if remote_policy_api_key is not None and not isinstance(
-                remote_policy_api_key, str
-            ):
-                raise InterfaceValidationError(
-                    "remote_policy_api_key must be a string or None."
-                )
-            api_key = remote_policy_api_key
-
-        retry_interval_s = type(self).REMOTE_POLICY_RETRY_INTERVAL_S
-        if remote_policy_retry_interval_s is not None:
-            retry_interval_s = self._coerce_optional_positive_float(
-                remote_policy_retry_interval_s,
-                "remote_policy_retry_interval_s",
-            )
-
-        connect_timeout_s = type(self).REMOTE_POLICY_CONNECT_TIMEOUT_S
-        if remote_policy_connect_timeout_s is not None:
-            connect_timeout_s = self._coerce_optional_positive_float(
-                remote_policy_connect_timeout_s,
-                "remote_policy_connect_timeout_s",
-            )
-
-        additional_headers = type(self).REMOTE_POLICY_ADDITIONAL_HEADERS
-        if remote_policy_additional_headers is not None:
-            if not isinstance(remote_policy_additional_headers, Mapping):
-                raise InterfaceValidationError(
-                    "remote_policy_additional_headers must be a mapping when "
-                    "provided."
-                )
-            additional_headers = dict(remote_policy_additional_headers)
-
-        connect_immediately = type(self).REMOTE_POLICY_CONNECT_IMMEDIATELY
-        if remote_policy_connect_immediately is not None:
-            connect_immediately = self._coerce_optional_bool(
-                remote_policy_connect_immediately,
-                "remote_policy_connect_immediately",
-            )
-
-        wait_for_server = type(self).REMOTE_POLICY_WAIT_FOR_SERVER
-        if remote_policy_wait_for_server is not None:
-            wait_for_server = self._coerce_optional_bool(
-                remote_policy_wait_for_server,
-                "remote_policy_wait_for_server",
-            )
-
-        em_openpi_remote = self._import_openpi_remote()
-        self._embodia_remote_policy = em_openpi_remote.RemotePolicyRunner(
-            enabled=enabled,
-            host=host,
-            port=port,
-            api_key=api_key,
-            retry_interval_s=retry_interval_s,
-            connect_timeout_s=connect_timeout_s,
-            additional_headers=additional_headers,
-            connect_immediately=connect_immediately,
-            wait_for_server=wait_for_server,
-        )
+        return runner
 
     def uses_remote_policy(self) -> bool:
         """Return whether this robot instance is configured for remote policy use."""
 
-        runner = getattr(self, "_embodia_remote_policy", None)
-        if runner is None:
-            self._embodia_init_remote_policy()
-            runner = getattr(self, "_embodia_remote_policy")
-        return bool(getattr(runner, "enabled", False))
+        return self.has_remote_policy()
 
     def has_remote_policy(self) -> bool:
-        """Return whether remote policy is configured without initializing it."""
+        """Return whether a remote policy backend has been configured."""
 
-        runner = getattr(self, "_embodia_remote_policy", None)
-        if runner is not None:
-            return bool(getattr(runner, "enabled", False))
-        return bool(type(self).REMOTE_POLICY_ENABLED)
+        runner = getattr(self, "_embodia_remote_policy_runner", None)
+        enabled = getattr(
+            self,
+            "_embodia_remote_policy_enabled",
+            bool(type(self).REMOTE_POLICY_ENABLED),
+        )
+        return bool(enabled) and runner is not None
 
     def close_remote_policy(self) -> None:
         """Close the hidden remote-policy backend when present."""
 
-        runner = getattr(self, "_embodia_remote_policy", None)
-        if runner is not None:
-            runner.close()
+        runner = getattr(self, "_embodia_remote_policy_runner", None)
+        if runner is None:
+            return
+
+        close = getattr(runner, "close", None)
+        if callable(close):
+            close()
 
     def configure_remote_policy(
         self,
         *,
-        host: str | None = None,
-        port: int | None = None,
-        api_key: str | None = None,
-        retry_interval_s: float | None = None,
-        connect_timeout_s: float | None = None,
-        additional_headers: Mapping[str, str] | None = None,
-        connect_immediately: bool | None = None,
-        wait_for_server: bool | None = None,
-        obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
-        action_mode: str | None = None,
-        dt: float | None = None,
-        ref_frame: str | None = None,
+        runner: object | None = None,
+        request_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
+        response_to_action: Callable[[object], Action | Mapping[str, Any]] | None = None,
         enabled: bool = True,
     ) -> None:
-        """Configure robot-side remote policy access without touching the class body."""
+        """Configure one generic remote-policy backend for this robot."""
 
-        if obs_builder is not None and not callable(obs_builder):
-            raise InterfaceValidationError("obs_builder must be callable when provided.")
-        if action_mode is not None:
-            if not isinstance(action_mode, str) or not action_mode.strip():
-                raise InterfaceValidationError(
-                    "action_mode must be a non-empty string when provided."
-                )
-            self._embodia_remote_policy_action_mode = action_mode
-        if dt is not None:
-            self._embodia_remote_policy_dt = self._coerce_optional_positive_float(
-                dt,
-                "remote_policy_dt",
+        if not isinstance(enabled, bool):
+            raise InterfaceValidationError("enabled must be a bool.")
+
+        if runner is not None:
+            self._embodia_remote_policy_runner = self._validate_remote_policy_runner(
+                runner
             )
-        if ref_frame is not None:
-            if not isinstance(ref_frame, str) or not ref_frame.strip():
+        elif enabled:
+            raise InterfaceValidationError(
+                "configure_remote_policy() requires runner=... when enabled=True."
+            )
+
+        if request_builder is not None:
+            if not callable(request_builder):
                 raise InterfaceValidationError(
-                    "ref_frame must be a non-empty string when provided."
+                    "request_builder must be callable when provided."
                 )
-            self._embodia_remote_policy_ref_frame = ref_frame
-        if obs_builder is not None:
-            self._embodia_remote_policy_obs_builder = obs_builder
+            self._embodia_remote_policy_request_builder = request_builder
 
-        self._embodia_init_remote_policy(
-            use_remote_policy=enabled,
-            remote_policy_host=host,
-            remote_policy_port=port,
-            remote_policy_api_key=api_key,
-            remote_policy_retry_interval_s=retry_interval_s,
-            remote_policy_connect_timeout_s=connect_timeout_s,
-            remote_policy_additional_headers=additional_headers,
-            remote_policy_connect_immediately=connect_immediately,
-            remote_policy_wait_for_server=wait_for_server,
-        )
+        if response_to_action is not None:
+            if not callable(response_to_action):
+                raise InterfaceValidationError(
+                    "response_to_action must be callable when provided."
+                )
+            self._embodia_remote_policy_response_to_action = response_to_action
 
-    def _resolve_remote_policy_obs_builder(self) -> Any:
-        """Resolve the method that converts a frame into remote observation payload."""
+        self._embodia_remote_policy_enabled = enabled
 
-        configured = getattr(self, "_embodia_remote_policy_obs_builder", None)
+    def _resolve_remote_policy_request_builder(self) -> Any:
+        """Resolve the method that converts a frame into a remote request payload."""
+
+        configured = getattr(self, "_embodia_remote_policy_request_builder", None)
         if callable(configured):
             return configured
 
-        method_name = type(self).REMOTE_POLICY_OBS_METHOD
-        if method_name is None and callable(getattr(self, "_frame_to_openpi_obs", None)):
-            method_name = "_frame_to_openpi_obs"
+        method_name = type(self).REMOTE_POLICY_REQUEST_METHOD
+        if method_name is None and callable(
+            getattr(self, "_build_remote_policy_request", None)
+        ):
+            method_name = "_build_remote_policy_request"
 
         if method_name is None:
             raise InterfaceValidationError(
                 f"{type(self).__name__} uses remote policy mode, but does not "
-                "declare REMOTE_POLICY_OBS_METHOD or define _frame_to_openpi_obs()."
+                "declare REMOTE_POLICY_REQUEST_METHOD or define "
+                "_build_remote_policy_request()."
             )
         method = getattr(self, method_name, None)
         if not callable(method):
@@ -502,64 +317,32 @@ class RobotMixin(_CommonInterfaceMixin):
             )
         return method
 
-    def remote_policy_action_mode(self) -> str:
-        """Return the action mode expected from the remote policy."""
+    def _resolve_remote_policy_response_to_action(self) -> Any:
+        """Resolve the method that converts one remote response into an action."""
 
-        configured = getattr(self, "_embodia_remote_policy_action_mode", None)
-        if configured is not None:
+        configured = getattr(self, "_embodia_remote_policy_response_to_action", None)
+        if callable(configured):
             return configured
 
-        configured = type(self).REMOTE_POLICY_ACTION_MODE
-        if configured is not None:
-            if not isinstance(configured, str) or not configured.strip():
-                raise InterfaceValidationError(
-                    "REMOTE_POLICY_ACTION_MODE must be a non-empty string when "
-                    "provided."
-                )
-            return configured
+        method_name = type(self).REMOTE_POLICY_RESPONSE_METHOD
+        if method_name is None and callable(
+            getattr(self, "_parse_remote_policy_action", None)
+        ):
+            method_name = "_parse_remote_policy_action"
 
-        spec = self.get_spec()
-        if len(spec.action_modes) == 1:
-            return spec.action_modes[0]
-        raise InterfaceValidationError(
-            f"{type(self).__name__} supports multiple action modes "
-            f"{spec.action_modes!r}; set REMOTE_POLICY_ACTION_MODE explicitly."
-        )
-
-    def remote_policy_action_dt(self) -> float:
-        """Return the action dt used when converting remote policy responses."""
-
-        configured = getattr(self, "_embodia_remote_policy_dt", None)
-        if configured is not None:
-            return self._coerce_optional_positive_float(
-                configured,
-                "remote_policy_dt",
-            )
-
-        config = type(self).REMOTE_POLICY_DT
-        if config is None:
-            value = 0.1
-        elif isinstance(config, str):
-            value = getattr(self, config)
-        else:
-            value = config
-        return self._coerce_optional_positive_float(value, "remote_policy_dt")
-
-    def remote_policy_ref_frame(self) -> str | None:
-        """Return the reference frame used for remote policy actions."""
-
-        configured = getattr(self, "_embodia_remote_policy_ref_frame", None)
-        if configured is not None:
-            return configured
-
-        value = type(self).REMOTE_POLICY_REF_FRAME
-        if value is None:
-            return None
-        if not isinstance(value, str) or not value.strip():
+        if method_name is None:
             raise InterfaceValidationError(
-                "REMOTE_POLICY_REF_FRAME must be a non-empty string when provided."
+                f"{type(self).__name__} uses remote policy mode, but does not "
+                "declare REMOTE_POLICY_RESPONSE_METHOD or define "
+                "_parse_remote_policy_action()."
             )
-        return value
+        method = getattr(self, method_name, None)
+        if not callable(method):
+            raise InterfaceValidationError(
+                f"{type(self).__name__}.{method_name} must be callable for remote "
+                "policy mode."
+            )
+        return method
 
     def _request_remote_policy_action(
         self,
@@ -567,15 +350,11 @@ class RobotMixin(_CommonInterfaceMixin):
     ) -> Action:
         """Internal helper used by embodia runtime for remote policy actions."""
 
-        runner = getattr(self, "_embodia_remote_policy", None)
-        if runner is None:
-            self._embodia_init_remote_policy()
-            runner = getattr(self, "_embodia_remote_policy")
-
-        if not getattr(runner, "enabled", False):
+        runner = getattr(self, "_embodia_remote_policy_runner", None)
+        if runner is None or not self.has_remote_policy():
             raise InterfaceValidationError(
                 "Remote policy access is disabled for this robot instance. "
-                "Enable it with use_remote_policy=True."
+                "Configure it with configure_remote_policy(...)."
             )
 
         normalized_frame = self.observe() if frame is None else self.validate_frame(frame)
@@ -588,19 +367,19 @@ class RobotMixin(_CommonInterfaceMixin):
         state.ensure_frame_keys(
             normalized_frame,
             owner_label="robot",
-            required_keys=spec.state_keys,
+            required_keys=spec.all_state_keys(),
         )
-        build_obs = self._resolve_remote_policy_obs_builder()
-        policy_output = runner.infer(build_obs(normalized_frame))
+        task.ensure_frame_keys(
+            normalized_frame,
+            owner_label="robot",
+            required_keys=spec.task_keys,
+        )
+        build_request = self._resolve_remote_policy_request_builder()
+        policy_output = runner.infer(build_request(normalized_frame))
         setattr(self, "last_policy_output", policy_output)
 
-        em_openpi_remote = self._import_openpi_remote()
-        action = em_openpi_remote.openpi_first_action(
-            policy_output,
-            mode=self.remote_policy_action_mode(),
-            dt=self.remote_policy_action_dt(),
-            ref_frame=self.remote_policy_ref_frame(),
-        )
+        parse_action = self._resolve_remote_policy_response_to_action()
+        action = self.validate_action(parse_action(policy_output))
         return self.ensure_action_supported(action)
 
     def request_remote_policy_action(
@@ -617,7 +396,9 @@ class RobotMixin(_CommonInterfaceMixin):
         return remap_robot_spec(
             spec,
             image_key_map=self.get_image_key_map(),
+            target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
+            task_key_map=self.get_task_key_map(),
             action_mode_map=self.get_action_mode_map(),
         )
 
@@ -674,7 +455,12 @@ class RobotMixin(_CommonInterfaceMixin):
         state.ensure_frame_keys(
             normalized_frame,
             owner_label="robot",
-            required_keys=normalized_spec.state_keys,
+            required_keys=normalized_spec.all_state_keys(),
+        )
+        task.ensure_frame_keys(
+            normalized_frame,
+            owner_label="robot",
+            required_keys=normalized_spec.task_keys,
         )
         return normalized_frame
 
@@ -687,12 +473,7 @@ class RobotMixin(_CommonInterfaceMixin):
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-        action_modes.ensure_supported(
-            normalized_action,
-            normalized_spec.action_modes,
-            owner_label="robot",
-            owner_name=normalized_spec.name,
-        )
+        _ensure_action_supported_by_robot(normalized_action, normalized_spec)
         return normalized_action
 
     def to_native_action(self, action: Action) -> Any:
@@ -700,6 +481,10 @@ class RobotMixin(_CommonInterfaceMixin):
 
         return remap_action(
             action,
+            target_map=invert_mapping(
+                self.get_control_target_map(),
+                "RobotMixin control target mapping",
+            ),
             mode_map=invert_mapping(
                 self.get_action_mode_map(),
                 "RobotMixin action mode mapping",
@@ -725,7 +510,12 @@ class RobotMixin(_CommonInterfaceMixin):
         state.ensure_frame_keys(
             frame,
             owner_label="robot",
-            required_keys=spec.state_keys,
+            required_keys=spec.all_state_keys(),
+        )
+        task.ensure_frame_keys(
+            frame,
+            owner_label="robot",
+            required_keys=spec.task_keys,
         )
         return frame
 
@@ -735,12 +525,7 @@ class RobotMixin(_CommonInterfaceMixin):
         raw_act = self._resolve_impl("act", "_act_impl")
         normalized_action = self.validate_action(action)
         spec = self._get_runtime_spec()
-        action_modes.ensure_supported(
-            normalized_action,
-            spec.action_modes,
-            owner_label="robot",
-            owner_name=spec.name,
-        )
+        _ensure_action_supported_by_robot(normalized_action, spec)
         raw_act(self.to_native_action(normalized_action))
 
     def reset(self) -> Frame:
@@ -757,7 +542,12 @@ class RobotMixin(_CommonInterfaceMixin):
         state.ensure_frame_keys(
             frame,
             owner_label="robot",
-            required_keys=spec.state_keys,
+            required_keys=spec.all_state_keys(),
+        )
+        task.ensure_frame_keys(
+            frame,
+            owner_label="robot",
+            required_keys=spec.task_keys,
         )
         return frame
 

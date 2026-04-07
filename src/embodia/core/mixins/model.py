@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Self
 
@@ -10,9 +10,13 @@ from ..config_io import (
     expand_component_yaml_interface_config,
     load_component_yaml_config,
 )
-from ...runtime.checks import validate_model_spec as _validate_model_spec
+from ...runtime.checks import (
+    ensure_action_matches_model_spec as _ensure_action_matches_model_spec,
+    validate_model_spec as _validate_model_spec,
+)
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, state
+from ..modalities import action_modes, images, meta, state, task
+from ..modalities._common import CONTROL_TARGETS
 from ..schema import Action, Frame, ModelSpec
 from ..transform import invert_mapping, model_spec_to_dict, remap_frame, remap_model_spec
 from .common import _CommonInterfaceMixin
@@ -25,14 +29,17 @@ class ModelMixin(_CommonInterfaceMixin):
     GET_SPEC_METHOD = "get_spec"
     RESET_METHOD = "reset"
     STEP_METHOD = "step"
+    STEP_CHUNK_METHOD: str | None = None
+    PLAN_METHOD: str | None = None
 
     _METHOD_ALIAS_ATTRS: dict[str, str] = {
         "get_spec": "GET_SPEC_METHOD",
         "reset": "RESET_METHOD",
         "step": "STEP_METHOD",
+        "step_chunk": "STEP_CHUNK_METHOD",
+        "plan": "PLAN_METHOD",
     }
     _YAML_CONFIG_KEYS = {
-        "init",
         "interface",
         "method_aliases",
     }
@@ -103,16 +110,8 @@ class ModelMixin(_CommonInterfaceMixin):
             component="model",
             path=path,
         )
-        init_config = loaded.pop("init", {})
-        if not isinstance(init_config, Mapping):
-            raise InterfaceValidationError(
-                "YAML field 'init' must be a mapping when provided."
-            )
-
-        merged: dict[str, Any] = dict(init_config)
-        merged.update(loaded)
-        merged.update(overrides)
-        return cls.from_config(**merged)
+        loaded.update(overrides)
+        return cls.from_config(**loaded)
 
     @classmethod
     def _validate_model_spec_config(
@@ -129,8 +128,16 @@ class ModelMixin(_CommonInterfaceMixin):
                 images.IMAGE_KEYS,
                 modality_maps=modality_maps,
             ),
+            target_map=cls._effective_modality_map(
+                CONTROL_TARGETS,
+                modality_maps=modality_maps,
+            ),
             state_key_map=cls._effective_modality_map(
                 state.STATE_KEYS,
+                modality_maps=modality_maps,
+            ),
+            task_key_map=cls._effective_modality_map(
+                task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
             action_mode_map=cls._effective_modality_map(
@@ -147,7 +154,9 @@ class ModelMixin(_CommonInterfaceMixin):
         return remap_model_spec(
             spec,
             image_key_map=self.get_image_key_map(),
+            target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
+            task_key_map=self.get_task_key_map(),
             action_mode_map=self.get_action_mode_map(),
         )
 
@@ -206,6 +215,11 @@ class ModelMixin(_CommonInterfaceMixin):
             owner_label="model",
             required_keys=normalized_spec.required_state_keys,
         )
+        task.ensure_frame_keys(
+            normalized_frame,
+            owner_label="model",
+            required_keys=normalized_spec.required_task_keys,
+        )
         return normalized_frame
 
     def ensure_output_matches_spec(
@@ -217,11 +231,7 @@ class ModelMixin(_CommonInterfaceMixin):
 
         normalized_action = self.validate_action(action)
         normalized_spec = self.get_spec() if spec is None else self.validate_spec(spec)
-        action_modes.ensure_model_output(
-            normalized_action,
-            output_mode=normalized_spec.output_action_mode,
-            model_name=normalized_spec.name,
-        )
+        _ensure_action_matches_model_spec(normalized_action, normalized_spec)
         return normalized_action
 
     def to_native_frame(self, frame: Frame) -> Any:
@@ -236,6 +246,14 @@ class ModelMixin(_CommonInterfaceMixin):
             state_key_map=invert_mapping(
                 self.get_state_key_map(),
                 "ModelMixin state key mapping",
+            ),
+            task_key_map=invert_mapping(
+                self.get_task_key_map(),
+                "ModelMixin task key mapping",
+            ),
+            meta_key_map=invert_mapping(
+                self.get_meta_key_map(),
+                "ModelMixin meta key mapping",
             ),
         )
 
@@ -270,100 +288,14 @@ class ModelMixin(_CommonInterfaceMixin):
             owner_label="model",
             required_keys=spec.required_state_keys,
         )
+        task.ensure_frame_keys(
+            normalized_frame,
+            owner_label="model",
+            required_keys=spec.required_task_keys,
+        )
         raw_action = raw_step(self.to_native_frame(normalized_frame))
         normalized_action = self.validate_action(raw_action)
-        action_modes.ensure_model_output(
-            normalized_action,
-            output_mode=spec.output_action_mode,
-            model_name=spec.name,
-        )
+        _ensure_action_matches_model_spec(normalized_action, spec)
         return normalized_action
-
-    def build_openpi_policy_adapter(
-        self,
-        *,
-        obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]],
-        action_plan_provider: Callable[[object, Frame], Any] | None = None,
-        response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
-        server_metadata: Mapping[str, Any] | None = None,
-        reset_model_on_connect: bool = False,
-    ) -> Any:
-        """Build an OpenPI-compatible adapter around this model."""
-
-        from ...contrib import openpi_remote as em_openpi_remote
-
-        return em_openpi_remote.EmbodiaModelPolicyAdapter(
-            self,
-            obs_to_frame=obs_to_frame,
-            action_plan_provider=action_plan_provider,
-            response_builder=response_builder,
-            server_metadata=server_metadata,
-            reset_model_on_connect=reset_model_on_connect,
-        )
-
-    def build_openpi_policy_server(
-        self,
-        *,
-        obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]],
-        host: str = "0.0.0.0",
-        port: int | None = None,
-        api_key: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        include_server_timing: bool = True,
-        action_plan_provider: Callable[[object, Frame], Any] | None = None,
-        response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
-        server_metadata: Mapping[str, Any] | None = None,
-        reset_model_on_connect: bool = False,
-    ) -> Any:
-        """Build an OpenPI-compatible websocket server around this model."""
-
-        from ...contrib import openpi_remote as em_openpi_remote
-
-        adapter = self.build_openpi_policy_adapter(
-            obs_to_frame=obs_to_frame,
-            action_plan_provider=action_plan_provider,
-            response_builder=response_builder,
-            server_metadata=server_metadata,
-            reset_model_on_connect=reset_model_on_connect,
-        )
-        return em_openpi_remote.WebsocketPolicyServer(
-            adapter,
-            host=host,
-            port=port,
-            metadata=metadata if metadata is not None else adapter.get_server_metadata(),
-            api_key=api_key,
-            include_server_timing=include_server_timing,
-        )
-
-    def serve_openpi_policy(
-        self,
-        *,
-        obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]],
-        host: str = "0.0.0.0",
-        port: int | None = None,
-        api_key: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        include_server_timing: bool = True,
-        action_plan_provider: Callable[[object, Frame], Any] | None = None,
-        response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
-        server_metadata: Mapping[str, Any] | None = None,
-        reset_model_on_connect: bool = False,
-    ) -> None:
-        """Serve this model through an OpenPI-compatible websocket API."""
-
-        server = self.build_openpi_policy_server(
-            obs_to_frame=obs_to_frame,
-            host=host,
-            port=port,
-            api_key=api_key,
-            metadata=metadata,
-            include_server_timing=include_server_timing,
-            action_plan_provider=action_plan_provider,
-            response_builder=response_builder,
-            server_metadata=server_metadata,
-            reset_model_on_connect=reset_model_on_connect,
-        )
-        server.serve_forever()
-
 
 __all__ = ["ModelMixin"]

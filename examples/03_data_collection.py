@@ -1,8 +1,8 @@
-"""Example 1: robot-only collection with your own lightweight save logic.
+"""Example 3: robot-only data collection with plain Python save logic.
 
 Run with:
 
-    PYTHONPATH=src python examples/01_robot_data_collection.py
+    PYTHONPATH=src python examples/03_data_collection.py
 """
 
 from __future__ import annotations
@@ -15,36 +15,50 @@ import embodia as em
 
 
 class YourRobot(em.RobotMixin):
-    """A small robot that already exposes native methods and names."""
+    """Pretend this is your original outer robot class after one small edit."""
 
     def __init__(self) -> None:
-        self.step_count = 0
+        self.step_index = 0
         self.last_native_action: object | None = None
 
     def capture(self) -> dict[str, object]:
-        self.step_count += 1
+        self.step_index += 1
         return {
             "timestamp_ns": time.time_ns(),
             "images": {"rgb_front": None},
-            "state": {"qpos": [float(self.step_count)] * 6},
-            "meta": {"sensor_source": "demo_camera"},
+            "state": {
+                "qpos": [float(self.step_index)] * 6,
+                "gripper_pos": min(self.step_index * 0.1, 1.0),
+            },
+            "meta": {"step_index": self.step_index},
         }
 
     def send_command(self, action: object) -> None:
         self.last_native_action = action
 
     def home(self) -> dict[str, object]:
-        self.step_count = 0
+        self.step_index = 0
         return self.capture()
 
 
 def scripted_action(frame: em.Frame) -> dict[str, object]:
-    """Pretend this came from teleop or a scripted collector."""
+    """Pretend this action comes from teleop or a scripted collector."""
 
-    joint_0 = float(frame.state["joint_positions"][0])
+    qpos0 = float(frame.state["joint_positions"][0])
+    gripper_pos = float(frame.state["position"])
     return {
-        "mode": "ee_delta",
-        "value": [joint_0 * 0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "commands": [
+            {
+                "target": "arm",
+                "mode": "ee_delta",
+                "value": [qpos0 * 0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            {
+                "target": "gripper",
+                "mode": "scalar_position",
+                "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
+            },
+        ],
         "dt": 0.1,
     }
 
@@ -55,17 +69,12 @@ def main() -> None:
         return
 
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
-    em.check_robot(robot, call_observe=False)
+    output_path = Path("tmp") / "episode_0000.jsonl"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     records: list[dict[str, object]] = []
     reset_frame = robot.reset()
-    records.append(
-        {
-            "frame": em.frame_to_dict(reset_frame),
-            "action": None,
-            "meta": {"source": "reset"},
-        }
-    )
+    records.append({"frame": em.frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
         result = em.run_step(robot, action_fn=scripted_action)
@@ -73,22 +82,18 @@ def main() -> None:
             {
                 "frame": em.frame_to_dict(result.frame),
                 "action": em.action_to_dict(result.action),
-                "meta": {"source": "scripted_action"},
             }
         )
 
-    output_path = Path("tmp") / "robot_records.jsonl"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=True))
             handle.write("\n")
 
     print("record_count:", len(records))
-    print("first_record:", records[0])
     print("jsonl_path:", output_path)
     print("last_native_action:", robot.last_native_action)
-    print("example 1 passed.")
+    print("example 3 passed.")
 
 
 if __name__ == "__main__":

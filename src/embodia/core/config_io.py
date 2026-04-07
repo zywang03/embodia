@@ -113,6 +113,55 @@ def _invert_unique_mapping(
     return result
 
 
+def _merge_string_mapping(
+    destination: dict[str, str],
+    source: Mapping[str, str],
+    *,
+    field_name: str,
+) -> None:
+    """Merge one ``mapping[str, str]`` while detecting ambiguous collisions."""
+
+    for key, value in source.items():
+        existing = destination.get(key)
+        if existing is not None and existing != value:
+            raise InterfaceValidationError(
+                f"{field_name} maps {key!r} to both {existing!r} and {value!r}."
+            )
+        destination[key] = value
+
+
+def _copy_named_mapping(
+    value: object,
+    *,
+    field_name: str,
+    allow_empty: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Validate and copy one ``mapping[str, mapping]`` block."""
+
+    if not isinstance(value, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name} must be a mapping, got {type(value).__name__}."
+        )
+
+    result: dict[str, dict[str, Any]] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise InterfaceValidationError(
+                f"{field_name} must use non-empty string keys, got {key!r}."
+            )
+        if not isinstance(item, Mapping):
+            raise InterfaceValidationError(
+                f"{field_name}[{key!r}] must be a mapping, got "
+                f"{type(item).__name__}."
+            )
+        result[key] = _copy_mapping(item, field_name=f"{field_name}[{key!r}]")
+
+    if not allow_empty and not result:
+        raise InterfaceValidationError(f"{field_name} must not be empty.")
+
+    return result
+
+
 def _validate_interface_keys(
     interface: Mapping[str, Any],
     *,
@@ -143,38 +192,119 @@ def _expand_robot_interface_config(
     _validate_interface_keys(
         interface,
         field_name=field_name,
-        allowed_keys={"name", "images", "state", "action_modes"},
+        allowed_keys={"name", "images", "task", "meta", "groups"},
     )
 
     name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
     images = _copy_string_mapping(
-        interface.get("images"),
+        interface.get("images", {}),
         field_name=f"{field_name}.images",
     )
-    state = _copy_string_mapping(
-        interface.get("state"),
-        field_name=f"{field_name}.state",
+    task = _copy_string_mapping(
+        interface.get("task", {}),
+        field_name=f"{field_name}.task",
     )
-    action_modes = _copy_string_mapping(
-        interface.get("action_modes"),
-        field_name=f"{field_name}.action_modes",
+    meta = _copy_string_mapping(
+        interface.get("meta", {}),
+        field_name=f"{field_name}.meta",
+    )
+
+    groups = _copy_named_mapping(
+        interface.get("groups"),
+        field_name=f"{field_name}.groups",
         allow_empty=False,
     )
+    robot_groups: list[dict[str, Any]] = []
+    state_maps: dict[str, str] = {}
+    action_mode_maps: dict[str, str] = {}
+    control_target_maps: dict[str, str] = {}
+
+    for standard_name, group_config in groups.items():
+        _validate_interface_keys(
+            group_config,
+            field_name=f"{field_name}.groups[{standard_name!r}]",
+            allowed_keys={
+                "kind",
+                "dof",
+                "state",
+                "action_modes",
+                "meta",
+                "native_name",
+            },
+        )
+        kind = _ensure_non_empty_string(
+            group_config.get("kind"),
+            field_name=f"{field_name}.groups[{standard_name!r}].kind",
+        )
+        dof = group_config.get("dof")
+        if isinstance(dof, bool) or not isinstance(dof, int) or dof <= 0:
+            raise InterfaceValidationError(
+                f"{field_name}.groups[{standard_name!r}].dof must be a positive int."
+            )
+        group_state = _copy_string_mapping(
+            group_config.get("state", {}),
+            field_name=f"{field_name}.groups[{standard_name!r}].state",
+        )
+        group_action_modes = _copy_string_mapping(
+            group_config.get("action_modes"),
+            field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+            allow_empty=False,
+        )
+        group_meta = _copy_mapping(
+            group_config.get("meta", {}),
+            field_name=f"{field_name}.groups[{standard_name!r}].meta",
+        )
+        native_name = _ensure_non_empty_string(
+            group_config.get("native_name", standard_name),
+            field_name=f"{field_name}.groups[{standard_name!r}].native_name",
+        )
+        _merge_string_mapping(
+            state_maps,
+            _invert_unique_mapping(
+                group_state,
+                field_name=f"{field_name}.groups[{standard_name!r}].state",
+            ),
+            field_name=f"{field_name}.groups[{standard_name!r}].state",
+        )
+        _merge_string_mapping(
+            action_mode_maps,
+            _invert_unique_mapping(
+                group_action_modes,
+                field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+            ),
+            field_name=f"{field_name}.groups[{standard_name!r}].action_modes",
+        )
+        _merge_string_mapping(
+            control_target_maps,
+            {native_name: standard_name},
+            field_name=f"{field_name}.groups[{standard_name!r}].native_name",
+        )
+        robot_groups.append(
+            {
+                "name": standard_name,
+                "kind": kind,
+                "dof": dof,
+                "action_modes": list(group_action_modes.values()),
+                "state_keys": list(group_state.values()),
+                "meta": group_meta,
+            }
+        )
 
     return {
         "robot_spec": {
             "name": name,
-            "action_modes": list(action_modes.values()),
             "image_keys": list(images.values()),
-            "state_keys": list(state.values()),
+            "groups": robot_groups,
+            "task_keys": list(task.values()),
+            "meta": {},
         },
         "modality_maps": {
             "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
-            "state": _invert_unique_mapping(state, field_name=f"{field_name}.state"),
-            "action_modes": _invert_unique_mapping(
-                action_modes,
-                field_name=f"{field_name}.action_modes",
-            ),
+            "control_targets": control_target_maps,
+            "state": state_maps,
+            "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
+            "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
+            "action_modes": action_mode_maps,
         },
     }
 
@@ -193,35 +323,83 @@ def _expand_model_interface_config(
             "name",
             "images",
             "state",
-            "action_modes",
-            "output_action_mode",
+            "task",
+            "meta",
+            "outputs",
         },
     )
 
     name = _ensure_non_empty_string(interface.get("name"), field_name=f"{field_name}.name")
     images = _copy_string_mapping(
-        interface.get("images"),
+        interface.get("images", {}),
         field_name=f"{field_name}.images",
     )
     state = _copy_string_mapping(
-        interface.get("state"),
+        interface.get("state", {}),
         field_name=f"{field_name}.state",
     )
-    action_modes = _copy_string_mapping(
-        interface.get("action_modes"),
-        field_name=f"{field_name}.action_modes",
+    task = _copy_string_mapping(
+        interface.get("task", {}),
+        field_name=f"{field_name}.task",
+    )
+    meta = _copy_string_mapping(
+        interface.get("meta", {}),
+        field_name=f"{field_name}.meta",
+    )
+
+    outputs = _copy_named_mapping(
+        interface.get("outputs"),
+        field_name=f"{field_name}.outputs",
         allow_empty=False,
     )
-    output_action_mode = _ensure_non_empty_string(
-        interface.get("output_action_mode"),
-        field_name=f"{field_name}.output_action_mode",
-    )
-    if output_action_mode not in action_modes:
-        supported_modes = ", ".join(repr(key) for key in action_modes)
-        raise InterfaceValidationError(
-            f"{field_name}.output_action_mode must be one of the embodia-standard "
-            f"action modes declared in {field_name}.action_modes. "
-            f"Got {output_action_mode!r}; expected one of: {supported_modes}."
+    model_outputs: list[dict[str, Any]] = []
+    action_mode_maps: dict[str, str] = {}
+    control_target_maps: dict[str, str] = {}
+
+    for standard_target, output_config in outputs.items():
+        _validate_interface_keys(
+            output_config,
+            field_name=f"{field_name}.outputs[{standard_target!r}]",
+            allowed_keys={"mode", "dim", "meta", "native_name", "native_mode"},
+        )
+        mode = _ensure_non_empty_string(
+            output_config.get("mode"),
+            field_name=f"{field_name}.outputs[{standard_target!r}].mode",
+        )
+        dim = output_config.get("dim")
+        if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
+            raise InterfaceValidationError(
+                f"{field_name}.outputs[{standard_target!r}].dim must be a positive int."
+            )
+        output_meta = _copy_mapping(
+            output_config.get("meta", {}),
+            field_name=f"{field_name}.outputs[{standard_target!r}].meta",
+        )
+        native_name = _ensure_non_empty_string(
+            output_config.get("native_name", standard_target),
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
+        )
+        native_mode = _ensure_non_empty_string(
+            output_config.get("native_mode", mode),
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_mode",
+        )
+        _merge_string_mapping(
+            control_target_maps,
+            {native_name: standard_target},
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_name",
+        )
+        _merge_string_mapping(
+            action_mode_maps,
+            {native_mode: mode},
+            field_name=f"{field_name}.outputs[{standard_target!r}].native_mode",
+        )
+        model_outputs.append(
+            {
+                "target": standard_target,
+                "mode": mode,
+                "dim": dim,
+                "meta": output_meta,
+            }
         )
 
     return {
@@ -229,15 +407,17 @@ def _expand_model_interface_config(
             "name": name,
             "required_image_keys": list(images.values()),
             "required_state_keys": list(state.values()),
-            "output_action_mode": action_modes[output_action_mode],
+            "required_task_keys": list(task.values()),
+            "outputs": model_outputs,
+            "meta": {},
         },
         "modality_maps": {
             "images": _invert_unique_mapping(images, field_name=f"{field_name}.images"),
             "state": _invert_unique_mapping(state, field_name=f"{field_name}.state"),
-            "action_modes": _invert_unique_mapping(
-                action_modes,
-                field_name=f"{field_name}.action_modes",
-            ),
+            "task": _invert_unique_mapping(task, field_name=f"{field_name}.task"),
+            "meta": _invert_unique_mapping(meta, field_name=f"{field_name}.meta"),
+            "control_targets": control_target_maps,
+            "action_modes": action_mode_maps,
         },
     }
 

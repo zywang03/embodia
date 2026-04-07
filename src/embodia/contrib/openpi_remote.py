@@ -4,6 +4,9 @@ This module keeps embodia's core package free of websocket and msgpack
 dependencies, while still making it easy to talk to an OpenPI policy server
 from robot-side Python code.
 
+OpenPI payload conversion lives in ``embodia.contrib.openpi_transform`` so this
+module can stay focused on transport, client/server lifecycle, and serving.
+
 The websocket client intentionally follows the same wire protocol and close-to-
 the-same API as OpenPI's official ``openpi_client.websocket_client_policy``:
 
@@ -22,24 +25,29 @@ environment.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 import http
 import importlib
 import importlib.util
-from numbers import Real
 import time
 import traceback
 from typing import Any
 
 from ..core.arraylike import (
     numpy_ndarray_type,
-    optional_array_to_list,
     torch_tensor_type,
 )
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
-from ..core.transform import coerce_action, coerce_frame, model_spec_to_dict
-from ..runtime.checks import validate_action, validate_frame
+from ..core.transform import coerce_frame, model_spec_to_dict
+from ..runtime.checks import validate_frame
+from .openpi_transform import (
+    OpenPITransform,
+    _coerce_embodia_action_plan,
+    openpi_actions_to_action_plan,
+    openpi_first_action,
+    openpi_response_from_action_plan,
+)
 
 
 def _has_top_level_module(module_name: str) -> bool:
@@ -132,194 +140,6 @@ def _import_numpy() -> Any:
             "official msgpack format, but numpy is not installed in the current "
             "environment. Install numpy or the official 'openpi-client' package."
         ) from exc
-
-
-def _coerce_optional_python_list(value: object, *, field_name: str) -> object:
-    """Convert optional ndarray/tensor inputs into plain Python lists."""
-
-    converted = optional_array_to_list(value, field_name=field_name)
-    if converted is not None:
-        return converted
-
-    tolist = getattr(value, "tolist", None)
-    if callable(tolist):
-        return tolist()
-
-    return value
-
-
-def _ensure_float_list(value: object, *, field_name: str) -> list[float]:
-    """Validate and normalize one numeric action vector."""
-
-    value = _coerce_optional_python_list(value, field_name=field_name)
-    if isinstance(value, tuple):
-        value = list(value)
-
-    if not isinstance(value, list):
-        raise InterfaceValidationError(
-            f"{field_name} must be a list-like numeric vector, got "
-            f"{type(value).__name__}."
-        )
-
-    numbers: list[float] = []
-    for index, item in enumerate(value):
-        if isinstance(item, bool) or not isinstance(item, Real):
-            raise InterfaceValidationError(
-                f"{field_name}[{index}] must be a real number, got "
-                f"{type(item).__name__}."
-            )
-        numbers.append(float(item))
-    return numbers
-
-
-def _extract_actions_value(
-    response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
-) -> object:
-    """Return the raw OpenPI ``actions`` payload."""
-
-    if isinstance(response_or_actions, Mapping):
-        if "actions" not in response_or_actions:
-            raise InterfaceValidationError(
-                "OpenPI response must contain an 'actions' field."
-            )
-        return response_or_actions["actions"]
-    return response_or_actions
-
-
-def _coerce_action_rows(
-    response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
-) -> list[list[float]]:
-    """Normalize OpenPI action payloads into ``list[list[float]]``."""
-
-    actions = _coerce_optional_python_list(
-        _extract_actions_value(response_or_actions),
-        field_name="actions",
-    )
-    if isinstance(actions, tuple):
-        actions = list(actions)
-
-    if not isinstance(actions, list):
-        raise InterfaceValidationError(
-            "OpenPI actions must be a 1D or 2D list-like numeric payload, got "
-            f"{type(actions).__name__}."
-        )
-    if not actions:
-        raise InterfaceValidationError("OpenPI returned an empty action chunk.")
-
-    first = actions[0]
-    if isinstance(first, bool):
-        raise InterfaceValidationError(
-            "OpenPI actions must contain numeric values, not booleans."
-        )
-    if isinstance(first, Real):
-        return [_ensure_float_list(actions, field_name="actions")]
-
-    rows: list[list[float]] = []
-    for row_index, row in enumerate(actions):
-        rows.append(
-            _ensure_float_list(row, field_name=f"actions[{row_index}]")
-        )
-    return rows
-
-
-def openpi_actions_to_action_plan(
-    response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
-    *,
-    mode: str,
-    dt: float = 0.1,
-    ref_frame: str | None = None,
-) -> list[Action]:
-    """Convert an OpenPI action chunk into embodia-standard actions."""
-
-    plan = [
-        Action(
-            mode=mode,
-            value=row,
-            ref_frame=ref_frame,
-            dt=dt,
-        )
-        for row in _coerce_action_rows(response_or_actions)
-    ]
-    for action in plan:
-        validate_action(action)
-    return plan
-
-
-def openpi_first_action(
-    response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
-    *,
-    mode: str,
-    dt: float = 0.1,
-    ref_frame: str | None = None,
-) -> Action:
-    """Convert an OpenPI action chunk and return its first action."""
-
-    return openpi_actions_to_action_plan(
-        response_or_actions,
-        mode=mode,
-        dt=dt,
-        ref_frame=ref_frame,
-    )[0]
-
-
-def _coerce_embodia_action_plan(
-    plan: Action | Mapping[str, Any] | Sequence[Action | Mapping[str, Any]],
-) -> list[Action]:
-    """Normalize an embodia action plan into a validated list of actions."""
-
-    if isinstance(plan, Action) or isinstance(plan, Mapping):
-        action = coerce_action(plan)
-        validate_action(action)
-        return [action]
-
-    if isinstance(plan, (str, bytes)) or not isinstance(plan, Sequence):
-        raise InterfaceValidationError(
-            "action plan must be one action-like object or a sequence of "
-            f"action-like objects, got {type(plan).__name__}."
-        )
-
-    actions: list[Action] = []
-    for index, item in enumerate(plan):
-        action = coerce_action(item)
-        try:
-            validate_action(action)
-        except InterfaceValidationError as exc:
-            raise InterfaceValidationError(
-                f"invalid action at plan index {index}: {exc}"
-            ) from exc
-        actions.append(action)
-
-    if not actions:
-        raise InterfaceValidationError("action plan must not be empty.")
-    return actions
-
-
-def openpi_response_from_action_plan(
-    plan: Action | Mapping[str, Any] | Sequence[Action | Mapping[str, Any]],
-    *,
-    include_embodia_metadata: bool = True,
-) -> dict[str, Any]:
-    """Convert embodia actions into an OpenPI-compatible response dict.
-
-    The core OpenPI field is ``actions``. embodia-specific metadata is attached
-    under ``embodia`` so official OpenPI clients can ignore it safely.
-    """
-
-    actions = _coerce_embodia_action_plan(plan)
-    response: dict[str, Any] = {
-        "actions": [list(action.value) for action in actions],
-    }
-
-    if include_embodia_metadata:
-        response["embodia"] = {
-            "action_mode": actions[0].mode,
-            "action_dt": actions[0].dt,
-            "action_ref_frame": actions[0].ref_frame,
-            "chunk_size": len(actions),
-            "gripper": [action.gripper for action in actions],
-        }
-
-    return response
 
 
 class OpenPIMsgpackCodec:
@@ -504,14 +324,44 @@ class EmbodiaModelPolicyAdapter:
         response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
         server_metadata: Mapping[str, Any] | None = None,
         reset_model_on_connect: bool = False,
+        transform: OpenPITransform | None = None,
     ) -> None:
         self.model = model
-        self._obs_to_frame = obs_to_frame or (lambda obs: coerce_frame(obs))
+        if transform is not None and (
+            obs_to_frame is not None or response_builder is not None
+        ):
+            raise InterfaceValidationError(
+                "EmbodiaModelPolicyAdapter accepts either transform=... or "
+                "obs_to_frame=/response_builder=..., not both."
+            )
+
+        self._transform = transform
+        if transform is not None:
+            build_frame = getattr(transform, "build_frame", None)
+            response_from_action_plan = getattr(
+                transform,
+                "response_from_action_plan",
+                None,
+            )
+            if not callable(build_frame) or not callable(response_from_action_plan):
+                raise InterfaceValidationError(
+                    "transform must expose build_frame(obs) and "
+                    "response_from_action_plan(plan, frame=...)."
+                )
+            self._obs_to_frame = build_frame
+            self._response_builder = (
+                lambda actions, frame: response_from_action_plan(
+                    actions,
+                    frame=frame,
+                )
+            )
+        else:
+            self._obs_to_frame = obs_to_frame or (lambda obs: coerce_frame(obs))
+            self._response_builder = (
+                response_builder
+                or (lambda actions, frame: openpi_response_from_action_plan(actions))
+            )
         self._action_plan_provider = action_plan_provider
-        self._response_builder = (
-            response_builder
-            or (lambda actions, frame: openpi_response_from_action_plan(actions))
-        )
         self._server_metadata = (
             dict(server_metadata) if server_metadata is not None else {}
         )
@@ -580,6 +430,209 @@ class EmbodiaModelPolicyAdapter:
                 f"{type(response).__name__}."
             )
         return dict(response)
+
+
+def build_model_policy_adapter(
+    model: object,
+    *,
+    obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
+    action_plan_provider: Callable[[object, Frame], Any] | None = None,
+    response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
+    server_metadata: Mapping[str, Any] | None = None,
+    reset_model_on_connect: bool = False,
+    transform: OpenPITransform | None = None,
+) -> EmbodiaModelPolicyAdapter:
+    """Build one OpenPI-compatible adapter around a model-like object."""
+
+    if transform is not None and (
+        obs_to_frame is not None or response_builder is not None
+    ):
+        raise InterfaceValidationError(
+            "build_model_policy_adapter() accepts either transform=... or "
+            "obs_to_frame=/response_builder=..., not both."
+        )
+
+    return EmbodiaModelPolicyAdapter(
+        model,
+        obs_to_frame=obs_to_frame,
+        action_plan_provider=action_plan_provider,
+        response_builder=response_builder,
+        server_metadata=server_metadata,
+        reset_model_on_connect=reset_model_on_connect,
+        transform=transform,
+    )
+
+
+def build_model_policy_server(
+    model: object,
+    *,
+    obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
+    host: str = "0.0.0.0",
+    port: int | None = None,
+    api_key: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    include_server_timing: bool = True,
+    action_plan_provider: Callable[[object, Frame], Any] | None = None,
+    response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
+    server_metadata: Mapping[str, Any] | None = None,
+    reset_model_on_connect: bool = False,
+    transform: OpenPITransform | None = None,
+) -> "WebsocketPolicyServer":
+    """Build one OpenPI-compatible websocket server around a model-like object."""
+
+    adapter = build_model_policy_adapter(
+        model,
+        obs_to_frame=obs_to_frame,
+        action_plan_provider=action_plan_provider,
+        response_builder=response_builder,
+        server_metadata=server_metadata,
+        reset_model_on_connect=reset_model_on_connect,
+        transform=transform,
+    )
+    return WebsocketPolicyServer(
+        adapter,
+        host=host,
+        port=port,
+        metadata=metadata if metadata is not None else adapter.get_server_metadata(),
+        api_key=api_key,
+        include_server_timing=include_server_timing,
+    )
+
+
+def serve_model_policy(
+    model: object,
+    *,
+    obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
+    host: str = "0.0.0.0",
+    port: int | None = None,
+    api_key: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    include_server_timing: bool = True,
+    action_plan_provider: Callable[[object, Frame], Any] | None = None,
+    response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
+    server_metadata: Mapping[str, Any] | None = None,
+    reset_model_on_connect: bool = False,
+    transform: OpenPITransform | None = None,
+) -> None:
+    """Serve one model-like object through the OpenPI-compatible websocket API."""
+
+    server = build_model_policy_server(
+        model,
+        obs_to_frame=obs_to_frame,
+        host=host,
+        port=port,
+        api_key=api_key,
+        metadata=metadata,
+        include_server_timing=include_server_timing,
+        action_plan_provider=action_plan_provider,
+        response_builder=response_builder,
+        server_metadata=server_metadata,
+        reset_model_on_connect=reset_model_on_connect,
+        transform=transform,
+    )
+    server.serve_forever()
+
+
+def configure_robot_remote_policy(
+    robot: object,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    api_key: str | None = None,
+    retry_interval_s: float | None = None,
+    connect_timeout_s: float | None = None,
+    additional_headers: Mapping[str, str] | None = None,
+    connect_immediately: bool | None = None,
+    wait_for_server: bool | None = None,
+    obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
+    action_target: str | None = None,
+    action_mode: str | None = None,
+    dt: float | None = None,
+    ref_frame: str | None = None,
+    transform: OpenPITransform | None = None,
+    enabled: bool = True,
+) -> None:
+    """Configure one RobotMixin-style object for OpenPI remote inference."""
+
+    configure = getattr(robot, "configure_remote_policy", None)
+    if not callable(configure):
+        raise InterfaceValidationError(
+            f"{type(robot).__name__} must expose configure_remote_policy(...) "
+            "to use configure_robot_remote_policy(...)."
+        )
+
+    if transform is not None and any(
+        value is not None
+        for value in (obs_builder, action_target, action_mode, dt, ref_frame)
+    ):
+        raise InterfaceValidationError(
+            "configure_robot_remote_policy() accepts either transform=... or "
+            "obs_builder=/action_target=/action_mode=/dt=/ref_frame, not both."
+        )
+
+    response_to_action: Callable[[object], Action]
+    request_builder: Callable[[Frame], Mapping[str, Any]] | None
+    if transform is not None:
+        request_builder = transform.build_obs
+        response_to_action = transform.first_action_from_response
+    else:
+        resolved_action_target = action_target
+        resolved_action_mode = action_mode
+        if resolved_action_target is None or resolved_action_mode is None:
+            get_spec = getattr(robot, "get_spec", None)
+            if callable(get_spec):
+                spec = get_spec()
+                groups = getattr(spec, "groups", None)
+                if isinstance(groups, list) and len(groups) == 1:
+                    group = groups[0]
+                    if resolved_action_target is None:
+                        resolved_action_target = getattr(group, "name", None)
+                    modes = getattr(group, "action_modes", None)
+                    if (
+                        resolved_action_mode is None
+                        and isinstance(modes, list)
+                        and len(modes) == 1
+                    ):
+                        resolved_action_mode = modes[0]
+        if not isinstance(resolved_action_target, str) or not resolved_action_target.strip():
+            raise InterfaceValidationError(
+                "configure_robot_remote_policy() requires action_target=... when "
+                "transform is not provided and the robot spec does not expose "
+                "exactly one control group."
+            )
+        if not isinstance(resolved_action_mode, str) or not resolved_action_mode.strip():
+            raise InterfaceValidationError(
+                "configure_robot_remote_policy() requires action_mode=... when "
+                "transform is not provided and the robot spec does not expose "
+                "exactly one action mode for its only control group."
+            )
+        response_to_action = lambda response: openpi_first_action(
+            response,
+            target=resolved_action_target,
+            mode=resolved_action_mode,
+            dt=0.1 if dt is None else dt,
+            ref_frame=ref_frame,
+        )
+        request_builder = obs_builder
+
+    runner = RemotePolicyRunner(
+        enabled=enabled,
+        host="localhost" if host is None else host,
+        port=port,
+        api_key=api_key,
+        retry_interval_s=5.0 if retry_interval_s is None else retry_interval_s,
+        connect_timeout_s=connect_timeout_s,
+        additional_headers=additional_headers,
+        connect_immediately=False if connect_immediately is None else connect_immediately,
+        wait_for_server=True if wait_for_server is None else wait_for_server,
+    )
+
+    configure(
+        runner=runner,
+        request_builder=request_builder,
+        response_to_action=response_to_action,
+        enabled=enabled,
+    )
 
 
 class WebsocketPolicyServer:
@@ -994,10 +1047,15 @@ OpenPIWebsocketPolicyServer = WebsocketPolicyServer
 
 __all__ = [
     "EmbodiaModelPolicyAdapter",
+    "OpenPITransform",
     "OpenPIMsgpackCodec",
     "RemotePolicyRunner",
+    "build_model_policy_adapter",
+    "build_model_policy_server",
+    "configure_robot_remote_policy",
     "OpenPIWebsocketClientPolicy",
     "OpenPIWebsocketPolicyServer",
+    "serve_model_policy",
     "WebsocketClientPolicy",
     "WebsocketPolicyServer",
     "is_official_openpi_client_available",

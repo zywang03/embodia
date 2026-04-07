@@ -10,8 +10,9 @@ from ...runtime.checks import (
     validate_frame as _validate_frame,
 )
 from ..errors import InterfaceValidationError
-from ..modalities import action_modes, images, state
+from ..modalities import action_modes, images, meta, state, task
 from ..modalities._common import (
+    CONTROL_TARGETS,
     KNOWN_MODALITIES,
     ModalityToken,
     resolve_modality_mapping,
@@ -279,6 +280,44 @@ class _CommonInterfaceMixin:
             f"base class or a local {fallback_name}() implementation."
         )
 
+    def _resolve_optional_impl(self, public_name: str, fallback_name: str) -> Any | None:
+        """Resolve an optional wrapped implementation when present.
+
+        Unlike :meth:`_resolve_impl`, this returns ``None`` when neither an
+        aliased method, inherited public method, nor local fallback exists.
+        If an alias was explicitly configured but cannot be resolved, it raises
+        ``AttributeError`` so configuration mistakes still fail loudly.
+        """
+
+        alias_name = self._resolve_method_alias(
+            public_name,
+            type(self)._METHOD_ALIAS_ATTRS.get(public_name),
+        )
+
+        if alias_name != public_name:
+            local_aliased = self._resolve_local_method(alias_name)
+            if callable(local_aliased):
+                return local_aliased
+
+            inherited_aliased = getattr(super(), alias_name, None)
+            if callable(inherited_aliased):
+                return inherited_aliased
+
+            raise AttributeError(
+                f"{type(self).__name__} configured optional alias {public_name!r} "
+                f"-> {alias_name!r}, but {alias_name}() was not found."
+            )
+
+        inherited = getattr(super(), public_name, None)
+        if callable(inherited):
+            return inherited
+
+        fallback = getattr(self, fallback_name, None)
+        if callable(fallback):
+            return fallback
+
+        return None
+
     def _resolve_mapping(self, attr_name: str) -> Mapping[str, str]:
         """Resolve a declarative mapping attribute."""
 
@@ -351,10 +390,25 @@ class _CommonInterfaceMixin:
 
         return self.get_modality_map(state.STATE_KEYS)
 
+    def get_control_target_map(self) -> Mapping[str, str]:
+        """Map native control-group names to embodia-standard target names."""
+
+        return self.get_modality_map(CONTROL_TARGETS)
+
     def get_action_mode_map(self) -> Mapping[str, str]:
         """Map native action modes to embodia-standard action modes."""
 
         return self.get_modality_map(action_modes.ACTION_MODES)
+
+    def get_task_key_map(self) -> Mapping[str, str]:
+        """Map native task keys to embodia-standard task keys."""
+
+        return self.get_modality_map(task.TASK_KEYS)
+
+    def get_meta_key_map(self) -> Mapping[str, str]:
+        """Map native meta keys to embodia-standard meta keys."""
+
+        return self.get_modality_map(meta.META_KEYS)
 
     def normalize_frame(self, frame: Frame | Mapping[str, Any]) -> Frame:
         """Transform a frame-like value into :class:`Frame`."""
@@ -363,6 +417,8 @@ class _CommonInterfaceMixin:
             frame,
             image_key_map=self.get_image_key_map(),
             state_key_map=self.get_state_key_map(),
+            task_key_map=self.get_task_key_map(),
+            meta_key_map=self.get_meta_key_map(),
         )
 
     def transform_frame(self, frame: Frame | Mapping[str, Any]) -> Frame:
@@ -387,6 +443,7 @@ class _CommonInterfaceMixin:
 
         return remap_action(
             action,
+            target_map=self.get_control_target_map(),
             mode_map=self.get_action_mode_map(),
         )
 

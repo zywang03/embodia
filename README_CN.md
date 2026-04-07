@@ -3,9 +3,16 @@
 
 # embodia
 
-`embodia` 是一个面向机器人和模型的轻量 Python 运行时接口库。它只解决一个核心问题：让不同项目里的 robot 类和 model 类说同一种数据流语言。它不做训练框架，不做网络服务，不做 server 进程，不依赖 ROS，也不试图变成大而全系统。
+`embodia` 是一个面向机器人和模型的轻量 Python 运行时接口库。它只解决一个核心问题：让不同项目里的 robot 类和 model 类说同一种数据流语言。它不做训练框架，不做服务系统，不依赖 ROS，也不试图变成大而全平台。
 
-这个项目的核心边界很清楚：`Protocol` 表达兼容标准，`Mixin` 是低侵入接入方式，`check_*` 是运行时验收入口，`run_step()` 是最小单步数据流原语，`InferenceRuntime` 则在不改变主调用方式的前提下补充 `ActionEnsembler`、`AsyncInference` 和 Hz 控制等推理期能力。`embodia` 默认不负责 episode 边界和持久化格式，这部分交给用户代码或 example 来决定。
+对大多数用户来说，真正需要接触的表面应该很小：
+
+1. 继承 `RobotMixin` / `ModelMixin`
+2. 用 `from_yaml(...)` 做接口对齐
+3. 用 `run_step(...)` 跑统一数据流
+4. 需要推理期能力时再加 `InferenceRuntime(...)`
+
+其他能力存在，但都只是为了支撑这条主路径。
 
 ## 安装
 
@@ -15,23 +22,23 @@ cd embodia
 pip install .
 ```
 
-如果你希望使用 `from_yaml(...)`，可以安装可选依赖：
+如果你想使用 `from_yaml(...)`：
 
 ```bash
 pip install ".[yaml]"
 ```
 
-如果你需要 OpenPI 远程策略相关能力，可以额外安装：
+如果你想使用可选的 OpenPI 远程策略能力：
 
 ```bash
 pip install ".[openpi-remote]"
 ```
 
-`embodia` 本身不要求 `numpy` 或 `torch`。如果用户项目里已经安装了这些库，embodia 可以在运行时边界接受它们并归一化成自己的核心数据结构。
+`embodia` 本身不要求 `numpy` 或 `torch`。如果用户项目已经安装了这些库，embodia 可以在运行时边界接受它们并归一化成自己的核心数据结构。
 
 ## 快速开始
 
-推荐方式是直接修改你项目最外层的 robot / model 类，并把 `RobotMixin` 或 `ModelMixin` 放在最左侧。你保留原有方法，embodia 负责做统一接口、映射、校验和标准化。
+把 embodia 放在你现有类的最外层，原来的 native 方法保持不变：
 
 ```python
 import embodia as em
@@ -48,85 +55,67 @@ class YourModel(em.ModelMixin):
     def infer(self, frame): ...
 ```
 
-如果不想把映射配置写死在类里，也可以在构造时注入：
+然后从 YAML 加载接口对齐配置：
 
 ```python
-robot = YourRobot.from_config(
-    robot_spec={
-        "name": "your_robot",
-        "action_modes": ["cartesian_delta"],
-        "image_keys": ["rgb_front"],
-        "state_keys": ["qpos"],
-    },
-    method_aliases={
-        "observe": "capture",
-        "act": "send_command",
-        "reset": "home",
-    },
-    modality_maps={
-        em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
-        em.STATE_KEYS: {"qpos": "joint_positions"},
-        em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
-    },
-)
+robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
+model = YourModel.from_yaml("docs/yaml_config_example.yml")
 ```
 
-如果你希望把配置完全放到 Python 外面，也可以走 YAML。`from_yaml(...)` 使用一个更紧凑的 `interface:` 配置块，把 spec 和 key 映射合并到一起。项目里已经有共享示例配置 [basic_runtime.yml](./examples/basic_runtime.yml) 和说明型配置 [yaml_config_example.yml](./docs/yaml_config_example.yml)。
+这个 YAML 只描述接口对齐，不承载构造参数。如果模型需要额外条件输入，比如 prompt，放到 `Frame.task` 里。
 
-## 最小数据流
-
-如果你只有机器人和一个动作源，比如遥操作或脚本策略，可以直接用 `run_step()`：
+标准 action 结构现在是：
 
 ```python
-result = em.run_step(robot, action_fn=teleop_or_scripted_policy)
+{
+    "mode": "ee_delta",
+    "value": [...],                 # 主动作向量
+    "channels": {"gripper": 0.5},   # 可选命名附加执行器
+    "ref_frame": "tool",
+    "dt": 0.1,
+}
 ```
 
-如果你有本地模型，同样还是这一套入口：
+这里的 `channels` 是通用扩展位，`gripper` 只是一个常见 key，不是写死在 schema 里的专用字段。
+
+最小的本地推理路径就是：
 
 ```python
-em.check_pair(robot, model, sample_frame=robot.reset())
 result = em.run_step(robot, model)
 ```
 
-如果你想加推理期优化，比如 action ensemble、异步 chunk 预取或 Hz 控制，也还是在这个入口上叠 runtime：
+如果你需要异步推理或其他推理期能力，仍然保持同一个入口，只是加一个 runtime：
 
 ```python
 runtime = em.InferenceRuntime(
-    mode=em.InferenceMode.SYNC,
-    action_optimizers=[em.ActionEnsembler(window_size=2)],
-    realtime_controller=em.RealtimeController(hz=50.0),
+    mode=em.InferenceMode.ASYNC,
+    overlap_ratio=0.2,
 )
 
 result = em.run_step(robot, model, runtime=runtime)
 ```
 
-如果你的策略天然输出 chunk，可以进一步配置 `AsyncInference`，把 overlap / prefetch 调度放在 embodia 后台，而不是塞进 model 包装层里。
-
-```python
-runtime = em.InferenceRuntime(
-    mode=em.InferenceMode.ASYNC,
-    async_inference=em.AsyncInference(
-        chunk_provider=my_chunk_provider,
-        condition_steps=3,
-        prefetch_steps=3,
-    ),
-    realtime_controller=em.RealtimeController(hz=50.0),
-)
-```
-
-这里把 `mode` 做成显式字段是刻意的：同步和异步是两种不同的 runtime 语义，不应该只靠有没有传 `async_inference` 来隐式推断。
+对普通使用者来说，到这里就够了。`check_*`、`from_config(...)` 等低层工具仍然保留，但它们是可选集成工具，不是主路径。
 
 ## 示例
 
-当前 `examples/` 建议固定看这几条主路径：
+`examples/` 固定为四条核心路径：
 
-1. [01_robot_data_collection.py](./examples/01_robot_data_collection.py)：数采脚本
-2. [02_rollout_loop.py](./examples/02_rollout_loop.py)：同步推理 / rollout
-3. [03_inference_runtime.py](./examples/03_inference_runtime.py)：异步推理与 runtime 能力
-4. [04_lerobot_bridge.py](./examples/04_lerobot_bridge.py)：把采集出来的数据 replay / 导出成自定义结构
+1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
+2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
+3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
+4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
-共享 YAML 配置在 [basic_runtime.yml](./examples/basic_runtime.yml)。
+它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
+这个共享配置已经把 `joint_positions` 和 `gripper_position` 都放进了 state，
+而 Python 示例里的末端附加执行器则统一通过 `Action.channels` 表达。
 
-## 设计原则
+## 设计
 
-`embodia` 的重点一直是统一数据流，而不是替用户规定存储格式、训练流程或部署系统。模型尽量只做 `obs -> action`；action 的维护、异步推理、平滑、调度等放进 runtime；多步采集、replay、导出格式交给用户脚本或 example 来定义。这样侵入更小，边界也更稳定。
+embodia 的中心始终是统一运行时数据流。最核心的对象是 `Frame`、`Action`、`RobotProtocol`、`ModelProtocol`、`RobotMixin`、`ModelMixin`、`run_step()` 和 `InferenceRuntime`。推荐的边界是：robot 和 model 继续做自己的 native 工作，embodia 负责外围的对齐、映射、校验和运行时流转。
+
+如果你需要更多细节，可以继续看：
+
+- [`docs/mixin_guide.md`](./docs/mixin_guide.md)
+- [`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml)
+- [`docs/examples_guide.md`](./docs/examples_guide.md)

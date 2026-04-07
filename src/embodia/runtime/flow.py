@@ -126,7 +126,7 @@ def run_step(
     5. optionally execute the action on the robot
 
     When ``runtime`` is provided, embodia routes the same step request through
-    the runtime's optimizer / async inference / pacing layer while keeping the
+    the runtime's optimizer / chunk-scheduling / pacing layer while keeping the
     public call site unchanged.
     """
 

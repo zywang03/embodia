@@ -2,6 +2,15 @@
 
 This guide explains the embodia mixin configuration surface.
 
+For most users, the main path should stay small:
+
+1. inherit `RobotMixin` / `ModelMixin`
+2. load interface alignment with `from_yaml(...)`
+3. call `run_step(...)`
+4. add `InferenceRuntime(...)` only when needed
+
+Everything else in this document is secondary configuration detail.
+
 embodia accepts two configuration styles:
 
 - class attributes such as `ROBOT_SPEC`, `MODEL_SPEC`, `METHOD_ALIASES`, and
@@ -27,7 +36,10 @@ you can also use `em.RobotSpecKey`, `em.ModelSpecKey`, and
 ## YAML-first shape
 
 If you want the config outside Python code entirely, YAML uses one compact
-`interface:` block instead of separate `*_SPEC` and `MODALITY_MAPS` sections:
+`interface:` block instead of separate `*_SPEC` and `MODALITY_MAPS` sections.
+That YAML is intentionally only about runtime dataflow. Constructor kwargs stay
+in Python code, while prompt-like conditioning belongs in `Frame.task`, for
+example through `interface.task.prompt`:
 
 ```python
 robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
@@ -43,6 +55,8 @@ In YAML, the direction is intentionally different from `MODALITY_MAPS`:
 | --- | --- |
 | `interface.images` | embodia standard key -> your native key |
 | `interface.state` | embodia standard key -> your native key |
+| `interface.task` | embodia standard task key -> your native task key |
+| `interface.meta` | embodia standard meta key -> your native meta key |
 | `interface.action_modes` | embodia standard mode -> your native mode |
 | `interface.output_action_mode` | embodia standard mode |
 
@@ -53,12 +67,16 @@ In YAML, the direction is intentionally different from `MODALITY_MAPS`:
 | `METHOD_ALIASES` | embodia name -> your existing method name |
 | `MODALITY_MAPS[em.IMAGE_KEYS]` | native key -> embodia standard key |
 | `MODALITY_MAPS[em.STATE_KEYS]` | native key -> embodia standard key |
+| `MODALITY_MAPS[em.TASK_KEYS]` | native task key -> embodia standard task key |
+| `MODALITY_MAPS[em.META_KEYS]` | native meta key -> embodia standard meta key |
 | `MODALITY_MAPS[em.ACTION_MODES]` | native mode -> embodia standard mode |
 | `ROBOT_SPEC.image_keys` | native image keys |
 | `ROBOT_SPEC.state_keys` | native state keys |
+| `ROBOT_SPEC.task_keys` | native task keys |
 | `ROBOT_SPEC.action_modes` | native action modes |
 | `MODEL_SPEC.required_image_keys` | native image keys |
 | `MODEL_SPEC.required_state_keys` | native state keys |
+| `MODEL_SPEC.required_task_keys` | native task keys |
 | `MODEL_SPEC.output_action_mode` | native action mode |
 
 ## Robot side
@@ -78,7 +96,10 @@ and it produces:
 {
     "timestamp_ns": ...,
     "images": {"rgb_front": ...},
-    "state": {"qpos": ...},
+    "state": {
+        "qpos": ...,
+        "gripper_pos": ...,
+    },
 }
 ```
 
@@ -92,7 +113,7 @@ class YourRobot(em.RobotMixin):
         em.RobotSpecKey.NAME: "your_robot",
         em.RobotSpecKey.ACTION_MODES: ["cartesian_delta"],
         em.RobotSpecKey.IMAGE_KEYS: ["rgb_front"],
-        em.RobotSpecKey.STATE_KEYS: ["qpos"],
+        em.RobotSpecKey.STATE_KEYS: ["qpos", "gripper_pos"],
     }
     METHOD_ALIASES = {
         em.MethodAliasKey.OBSERVE: "capture",
@@ -101,7 +122,10 @@ class YourRobot(em.RobotMixin):
     }
     MODALITY_MAPS = {
         em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
-        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.STATE_KEYS: {
+            "qpos": "joint_positions",
+            "gripper_pos": "gripper_position",
+        },
         em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
     }
 ```
@@ -118,6 +142,21 @@ Meaning:
 - `MODALITY_MAPS[em.STATE_KEYS]`: rename native state keys to embodia-standard state keys
 - `MODALITY_MAPS[em.ACTION_MODES]`: rename native action mode names to embodia-standard action mode names
 
+On the action side, embodia uses one generic shape:
+
+```python
+{
+    "mode": "ee_delta",
+    "value": [...],
+    "channels": {"gripper": 0.5},
+    "ref_frame": "tool",
+    "dt": 0.1,
+}
+```
+
+`value` is the primary motion vector. Any optional extra actuator command such
+as gripper, suction, or jaw width belongs in `channels`.
+
 ## Model side
 
 Suppose your current model class already looks like:
@@ -129,7 +168,8 @@ class YourModel:
 ```
 
 and it expects native keys like `rgb_front` and `qpos`, and returns an action
-mode called `cartesian_delta`.
+mode called `cartesian_delta`. If it also consumes a prompt-like field, that
+belongs in `frame.task`.
 
 Then:
 
@@ -138,7 +178,8 @@ class YourModel(em.ModelMixin):
     MODEL_SPEC = {
         em.ModelSpecKey.NAME: "your_model",
         em.ModelSpecKey.REQUIRED_IMAGE_KEYS: ["rgb_front"],
-        em.ModelSpecKey.REQUIRED_STATE_KEYS: ["qpos"],
+        em.ModelSpecKey.REQUIRED_STATE_KEYS: ["qpos", "gripper_pos"],
+        em.ModelSpecKey.REQUIRED_TASK_KEYS: ["instruction"],
         em.ModelSpecKey.OUTPUT_ACTION_MODE: "cartesian_delta",
     }
     METHOD_ALIASES = {
@@ -147,9 +188,25 @@ class YourModel(em.ModelMixin):
     }
     MODALITY_MAPS = {
         em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
-        em.STATE_KEYS: {"qpos": "joint_positions"},
+        em.STATE_KEYS: {
+            "qpos": "joint_positions",
+            "gripper_pos": "gripper_position",
+        },
+        em.TASK_KEYS: {"instruction": "prompt"},
         em.ACTION_MODES: {"cartesian_delta": "ee_delta"},
     }
+```
+
+If your model needs to control a non-arm actuator, return it under
+`channels`, not as a special top-level field. For example:
+
+```python
+return {
+    "mode": "ee_delta",
+    "value": [dx, dy, dz, droll, dpitch, dyaw],
+    "channels": {"gripper": 0.0},
+    "dt": 0.1,
+}
 ```
 
 ## Minimal template

@@ -1,9 +1,10 @@
 """Low-coupling helpers for optimized inference on top of embodia runtime."""
 
-from .async_inference import AsyncInference
+from .chunk_scheduler import ChunkScheduler
 from .control import RealtimeController
 from .engine import InferenceMode, InferenceRuntime, InferenceStepResult
-from .optimizers import ActionEnsembler
+from .optimizers import ActionEnsembler, ActionInterpolator
+from .profile import SyncInferenceProfile, profile_sync_inference
 from .protocols import (
     ActionChunk,
     ChunkProvider,
@@ -18,6 +19,7 @@ from .protocols import (
 
 __all__ = [
     "ActionEnsembler",
+    "ActionInterpolator",
     "ActionChunk",
     "ChunkProvider",
     "ChunkProviderProtocol",
@@ -27,9 +29,11 @@ __all__ = [
     "ActionPlan",
     "ActionPlanProvider",
     "ActionPlanProviderProtocol",
-    "AsyncInference",
+    "ChunkScheduler",
     "InferenceMode",
     "InferenceRuntime",
     "InferenceStepResult",
     "RealtimeController",
+    "SyncInferenceProfile",
+    "profile_sync_inference",
 ]

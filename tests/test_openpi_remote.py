@@ -12,7 +12,6 @@ from embodia import (
     InferenceMode,
     InferenceRuntime,
     InterfaceValidationError,
-    ModelMixin,
     RobotMixin,
     run_step,
 )
@@ -107,6 +106,31 @@ class FakeServerWebsocket:
 class OpenPIRemoteTests(unittest.TestCase):
     """Focused coverage for the optional remote-policy integration."""
 
+    def test_openpi_transform_converts_obs_and_actions(self) -> None:
+        transform = em_openpi_remote.OpenPITransform(
+            action_mode="joint_position",
+            dt=0.05,
+            ref_frame="tool",
+            frame_to_obs_fn=lambda frame: {
+                "joint_positions": list(frame.state["joint_positions"]),
+            },
+            obs_to_frame_fn=lambda obs: {
+                "timestamp_ns": 1,
+                "images": {},
+                "state": {"joint_positions": obs["joint_positions"]},
+            },
+        )
+
+        frame = transform.build_frame({"joint_positions": [0.0] * 6})
+        obs = transform.build_obs(frame)
+        action = transform.first_action_from_response({"actions": [[1.0] * 6]})
+
+        self.assertEqual(obs, {"joint_positions": [0.0] * 6})
+        self.assertEqual(frame.state["joint_positions"], [0.0] * 6)
+        self.assertEqual(action.mode, "joint_position")
+        self.assertEqual(action.ref_frame, "tool")
+        self.assertEqual(action.dt, 0.05)
+
     def test_openpi_first_action_converts_chunk_response(self) -> None:
         action = em_openpi_remote.openpi_first_action(
             {"actions": [[1, 2, 3], [4, 5, 6]]},
@@ -134,15 +158,28 @@ class OpenPIRemoteTests(unittest.TestCase):
     def test_openpi_response_from_action_plan_preserves_embodia_metadata(self) -> None:
         response = em_openpi_remote.openpi_response_from_action_plan(
             [
-                {"mode": "ee_delta", "value": [1.0, 2.0], "gripper": 0.5, "dt": 0.05},
-                {"mode": "ee_delta", "value": [3.0, 4.0], "gripper": 0.2, "dt": 0.05},
+                {
+                    "mode": "ee_delta",
+                    "value": [1.0, 2.0],
+                    "channels": {"gripper": 0.5},
+                    "dt": 0.05,
+                },
+                {
+                    "mode": "ee_delta",
+                    "value": [3.0, 4.0],
+                    "channels": {"gripper": 0.2},
+                    "dt": 0.05,
+                },
             ]
         )
 
         self.assertEqual(response["actions"], [[1.0, 2.0], [3.0, 4.0]])
         self.assertEqual(response["embodia"]["action_mode"], "ee_delta")
         self.assertEqual(response["embodia"]["chunk_size"], 2)
-        self.assertEqual(response["embodia"]["gripper"], [0.5, 0.2])
+        self.assertEqual(
+            response["embodia"]["action_channels"],
+            [{"gripper": 0.5}, {"gripper": 0.2}],
+        )
 
     def test_embodia_model_policy_adapter_serves_single_step_model(self) -> None:
         model = DummyModel()
@@ -373,13 +410,13 @@ class OpenPIRemoteTests(unittest.TestCase):
             FakeRunner,
         ):
             robot = RemoteRobot(dt=0.05)
-            robot.configure_remote_policy(
+            em_openpi_remote.configure_robot_remote_policy(
+                robot,
                 host="localhost",
                 port=8000,
                 obs_builder=lambda frame: {
                     "state": list(frame.state["joint_positions"]),
                 },
-                action_mode="ee_delta",
                 dt=0.05,
             )
             action = robot.request_remote_policy_action(
@@ -402,6 +439,76 @@ class OpenPIRemoteTests(unittest.TestCase):
         self.assertEqual(runner_events[1], ("infer", {"state": [0.0] * 6}))
         self.assertEqual(runner_events[2], ("close", None))
         self.assertEqual(robot.last_action.value, [1.0] * 6)
+
+    def test_robot_mixin_can_use_openpi_transform(self) -> None:
+        runner_events: list[tuple[str, object]] = []
+
+        class FakeRunner:
+            def __init__(self, **kwargs: object) -> None:
+                runner_events.append(("init", dict(kwargs)))
+                self.enabled = bool(kwargs["enabled"])
+
+            def infer(self, obs: dict[str, object]) -> dict[str, object]:
+                runner_events.append(("infer", dict(obs)))
+                return {"actions": [[4.0] * 6]}
+
+            def close(self) -> None:
+                runner_events.append(("close", None))
+
+        class RemoteRobot(RobotMixin):
+            ROBOT_SPEC = {
+                "name": "remote_robot",
+                "action_modes": ["ee_delta"],
+                "image_keys": [],
+                "state_keys": ["joint_positions"],
+            }
+            METHOD_ALIASES = {
+                "observe": "capture",
+                "act": "send_command",
+                "reset": "home",
+            }
+
+            def __init__(self) -> None:
+                self.last_action = None
+
+            def capture(self) -> dict[str, object]:
+                return {
+                    "timestamp_ns": 1,
+                    "images": {},
+                    "state": {"joint_positions": [0.0] * 6},
+                }
+
+            def send_command(self, action: Action) -> None:
+                self.last_action = action
+
+            def home(self) -> dict[str, object]:
+                return self.capture()
+
+        transform = em_openpi_remote.OpenPITransform(
+            action_mode="ee_delta",
+            dt=0.05,
+            frame_to_obs_fn=lambda frame: {
+                "state": list(frame.state["joint_positions"]),
+            },
+        )
+
+        with mock.patch.object(
+            em_openpi_remote,
+            "RemotePolicyRunner",
+            FakeRunner,
+        ):
+            robot = RemoteRobot()
+            em_openpi_remote.configure_robot_remote_policy(
+                robot,
+                host="localhost",
+                port=8000,
+                transform=transform,
+            )
+            action = robot.request_remote_policy_action(robot.observe())
+            robot.close_remote_policy()
+
+        self.assertEqual(action.value, [4.0] * 6)
+        self.assertEqual(runner_events[1], ("infer", {"state": [0.0] * 6}))
 
     def test_robot_mixin_from_config_can_enable_remote_policy(self) -> None:
         runner_events: list[tuple[str, object]] = []
@@ -454,13 +561,15 @@ class OpenPIRemoteTests(unittest.TestCase):
         ):
             robot = RemoteRobot.from_config(
                 remote_policy={
-                    "host": "localhost",
-                    "port": 8000,
-                    "obs_builder": lambda frame: {
+                    "runner": FakeRunner(enabled=True),
+                    "request_builder": lambda frame: {
                         "state": list(frame.state["joint_positions"]),
                     },
-                    "action_mode": "ee_delta",
-                    "dt": 0.05,
+                    "response_to_action": lambda response: em_openpi_remote.openpi_first_action(
+                        response,
+                        mode="ee_delta",
+                        dt=0.05,
+                    ),
                 }
             )
             action = robot.request_remote_policy_action(
@@ -474,8 +583,7 @@ class OpenPIRemoteTests(unittest.TestCase):
 
         self.assertEqual(action.value, [1.0] * 6)
         self.assertEqual(runner_events[0][0], "init")
-        self.assertEqual(runner_events[0][1]["host"], "localhost")
-        self.assertEqual(runner_events[0][1]["port"], 8000)
+        self.assertTrue(runner_events[0][1]["enabled"])
         self.assertEqual(runner_events[1], ("infer", {"state": [0.0] * 6}))
 
     def test_run_step_can_auto_use_robot_remote_policy(self) -> None:
@@ -529,13 +637,15 @@ class OpenPIRemoteTests(unittest.TestCase):
         ):
             robot = RemoteRobot.from_config(
                 remote_policy={
-                    "host": "localhost",
-                    "port": 8000,
-                    "obs_builder": lambda frame: {
+                    "runner": FakeRunner(enabled=True),
+                    "request_builder": lambda frame: {
                         "state": list(frame.state["joint_positions"]),
                     },
-                    "action_mode": "ee_delta",
-                    "dt": 0.05,
+                    "response_to_action": lambda response: em_openpi_remote.openpi_first_action(
+                        response,
+                        mode="ee_delta",
+                        dt=0.05,
+                    ),
                 }
             )
             result = run_step(robot)
@@ -596,13 +706,15 @@ class OpenPIRemoteTests(unittest.TestCase):
         ):
             robot = RemoteRobot.from_config(
                 remote_policy={
-                    "host": "localhost",
-                    "port": 8000,
-                    "obs_builder": lambda frame: {
+                    "runner": FakeRunner(enabled=True),
+                    "request_builder": lambda frame: {
                         "state": list(frame.state["joint_positions"]),
                     },
-                    "action_mode": "ee_delta",
-                    "dt": 0.05,
+                    "response_to_action": lambda response: em_openpi_remote.openpi_first_action(
+                        response,
+                        mode="ee_delta",
+                        dt=0.05,
+                    ),
                 }
             )
             runtime = InferenceRuntime(mode=InferenceMode.SYNC)
@@ -613,10 +725,11 @@ class OpenPIRemoteTests(unittest.TestCase):
         self.assertEqual(robot.last_action.value, [3.0] * 6)
         self.assertEqual(runner_events[1], ("infer", {"state": [0.0] * 6}))
 
-    def test_model_mixin_can_build_openpi_policy_adapter(self) -> None:
+    def test_openpi_remote_can_build_model_policy_adapter(self) -> None:
         model = DummyModel()
 
-        adapter = model.build_openpi_policy_adapter(
+        adapter = em_openpi_remote.build_model_policy_adapter(
+            model,
             obs_to_frame=lambda obs: {
                 "timestamp_ns": 1,
                 "images": {"front_rgb": obs.get("front_rgb")},
@@ -624,6 +737,30 @@ class OpenPIRemoteTests(unittest.TestCase):
             }
         )
 
+        response = adapter.infer(
+            {
+                "front_rgb": None,
+                "joint_positions": [0.0] * 6,
+            }
+        )
+
+        self.assertEqual(response["actions"], [[0.0] * 6])
+
+    def test_openpi_remote_can_build_model_policy_adapter_with_transform(self) -> None:
+        model = DummyModel()
+        transform = em_openpi_remote.OpenPITransform(
+            action_mode="ee_delta",
+            obs_to_frame_fn=lambda obs: {
+                "timestamp_ns": 1,
+                "images": {"front_rgb": obs.get("front_rgb")},
+                "state": {"joint_positions": obs.get("joint_positions", [0.0] * 6)},
+            },
+        )
+
+        adapter = em_openpi_remote.build_model_policy_adapter(
+            model,
+            transform=transform,
+        )
         response = adapter.infer(
             {
                 "front_rgb": None,

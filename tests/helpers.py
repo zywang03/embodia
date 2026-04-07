@@ -14,9 +14,16 @@ class DummyRobot(RobotMixin):
     def _get_spec_impl(self) -> dict[str, object]:
         return {
             "name": "dummy_robot",
-            "action_modes": ["ee_delta"],
             "image_keys": ["front_rgb"],
-            "state_keys": ["joint_positions"],
+            "groups": [
+                {
+                    "name": "arm",
+                    "kind": "arm",
+                    "dof": 6,
+                    "action_modes": ["ee_delta"],
+                    "state_keys": ["joint_positions"],
+                }
+            ],
         }
 
     def _observe_impl(self) -> dict[str, object]:
@@ -39,11 +46,26 @@ class DummyModel(ModelMixin):
             "name": "dummy_model",
             "required_image_keys": ["front_rgb"],
             "required_state_keys": ["joint_positions"],
-            "output_action_mode": "ee_delta",
+            "required_task_keys": [],
+            "outputs": [
+                {
+                    "target": "arm",
+                    "mode": "ee_delta",
+                    "dim": 6,
+                }
+            ],
         }
 
     def _reset_impl(self) -> None:
         return None
 
     def _step_impl(self, frame: Frame) -> dict[str, object]:
-        return {"mode": "ee_delta", "value": [0.0] * 6}
+        return {
+            "commands": [
+                {
+                    "target": "arm",
+                    "mode": "ee_delta",
+                    "value": [0.0] * 6,
+                }
+            ]
+        }

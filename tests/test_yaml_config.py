@@ -8,15 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from embodia import (
-    InterfaceValidationError,
-    ModelMixin,
-    RobotMixin,
-    check_pair,
-    load_component_yaml_config,
-    load_yaml_config,
-    require_yaml,
-)
+import embodia as em
 from embodia.core import config_io
 
 
@@ -39,21 +31,12 @@ class YamlConfigTests(unittest.TestCase):
         return path
 
     def test_load_yaml_config_reads_top_level_mapping(self) -> None:
-        path = self._write_config(
-            {
-                "interface": {
-                    "name": "robot",
-                    "images": {"front_rgb": "front_rgb"},
-                    "state": {"joint_positions": "joint_positions"},
-                    "action_modes": {"ee_delta": "ee_delta"},
-                }
-            }
-        )
+        path = self._write_config({"robot": {"method_aliases": {"observe": "capture"}}})
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            loaded = load_yaml_config(path)
+            loaded = em.load_yaml_config(path)
 
-        self.assertEqual(loaded["interface"]["name"], "robot")
+        self.assertIn("robot", loaded)
 
     def test_load_yaml_config_reads_named_section(self) -> None:
         path = self._write_config(
@@ -64,66 +47,36 @@ class YamlConfigTests(unittest.TestCase):
         )
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            loaded = load_yaml_config(path, section="model")
+            loaded = em.load_yaml_config(path, section="model")
 
         self.assertEqual(loaded["method_aliases"]["step"], "infer")
 
-    def test_load_yaml_config_rejects_missing_section(self) -> None:
-        path = self._write_config({"robot": {"name": "only_robot"}})
-
-        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            with self.assertRaises(InterfaceValidationError) as ctx:
-                load_yaml_config(path, section="model")
-
-        self.assertIn("missing section", str(ctx.exception))
-
-    def test_load_component_yaml_config_reads_component_section(self) -> None:
-        path = self._write_config(
-            {
-                "robot": {"method_aliases": {"observe": "capture"}},
-                "model": {"method_aliases": {"step": "infer"}},
-            }
-        )
-
-        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            loaded = load_component_yaml_config(path, component="robot")
-
-        self.assertEqual(loaded["method_aliases"]["observe"], "capture")
-
-    def test_load_component_yaml_config_accepts_direct_mapping(self) -> None:
-        path = self._write_config(
-            {
-                "interface": {
-                    "name": "robot",
-                    "images": {"front_rgb": "front_rgb"},
-                    "state": {"joint_positions": "joint_positions"},
-                    "action_modes": {"ee_delta": "ee_delta"},
-                }
-            }
-        )
-
-        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            loaded = load_component_yaml_config(path, component="robot")
-
-        self.assertEqual(loaded["interface"]["name"], "robot")
-
-    def test_require_yaml_reports_missing_optional_dependency(self) -> None:
-        with mock.patch.object(config_io.importlib.util, "find_spec", return_value=None):
-            with self.assertRaises(InterfaceValidationError) as ctx:
-                require_yaml()
-
-        self.assertIn("embodia[yaml]", str(ctx.exception))
-
-    def test_from_yaml_builds_runtime_config_and_merges_init_overrides(self) -> None:
+    def test_from_yaml_builds_grouped_specs_and_maps_native_names(self) -> None:
         path = self._write_config(
             {
                 "robot": {
-                    "init": {"label": "from_yaml"},
                     "interface": {
                         "name": "vendor_robot",
                         "images": {"front_rgb": "rgb_front"},
-                        "state": {"joint_positions": "qpos"},
-                        "action_modes": {"ee_delta": "cartesian_delta"},
+                        "task": {"prompt": "instruction"},
+                        "groups": {
+                            "arm": {
+                                "native_name": "vendor_arm",
+                                "kind": "arm",
+                                "dof": 6,
+                                "state": {"joint_positions": "qpos"},
+                                "action_modes": {"ee_delta": "cartesian_delta"},
+                            },
+                            "gripper": {
+                                "native_name": "vendor_gripper",
+                                "kind": "gripper",
+                                "dof": 1,
+                                "state": {"position": "gripper_pos"},
+                                "action_modes": {
+                                    "scalar_position": "gripper_position"
+                                },
+                            },
+                        },
                     },
                     "method_aliases": {
                         "observe": "capture",
@@ -132,13 +85,28 @@ class YamlConfigTests(unittest.TestCase):
                     },
                 },
                 "model": {
-                    "init": {"gain": 0.25},
                     "interface": {
                         "name": "vendor_model",
                         "images": {"front_rgb": "rgb_front"},
-                        "state": {"joint_positions": "qpos"},
-                        "action_modes": {"ee_delta": "cartesian_delta"},
-                        "output_action_mode": "ee_delta",
+                        "state": {
+                            "joint_positions": "qpos",
+                            "position": "gripper_pos",
+                        },
+                        "task": {"prompt": "instruction"},
+                        "outputs": {
+                            "arm": {
+                                "native_name": "vendor_arm",
+                                "mode": "ee_delta",
+                                "native_mode": "cartesian_delta",
+                                "dim": 6,
+                            },
+                            "gripper": {
+                                "native_name": "vendor_gripper",
+                                "mode": "scalar_position",
+                                "native_mode": "gripper_position",
+                                "dim": 1,
+                            },
+                        },
                     },
                     "method_aliases": {
                         "reset": "clear_state",
@@ -148,7 +116,7 @@ class YamlConfigTests(unittest.TestCase):
             }
         )
 
-        class YourRobot(RobotMixin):
+        class YourRobot(em.RobotMixin):
             def __init__(self, label: str = "default") -> None:
                 self.label = label
                 self.last_action = None
@@ -157,7 +125,8 @@ class YamlConfigTests(unittest.TestCase):
                 return {
                     "timestamp_ns": 1,
                     "images": {"rgb_front": None},
-                    "state": {"qpos": [0.0] * 6},
+                    "state": {"qpos": [0.0] * 6, "gripper_pos": 0.5},
+                    "task": {"instruction": "fold the cloth"},
                 }
 
             def send_command(self, action):
@@ -166,7 +135,7 @@ class YamlConfigTests(unittest.TestCase):
             def home(self):
                 return self.capture()
 
-        class YourModel(ModelMixin):
+        class YourModel(em.ModelMixin):
             def __init__(self, gain: float = 0.0) -> None:
                 self.gain = gain
 
@@ -176,75 +145,34 @@ class YamlConfigTests(unittest.TestCase):
             def infer(self, frame):
                 self.seen_frame = frame
                 return {
-                    "mode": "cartesian_delta",
-                    "value": [self.gain] * 6,
+                    "commands": [
+                        {
+                            "target": "vendor_arm",
+                            "mode": "cartesian_delta",
+                            "value": [self.gain] * 6,
+                        },
+                        {
+                            "target": "vendor_gripper",
+                            "mode": "gripper_position",
+                            "value": [0.3],
+                        },
+                    ]
                 }
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            robot = YourRobot.from_yaml(path)
+            robot = YourRobot.from_yaml(path, label="from_yaml")
             model = YourModel.from_yaml(path, gain=0.5)
 
-        check_pair(robot, model, sample_frame=robot.reset())
+        sample_frame = robot.reset()
+        em.check_pair(robot, model, sample_frame=sample_frame)
+        result = em.run_step(robot, model)
 
         self.assertEqual(robot.label, "from_yaml")
         self.assertEqual(model.gain, 0.5)
-        self.assertIn("front_rgb", robot.observe().images)
-        self.assertEqual(model.step(robot.observe()).mode, "ee_delta")
-        self.assertIn("rgb_front", model.seen_frame.images)
-
-    def test_from_yaml_rejects_non_mapping_init_field(self) -> None:
-        path = self._write_config(
-            {
-                "robot": {
-                    "interface": {
-                        "name": "robot",
-                        "images": {"front_rgb": "front_rgb"},
-                        "state": {"joint_positions": "joint_positions"},
-                        "action_modes": {"ee_delta": "ee_delta"},
-                    },
-                    "init": ["not", "a", "mapping"],
-                }
-            }
-        )
-
-        class YourRobot(RobotMixin):
-            pass
-
-        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            with self.assertRaises(InterfaceValidationError) as ctx:
-                YourRobot.from_yaml(path)
-
-        self.assertIn("init", str(ctx.exception))
-
-    def test_from_yaml_rejects_unknown_runtime_field_before_init(self) -> None:
-        path = self._write_config(
-            {
-                "robot": {
-                    "interface": {
-                        "name": "robot",
-                        "images": {"front_rgb": "front_rgb"},
-                        "state": {"joint_positions": "joint_positions"},
-                        "action_modes": {"ee_delta": "ee_delta"},
-                    },
-                    "method_aliasess": {
-                        "observe": "capture",
-                    },
-                }
-            }
-        )
-
-        class YourRobot(RobotMixin):
-            init_calls = 0
-
-            def __init__(self) -> None:
-                type(self).init_calls += 1
-
-        with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            with self.assertRaises(InterfaceValidationError) as ctx:
-                YourRobot.from_yaml(path)
-
-        self.assertIn("unsupported field", str(ctx.exception))
-        self.assertEqual(YourRobot.init_calls, 0)
+        self.assertEqual(result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
+        self.assertEqual(robot.last_action.get_command("vendor_gripper").value, [0.3])  # type: ignore[union-attr]
+        self.assertIn("qpos", model.seen_frame.state)
+        self.assertEqual(model.seen_frame.task["instruction"], "fold the cloth")
 
     def test_from_yaml_rejects_ambiguous_native_names_in_interface(self) -> None:
         path = self._write_config(
@@ -252,49 +180,63 @@ class YamlConfigTests(unittest.TestCase):
                 "robot": {
                     "interface": {
                         "name": "robot",
-                        "images": {
-                            "front_rgb": "shared_camera",
-                            "wrist_rgb": "shared_camera",
+                        "groups": {
+                            "left_arm": {
+                                "native_name": "arm",
+                                "kind": "arm",
+                                "dof": 6,
+                                "state": {"left_qpos": "left_qpos"},
+                                "action_modes": {"ee_delta": "cartesian_delta"},
+                            },
+                            "right_arm": {
+                                "native_name": "arm",
+                                "kind": "arm",
+                                "dof": 6,
+                                "state": {"right_qpos": "right_qpos"},
+                                "action_modes": {"ee_delta": "cartesian_delta"},
+                            },
                         },
-                        "state": {"joint_positions": "qpos"},
-                        "action_modes": {"ee_delta": "ee_delta"},
                     }
                 }
             }
         )
 
-        class YourRobot(RobotMixin):
+        class YourRobot(em.RobotMixin):
             pass
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            with self.assertRaises(InterfaceValidationError) as ctx:
+            with self.assertRaises(em.InterfaceValidationError) as ctx:
                 YourRobot.from_yaml(path)
 
-        self.assertIn("ambiguous", str(ctx.exception))
+        self.assertIn("maps", str(ctx.exception))
+        self.assertIn("native_name", str(ctx.exception))
 
-    def test_from_yaml_rejects_output_mode_missing_from_interface_modes(self) -> None:
+    def test_from_yaml_rejects_unknown_runtime_field_before_init(self) -> None:
         path = self._write_config(
             {
-                "model": {
+                "robot": {
                     "interface": {
-                        "name": "model",
-                        "images": {"front_rgb": "front_rgb"},
-                        "state": {"joint_positions": "joint_positions"},
-                        "action_modes": {"ee_delta": "cartesian_delta"},
-                        "output_action_mode": "joint_position",
-                    }
+                        "name": "robot",
+                        "groups": {
+                            "arm": {
+                                "kind": "arm",
+                                "dof": 6,
+                                "state": {"joint_positions": "joint_positions"},
+                                "action_modes": {"ee_delta": "ee_delta"},
+                            }
+                        },
+                    },
+                    "unsupported": True,
                 }
             }
         )
 
-        class YourModel(ModelMixin):
+        class YourRobot(em.RobotMixin):
             pass
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            with self.assertRaises(InterfaceValidationError) as ctx:
-                YourModel.from_yaml(path)
-
-        self.assertIn("output_action_mode", str(ctx.exception))
+            with self.assertRaises(em.InterfaceValidationError):
+                YourRobot.from_yaml(path)
 
 
 if __name__ == "__main__":

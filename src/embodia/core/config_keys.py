@@ -14,9 +14,10 @@ class RobotSpecKey(StrEnum):
     """Keys used inside ``RobotMixin.ROBOT_SPEC`` mappings."""
 
     NAME = "name"
-    ACTION_MODES = "action_modes"
     IMAGE_KEYS = "image_keys"
-    STATE_KEYS = "state_keys"
+    GROUPS = "groups"
+    TASK_KEYS = "task_keys"
+    META = "meta"
 
 
 class ModelSpecKey(StrEnum):
@@ -25,7 +26,9 @@ class ModelSpecKey(StrEnum):
     NAME = "name"
     REQUIRED_IMAGE_KEYS = "required_image_keys"
     REQUIRED_STATE_KEYS = "required_state_keys"
-    OUTPUT_ACTION_MODE = "output_action_mode"
+    REQUIRED_TASK_KEYS = "required_task_keys"
+    OUTPUTS = "outputs"
+    META = "meta"
 
 
 class MethodAliasKey(StrEnum):
@@ -36,6 +39,8 @@ class MethodAliasKey(StrEnum):
     ACT = "act"
     RESET = "reset"
     STEP = "step"
+    STEP_CHUNK = "step_chunk"
+    PLAN = "plan"
 
 
 __all__ = ["MethodAliasKey", "ModelSpecKey", "RobotSpecKey"]

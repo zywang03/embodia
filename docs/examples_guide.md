@@ -1,24 +1,23 @@
 # embodia examples guide
 
-Most users do not need to read every example. The smallest useful path is:
+The public examples are intentionally fixed to four core paths:
 
-1. [`examples/00_mixin_quickstart.py`](../examples/00_mixin_quickstart.py) to
-   see the basic "edit your outer class in place, then load config" pattern.
-2. [`examples/01_robot_data_collection.py`](../examples/01_robot_data_collection.py)
-   if your first goal is robot-only collection with your own save logic.
-3. [`examples/03_inference_runtime.py`](../examples/03_inference_runtime.py)
-   if your first goal is inference-time action management such as ensemble,
-   async overlap-conditioned chunk scheduling, and Hz pacing.
+1. [`examples/01_sync_inference.py`](../examples/01_sync_inference.py)
+2. [`examples/02_async_inference.py`](../examples/02_async_inference.py)
+3. [`examples/03_data_collection.py`](../examples/03_data_collection.py)
+4. [`examples/04_replay_collected_data.py`](../examples/04_replay_collected_data.py)
 
-Several local examples intentionally share the same config file:
-[`examples/basic_runtime.yml`](../examples/basic_runtime.yml). That keeps the
-Python examples focused on data flow instead of repeating the same mapping
-tables. For a more commented config reference, read
-[`docs/yaml_config_example.yml`](./yaml_config_example.yml).
+They all share [`examples/basic_runtime.yml`](../examples/basic_runtime.yml), so
+the Python files stay focused on the main user-facing flow: mixin inheritance,
+`from_yaml(...)`, `run_step(...)`, and `InferenceRuntime(...)`.
 
-The remaining examples each cover a distinct sub-application:
+The examples also follow one consistent data shape:
 
-- [`examples/02_rollout_loop.py`](../examples/02_rollout_loop.py) shows
-  a model rollout loop where you keep your own records.
-- [`examples/04_lerobot_bridge.py`](../examples/04_lerobot_bridge.py) shows the
-  same embodia step data exported into one LeRobot-style JSONL shape.
+- robot state includes both `joint_positions` and `gripper_position`
+- action `value` is the primary arm / body vector
+- optional actuator-specific extras go into `Action.channels`
+
+If you need more configuration detail, read
+[`docs/yaml_config_example.yml`](./yaml_config_example.yml) and
+[`docs/mixin_guide.md`](./mixin_guide.md). Advanced helpers still exist in the
+package, but they are intentionally not part of the first-read examples.

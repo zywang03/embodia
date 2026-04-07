@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -11,7 +11,7 @@ from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 from ..checks import validate_action, validate_frame
 from ..flow import ActionSource, _resolve_action_source, run_step
-from .async_inference import AsyncInference
+from .chunk_scheduler import ChunkScheduler
 from .common import as_action, as_frame, reset_if_possible
 from .control import RealtimeController
 from .protocols import ActionOptimizer, ActionOptimizerProtocol
@@ -44,10 +44,24 @@ class InferenceRuntime:
     """Composable runtime configuration for optimized :func:`run_step` calls."""
 
     mode: InferenceMode | str
+    overlap_ratio: float | None = None
     action_optimizers: Sequence[ActionOptimizerProtocol | ActionOptimizer] = ()
-    async_inference: AsyncInference | None = None
     realtime_controller: RealtimeController | None = None
-    execute_action: bool = True
+    _chunk_scheduler: ChunkScheduler | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _chunk_scheduler_source_id: int | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _chunk_scheduler_action_source_key: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Validate mode-specific runtime configuration."""
@@ -59,16 +73,21 @@ class InferenceRuntime:
                 "InferenceRuntime.mode must be InferenceMode.SYNC or "
                 f"InferenceMode.ASYNC, got {self.mode!r}."
             ) from exc
-        if self.mode is InferenceMode.SYNC and self.async_inference is not None:
-            raise InterfaceValidationError(
-                "InferenceRuntime(mode='sync') cannot be combined with "
-                "async_inference=.... Remove async_inference or set mode='async'."
-            )
-        if self.mode is InferenceMode.ASYNC and self.async_inference is None:
-            raise InterfaceValidationError(
-                "InferenceRuntime(mode='async') requires "
-                "async_inference=AsyncInference(...)."
-            )
+        if self.overlap_ratio is not None:
+            if isinstance(self.overlap_ratio, bool) or not isinstance(
+                self.overlap_ratio,
+                (int, float),
+            ):
+                raise InterfaceValidationError(
+                    "InferenceRuntime.overlap_ratio must be a real number in "
+                    "the range (0, 1)."
+                )
+            self.overlap_ratio = float(self.overlap_ratio)
+            if not 0.0 < self.overlap_ratio < 1.0:
+                raise InterfaceValidationError(
+                    "InferenceRuntime.overlap_ratio must be in the range (0, 1), "
+                    f"got {self.overlap_ratio!r}."
+                )
 
     def reset(self, *, model: object | None = None) -> None:
         """Reset model state and any attached runtime components."""
@@ -79,8 +98,10 @@ class InferenceRuntime:
         for optimizer in self.action_optimizers:
             reset_if_possible(optimizer)
 
-        if self.async_inference is not None:
-            self.async_inference.reset()
+        if self._chunk_scheduler is not None:
+            self._chunk_scheduler.reset()
+        self._chunk_scheduler_source_id = None
+        self._chunk_scheduler_action_source_key = None
 
         if self.realtime_controller is not None:
             self.realtime_controller.reset()
@@ -103,6 +124,128 @@ class InferenceRuntime:
             validate_action(current)
 
         return current
+
+    @staticmethod
+    def _resolve_runtime_chunk_hooks(
+        source: object | None,
+        action_source: ActionSource,
+    ) -> tuple[
+        Any | None,
+        Any | None,
+    ]:
+        """Resolve optional source-level chunk hooks for runtime scheduling.
+
+        Supported optional hooks are:
+
+        - ``step_chunk(frame, request)`` for overlap-conditioned chunk generation
+        - ``plan(frame)`` for simple chunk generation without request context
+        """
+
+        candidates: list[object] = []
+        if source is not None:
+            candidates.append(source)
+        if action_source is not source:
+            candidates.append(action_source)
+
+        for candidate in candidates:
+            resolve_optional = getattr(candidate, "_resolve_optional_impl", None)
+            if callable(resolve_optional):
+                try:
+                    step_chunk = resolve_optional("step_chunk", "_step_chunk_impl")
+                except AttributeError as exc:
+                    raise InterfaceValidationError(str(exc)) from exc
+                if callable(step_chunk):
+                    return (
+                        lambda _source, frame, request, _step_chunk=step_chunk: _step_chunk(
+                            frame,
+                            request,
+                        ),
+                        None,
+                    )
+
+                try:
+                    plan = resolve_optional("plan", "_plan_impl")
+                except AttributeError as exc:
+                    raise InterfaceValidationError(str(exc)) from exc
+                if callable(plan):
+                    return (
+                        None,
+                        lambda _source, frame, _plan=plan: _plan(frame),
+                    )
+
+            step_chunk = getattr(candidate, "step_chunk", None)
+            if callable(step_chunk):
+                return (
+                    lambda _source, frame, request, _step_chunk=step_chunk: _step_chunk(
+                        frame,
+                        request,
+                    ),
+                    None,
+                )
+
+            plan = getattr(candidate, "plan", None)
+            if callable(plan):
+                return (
+                    None,
+                    lambda _source, frame, _plan=plan: _plan(frame),
+                )
+
+        return None, None
+
+    def _should_use_chunk_scheduler(self) -> bool:
+        """Return whether this runtime should route steps through chunk scheduling."""
+
+        return self.mode is InferenceMode.ASYNC or self.overlap_ratio is not None
+
+    @staticmethod
+    def _action_source_key(action_source: ActionSource) -> object:
+        """Return one stable identity key for a callable action source."""
+
+        bound_self = getattr(action_source, "__self__", None)
+        bound_func = getattr(action_source, "__func__", None)
+        if bound_self is not None and bound_func is not None:
+            return (id(bound_self), id(bound_func))
+        return id(action_source)
+
+    def _ensure_chunk_scheduler(
+        self,
+        *,
+        source: object | None,
+        action_source: ActionSource,
+    ) -> ChunkScheduler | None:
+        """Create one hidden chunk scheduler lazily when runtime mode needs it."""
+
+        if not self._should_use_chunk_scheduler():
+            return None
+
+        source_id = id(source) if source is not None else None
+        action_source_key = self._action_source_key(action_source)
+        if self._chunk_scheduler is not None:
+            if (
+                self._chunk_scheduler_source_id != source_id
+                or self._chunk_scheduler_action_source_key != action_source_key
+            ):
+                self._chunk_scheduler = None
+            else:
+                if self.overlap_ratio is not None:
+                    self._chunk_scheduler.overlap_ratio = self.overlap_ratio
+                return self._chunk_scheduler
+
+        chunk_provider, plan_provider = self._resolve_runtime_chunk_hooks(
+            source,
+            action_source,
+        )
+        scheduler = ChunkScheduler(
+            chunk_provider=chunk_provider,
+            plan_provider=plan_provider,
+            overlap_ratio=(
+                self.overlap_ratio if self.overlap_ratio is not None else 0.2
+            ),
+        )
+        self._chunk_scheduler = scheduler
+        self._chunk_scheduler_source_id = source_id
+        self._chunk_scheduler_action_source_key = action_source_key
+        return scheduler
 
     def _run_step_impl(
         self,
@@ -131,7 +274,12 @@ class InferenceRuntime:
         if reset_model:
             self.reset(model=model)
 
-        if self.mode is InferenceMode.SYNC:
+        chunk_scheduler = self._ensure_chunk_scheduler(
+            source=model,
+            action_source=resolved_action_source,
+        )
+
+        if chunk_scheduler is None:
             raw_result = run_step(
                 robot,
                 model,
@@ -145,33 +293,31 @@ class InferenceRuntime:
             raw_action = raw_result.action
             plan_refreshed = True
         else:
-            assert self.async_inference is not None
             raw_frame = robot.observe() if frame is None else frame
             normalized_frame = as_frame(raw_frame)
             validate_frame(normalized_frame)
 
             if (
-                self.async_inference.control_hz is None
+                chunk_scheduler.control_hz is None
                 and self.realtime_controller is not None
             ):
-                self.async_inference.bind_control_hz(self.realtime_controller.hz)
+                chunk_scheduler.bind_control_hz(self.realtime_controller.hz)
 
             action_context = (
                 model
                 if model is not None
                 else (action_fn if action_fn is not None else resolved_action_source)
             )
-            raw_action, plan_refreshed = self.async_inference.next_action(
+            raw_action, plan_refreshed = chunk_scheduler.next_action(
                 action_context,
                 normalized_frame,
                 fallback_action_source=resolved_action_source,
+                prefetch_async=self.mode is InferenceMode.ASYNC,
             )
 
         optimized_action = self.optimize_action(raw_action, frame=normalized_frame)
 
-        should_execute = (
-            self.execute_action if execute_action is None else execute_action
-        )
+        should_execute = True if execute_action is None else execute_action
         if should_execute:
             robot.act(optimized_action)
 
@@ -205,9 +351,7 @@ class InferenceRuntime:
             model,
             action_fn=action_fn,
             frame=frame,
-            execute_action=(
-                self.execute_action if execute_action is None else execute_action
-            ),
+            execute_action=True if execute_action is None else execute_action,
             reset_model=reset_model,
             runtime=self,
             pace_control=pace_control,

@@ -24,6 +24,10 @@ IMAGE_KEYS = ModalityToken(
     "images",
     legacy_attr="IMAGE_KEY_MAP",
 )
+CONTROL_TARGETS = ModalityToken(
+    "control_targets",
+    legacy_attr="CONTROL_TARGET_MAP",
+)
 STATE_KEYS = ModalityToken(
     "state",
     legacy_attr="STATE_KEY_MAP",
@@ -32,8 +36,23 @@ ACTION_MODES = ModalityToken(
     "action_modes",
     legacy_attr="ACTION_MODE_MAP",
 )
+TASK_KEYS = ModalityToken(
+    "task",
+    legacy_attr="TASK_KEY_MAP",
+)
+META_KEYS = ModalityToken(
+    "meta",
+    legacy_attr="META_KEY_MAP",
+)
 
-KNOWN_MODALITIES = (IMAGE_KEYS, STATE_KEYS, ACTION_MODES)
+KNOWN_MODALITIES = (
+    IMAGE_KEYS,
+    CONTROL_TARGETS,
+    STATE_KEYS,
+    ACTION_MODES,
+    TASK_KEYS,
+    META_KEYS,
+)
 _KNOWN_MODALITY_BY_NAME = {token.name: token for token in KNOWN_MODALITIES}
 
 
@@ -139,11 +158,14 @@ def resolve_modality_mapping(
 
 __all__ = [
     "ACTION_MODES",
+    "CONTROL_TARGETS",
     "IMAGE_KEYS",
     "KNOWN_MODALITIES",
+    "META_KEYS",
     "MODALITY_MAPS_ATTR",
     "ModalityToken",
     "STATE_KEYS",
+    "TASK_KEYS",
     "resolve_modality_mapping",
     "resolve_string_mapping",
 ]

@@ -26,15 +26,15 @@ ROBOT_HAS_REMOTE_POLICY_METHODS: tuple[str, ...] = (
     "has_remote_policy",
 )
 
-MODEL_GET_SPEC_METHODS: tuple[str, ...] = ("embodia_get_spec", "get_spec")
-MODEL_RESET_METHODS: tuple[str, ...] = ("embodia_reset", "reset")
-MODEL_INFER_METHODS: tuple[str, ...] = ("embodia_infer", "infer", "step")
-MODEL_INFER_CHUNK_METHODS: tuple[str, ...] = (
+POLICY_GET_SPEC_METHODS: tuple[str, ...] = ("embodia_get_spec", "get_spec")
+POLICY_RESET_METHODS: tuple[str, ...] = ("embodia_reset", "reset")
+POLICY_INFER_METHODS: tuple[str, ...] = ("embodia_infer", "infer", "step")
+POLICY_INFER_CHUNK_METHODS: tuple[str, ...] = (
     "embodia_infer_chunk",
     "infer_chunk",
     "step_chunk",
 )
-MODEL_PLAN_METHODS: tuple[str, ...] = ("embodia_plan", "plan")
+POLICY_PLAN_METHODS: tuple[str, ...] = ("embodia_plan", "plan")
 
 
 def resolve_callable_method(
@@ -57,11 +57,11 @@ def format_method_options(method_names: Sequence[str]) -> str:
 
 
 __all__ = [
-    "MODEL_GET_SPEC_METHODS",
-    "MODEL_INFER_CHUNK_METHODS",
-    "MODEL_INFER_METHODS",
-    "MODEL_PLAN_METHODS",
-    "MODEL_RESET_METHODS",
+    "POLICY_GET_SPEC_METHODS",
+    "POLICY_INFER_CHUNK_METHODS",
+    "POLICY_INFER_METHODS",
+    "POLICY_PLAN_METHODS",
+    "POLICY_RESET_METHODS",
     "ROBOT_ACT_METHODS",
     "ROBOT_GET_SPEC_METHODS",
     "ROBOT_HAS_REMOTE_POLICY_METHODS",

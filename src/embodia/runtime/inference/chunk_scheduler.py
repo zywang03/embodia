@@ -142,7 +142,7 @@ class ChunkScheduler:
 
     ``remaining_steps <= overlap_steps``
 
-    This keeps the model API focused on ``obs -> action chunk`` while embodia
+    This keeps the policy API focused on ``obs -> action chunk`` while embodia
     owns the chunk handoff policy.
     """
 

@@ -13,9 +13,9 @@ from typing import Any
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 from .._dispatch import (
-    MODEL_INFER_CHUNK_METHODS,
-    MODEL_INFER_METHODS,
-    MODEL_RESET_METHODS,
+    POLICY_INFER_CHUNK_METHODS,
+    POLICY_INFER_METHODS,
+    POLICY_RESET_METHODS,
     ROBOT_ACT_METHODS,
     ROBOT_OBSERVE_METHODS,
     format_method_options,
@@ -72,12 +72,12 @@ class SyncInferenceProfile:
 
 def profile_sync_inference(
     robot: object,
-    model: object | None = None,
+    policy: object | None = None,
     *,
     action_fn: ActionSource | None = None,
     steps: int = 8,
     execute_action: bool = False,
-    reset_model: bool = True,
+    reset_policy: bool = True,
     startup_ignore_inference_samples: int = 1,
     timing_window_size: int = 64,
     timing_trim_ratio: float = 0.1,
@@ -92,7 +92,7 @@ def profile_sync_inference(
     The report intentionally focuses on software-side timing:
 
     - ``estimated_step_time_s``: one robust mean of sync step runtime
-    - ``estimated_inference_time_s``: one robust mean of model/policy latency
+    - ``estimated_inference_time_s``: one robust mean of policy/policy latency
 
     The first inference sample is ignored by default so policy startup cost
     does not skew the estimate.
@@ -102,8 +102,8 @@ def profile_sync_inference(
         raise InterfaceValidationError(f"steps must be a positive int, got {steps!r}.")
     if isinstance(execute_action, bool) is False:
         raise InterfaceValidationError("execute_action must be a bool.")
-    if isinstance(reset_model, bool) is False:
-        raise InterfaceValidationError("reset_model must be a bool.")
+    if isinstance(reset_policy, bool) is False:
+        raise InterfaceValidationError("reset_policy must be a bool.")
     if isinstance(safety_margin_steps, bool) or not isinstance(
         safety_margin_steps,
         int,
@@ -132,26 +132,26 @@ def profile_sync_inference(
                 f"overlap_ratio must be in (0, 1), got {overlap_ratio!r}."
             )
 
-    action_source, can_reset = _resolve_action_source(model, action_fn, robot=robot)
-    if reset_model and not can_reset:
+    action_source, can_reset = _resolve_action_source(policy, action_fn, robot=robot)
+    if reset_policy and not can_reset:
         raise InterfaceValidationError(
-            "reset_model=True requires a source object exposing "
-            f"{format_method_options(MODEL_RESET_METHODS)} together with "
-            f"{format_method_options(MODEL_INFER_METHODS)} or "
-            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
+            "reset_policy=True requires a source object exposing "
+            f"{format_method_options(POLICY_RESET_METHODS)} together with "
+            f"{format_method_options(POLICY_INFER_METHODS)} or "
+            f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, not a bare callable."
         )
-    if reset_model and model is not None:
-        reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+    if reset_policy and policy is not None:
+        reset, reset_name = resolve_callable_method(policy, POLICY_RESET_METHODS)
         if not callable(reset) or reset_name is None:
             raise InterfaceValidationError(
-                "reset_model=True requires a model object exposing "
-                f"{format_method_options(MODEL_RESET_METHODS)}."
+                "reset_policy=True requires a policy object exposing "
+                f"{format_method_options(POLICY_RESET_METHODS)}."
             )
         try:
             reset()
         except Exception as exc:
             raise InterfaceValidationError(
-                f"{type(model).__name__}.{reset_name}() raised "
+                f"{type(policy).__name__}.{reset_name}() raised "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 

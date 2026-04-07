@@ -293,13 +293,13 @@ def _expand_robot_config(
     }
 
 
-def _expand_model_config(
+def _expand_policy_config(
     loaded: Mapping[str, Any],
     schema: Mapping[str, Any],
     *,
     field_name: str,
 ) -> dict[str, Any]:
-    """Expand one model YAML section into runtime config."""
+    """Expand one policy YAML section into runtime config."""
 
     _validate_keys(
         loaded,
@@ -309,7 +309,7 @@ def _expand_model_config(
 
     shared = _expand_shared_schema(schema, field_name=f"{field_name}.schema")
     name = _ensure_non_empty_string(
-        loaded.get("name", "model"),
+        loaded.get("name", "policy"),
         field_name=f"{field_name}.name",
     )
 
@@ -325,7 +325,7 @@ def _expand_model_config(
         if len(supported_command_kinds) != 1:
             raise InterfaceValidationError(
                 f"{field_name}.schema.components[{component['name']!r}] must declare "
-                "exactly one command kind when model spec is inferred from the "
+                "exactly one command kind when policy spec is inferred from the "
                 f"shared schema, got {supported_command_kinds!r}."
             )
         expanded_outputs.append(
@@ -338,7 +338,7 @@ def _expand_model_config(
         )
 
     return {
-        "model_spec": {
+        "policy_spec": {
             "name": name,
             "required_image_keys": list(shared["image_keys"]),
             "required_state_keys": all_state_keys,
@@ -374,8 +374,8 @@ def expand_component_yaml_config(
     field_name = f"{Path(path)}:{component}" if path is not None else component
     if component == "robot":
         expanded = _expand_robot_config(copied, raw_schema, field_name=field_name)
-    elif component == "model":
-        expanded = _expand_model_config(copied, raw_schema, field_name=field_name)
+    elif component == "policy":
+        expanded = _expand_policy_config(copied, raw_schema, field_name=field_name)
     else:
         raise InterfaceValidationError(
             f"Unsupported component {component!r} when expanding YAML config."
@@ -467,7 +467,7 @@ def load_component_yaml_config(
             )
         return result
 
-    known_components = {"robot", "model"}
+    known_components = {"robot", "policy"}
     present_components = sorted(
         key
         for key, value in loaded.items()

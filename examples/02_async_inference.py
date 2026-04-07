@@ -38,8 +38,8 @@ class YourRobot(em.RobotMixin):
         return self.capture()
 
 
-class YourModel(em.ModelMixin):
-    """Pretend this is your original outer model class after one small edit."""
+class YourPolicy(em.PolicyMixin):
+    """Pretend this is your original outer policy class after one small edit."""
 
     def __init__(self) -> None:
         self.step_index = 0
@@ -83,7 +83,7 @@ def main() -> None:
         return
 
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
-    model = YourModel.from_yaml("examples/basic_runtime.yml")
+    policy = YourPolicy.from_yaml("examples/basic_runtime.yml")
     runtime = em.InferenceRuntime(
         mode=em.InferenceMode.ASYNC,
         overlap_ratio=0.2,
@@ -97,7 +97,7 @@ def main() -> None:
     )
 
     for step_index in range(5):
-        result = em.run_step(robot, model, runtime=runtime)
+        result = em.run_step(robot, policy, runtime=runtime)
         print(
             f"step={step_index} "
             f"raw0={arm_value0(result.raw_action):.2f} "

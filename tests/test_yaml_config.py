@@ -42,12 +42,12 @@ class YamlConfigTests(unittest.TestCase):
         path = self._write_config(
             {
                 "robot": {"method_aliases": {"observe": "capture"}},
-                "model": {"method_aliases": {"infer": "infer"}},
+                "policy": {"method_aliases": {"infer": "infer"}},
             }
         )
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
-            loaded = em.load_yaml_config(path, section="model")
+            loaded = em.load_yaml_config(path, section="policy")
 
         self.assertEqual(loaded["method_aliases"]["infer"], "infer")
 
@@ -80,7 +80,7 @@ class YamlConfigTests(unittest.TestCase):
                         "reset": "home",
                     },
                 },
-                "model": {
+                "policy": {
                     "name": "demo_model",
                     "method_aliases": {
                         "reset": "clear_state",
@@ -111,7 +111,7 @@ class YamlConfigTests(unittest.TestCase):
             def home(self):
                 return self.capture()
 
-        class YourModel(em.ModelMixin):
+        class YourPolicy(em.PolicyMixin):
             def __init__(self, gain: float = 0.0) -> None:
                 self.gain = gain
                 self.seen_frame = None
@@ -138,26 +138,26 @@ class YamlConfigTests(unittest.TestCase):
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             robot = YourRobot.from_yaml(path, label="from_yaml")
-            model = YourModel.from_yaml(path, gain=0.5)
+            policy = YourPolicy.from_yaml(path, gain=0.5)
 
         sample_frame = robot.reset()
-        em.check_pair(robot, model, sample_frame=sample_frame)
-        result = em.run_step(robot, model)
+        em.check_pair(robot, policy, sample_frame=sample_frame)
+        result = em.run_step(robot, policy)
 
         self.assertEqual(robot.label, "from_yaml")
-        self.assertEqual(model.gain, 0.5)
+        self.assertEqual(policy.gain, 0.5)
         self.assertEqual(result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
         self.assertEqual(robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
-        self.assertIn("joint_positions", model.seen_frame.state)
-        self.assertEqual(model.seen_frame.task["prompt"], "fold the cloth")
-        self.assertEqual(model.get_spec().required_image_keys, ["front_rgb"])
+        self.assertIn("joint_positions", policy.seen_frame.state)
+        self.assertEqual(policy.seen_frame.task["prompt"], "fold the cloth")
+        self.assertEqual(policy.get_spec().required_image_keys, ["front_rgb"])
         self.assertEqual(
-            model.get_spec().required_state_keys,
+            policy.get_spec().required_state_keys,
             ["joint_positions", "position"],
         )
-        self.assertEqual(model.get_spec().required_task_keys, ["prompt"])
+        self.assertEqual(policy.get_spec().required_task_keys, ["prompt"])
         self.assertEqual(
-            [(output.target, output.command_kind) for output in model.get_spec().outputs],
+            [(output.target, output.command_kind) for output in policy.get_spec().outputs],
             [("arm", "cartesian_pose_delta"), ("gripper", "gripper_position")],
         )
 
@@ -177,18 +177,18 @@ class YamlConfigTests(unittest.TestCase):
                         }
                     }
                 },
-                "model": {
+                "policy": {
                     "name": "demo_model",
                 },
             }
         )
 
-        class YourModel(em.ModelMixin):
+        class YourPolicy(em.PolicyMixin):
             pass
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):
             with self.assertRaises(em.InterfaceValidationError) as ctx:
-                YourModel.from_yaml(path)
+                YourPolicy.from_yaml(path)
 
         self.assertIn("exactly one command kind", str(ctx.exception))
 

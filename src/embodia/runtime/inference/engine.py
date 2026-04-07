@@ -10,10 +10,10 @@ from typing import Any
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 from .._dispatch import (
-    MODEL_INFER_CHUNK_METHODS,
-    MODEL_INFER_METHODS,
-    MODEL_PLAN_METHODS,
-    MODEL_RESET_METHODS,
+    POLICY_INFER_CHUNK_METHODS,
+    POLICY_INFER_METHODS,
+    POLICY_PLAN_METHODS,
+    POLICY_RESET_METHODS,
     ROBOT_ACT_METHODS,
     ROBOT_OBSERVE_METHODS,
     format_method_options,
@@ -99,21 +99,21 @@ class InferenceRuntime:
                     f"got {self.overlap_ratio!r}."
                 )
 
-    def reset(self, *, model: object | None = None) -> None:
-        """Reset model state and any attached runtime components."""
+    def reset(self, *, policy: object | None = None) -> None:
+        """Reset policy state and any attached runtime components."""
 
-        if model is not None:
-            reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+        if policy is not None:
+            reset, reset_name = resolve_callable_method(policy, POLICY_RESET_METHODS)
             if not callable(reset) or reset_name is None:
                 raise InterfaceValidationError(
-                    "InferenceRuntime.reset(model=...) requires the model to expose "
-                    f"{format_method_options(MODEL_RESET_METHODS)}."
+                    "InferenceRuntime.reset(policy=...) requires the policy to expose "
+                    f"{format_method_options(POLICY_RESET_METHODS)}."
                 )
             try:
                 reset()
             except Exception as exc:
                 raise InterfaceValidationError(
-                    f"{type(model).__name__}.{reset_name}() raised "
+                    f"{type(policy).__name__}.{reset_name}() raised "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
 
@@ -173,7 +173,7 @@ class InferenceRuntime:
         for candidate in candidates:
             infer_chunk, _ = resolve_callable_method(
                 candidate,
-                MODEL_INFER_CHUNK_METHODS,
+                POLICY_INFER_CHUNK_METHODS,
             )
             if callable(infer_chunk):
                 return (
@@ -184,7 +184,7 @@ class InferenceRuntime:
                     None,
                 )
 
-            plan, _ = resolve_callable_method(candidate, MODEL_PLAN_METHODS)
+            plan, _ = resolve_callable_method(candidate, POLICY_PLAN_METHODS)
             if callable(plan):
                 return (
                     None,
@@ -251,45 +251,45 @@ class InferenceRuntime:
     def _run_step_impl(
         self,
         robot: object,
-        model: object | None = None,
+        policy: object | None = None,
         *,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
-        reset_model: bool = False,
+        reset_policy: bool = False,
         pace_control: bool = True,
     ) -> InferenceStepResult:
         """Internal implementation for runtime-managed inference."""
 
         resolved_action_source, can_reset = _resolve_action_source(
-            model,
+            policy,
             action_fn,
             robot=robot,
         )
-        if reset_model and not can_reset:
+        if reset_policy and not can_reset:
             raise InterfaceValidationError(
-                "reset_model=True requires a source object exposing "
-                f"{format_method_options(MODEL_RESET_METHODS)} together with "
-                f"{format_method_options(MODEL_INFER_METHODS)} or "
-                f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
+                "reset_policy=True requires a source object exposing "
+                f"{format_method_options(POLICY_RESET_METHODS)} together with "
+                f"{format_method_options(POLICY_INFER_METHODS)} or "
+                f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, not a bare callable."
             )
 
-        if reset_model:
-            self.reset(model=model)
+        if reset_policy:
+            self.reset(policy=policy)
 
         chunk_scheduler = self._ensure_chunk_scheduler(
-            source=model,
+            source=policy,
             action_source=resolved_action_source,
         )
 
         if chunk_scheduler is None:
             raw_result = run_step(
                 robot,
-                model,
+                policy,
                 action_fn=action_fn,
                 frame=frame,
                 execute_action=False,
-                reset_model=False,
+                reset_policy=False,
                 runtime=None,
             )
             normalized_frame = raw_result.frame
@@ -325,8 +325,8 @@ class InferenceRuntime:
                 chunk_scheduler.bind_control_hz(self.realtime_controller.hz)
 
             action_context = (
-                model
-                if model is not None
+                policy
+                if policy is not None
                 else (action_fn if action_fn is not None else resolved_action_source)
             )
             raw_action, plan_refreshed = chunk_scheduler.next_action(
@@ -369,23 +369,23 @@ class InferenceRuntime:
     def step(
         self,
         robot: object,
-        model: object | None = None,
+        policy: object | None = None,
         *,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
-        reset_model: bool = False,
+        reset_policy: bool = False,
         pace_control: bool = True,
     ) -> InferenceStepResult:
         """Compatibility wrapper around :func:`embodia.run_step`."""
 
         return run_step(
             robot,
-            model,
+            policy,
             action_fn=action_fn,
             frame=frame,
             execute_action=True if execute_action is None else execute_action,
-            reset_model=reset_model,
+            reset_policy=reset_policy,
             runtime=self,
             pace_control=pace_control,
         )
@@ -393,23 +393,23 @@ class InferenceRuntime:
     def run_step(
         self,
         robot: object,
-        model: object | None = None,
+        policy: object | None = None,
         *,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
-        reset_model: bool = False,
+        reset_policy: bool = False,
         pace_control: bool = True,
     ) -> InferenceStepResult:
         """Alias for :meth:`step` for users who prefer function-style naming."""
 
         return self.step(
             robot,
-            model,
+            policy,
             action_fn=action_fn,
             frame=frame,
             execute_action=execute_action,
-            reset_model=reset_model,
+            reset_policy=reset_policy,
             pace_control=pace_control,
         )
 

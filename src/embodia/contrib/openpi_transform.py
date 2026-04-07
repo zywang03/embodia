@@ -214,7 +214,7 @@ def openpi_response_from_action_plan(
 class OpenPITransform:
     """Bundle OpenPI payload conversion in one small object.
 
-    This keeps robot/model code focused on one transform object instead of
+    This keeps robot/policy code focused on one transform object instead of
     scattering OpenPI-specific conversion details across multiple callbacks.
     """
 

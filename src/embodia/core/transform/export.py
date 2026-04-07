@@ -10,8 +10,8 @@ from ..schema import (
     ComponentSpec,
     Command,
     Frame,
-    ModelOutputSpec,
-    ModelSpec,
+    PolicyOutputSpec,
+    PolicySpec,
     RobotSpec,
 )
 from .coerce import (
@@ -19,8 +19,8 @@ from .coerce import (
     coerce_command,
     coerce_component_spec,
     coerce_frame,
-    coerce_model_output_spec,
-    coerce_model_spec,
+    coerce_policy_output_spec,
+    coerce_policy_spec,
     coerce_robot_spec,
 )
 
@@ -94,12 +94,12 @@ def robot_spec_to_dict(spec: RobotSpec | Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def model_output_spec_to_dict(
-    spec: ModelOutputSpec | Mapping[str, Any],
+def policy_output_spec_to_dict(
+    spec: PolicyOutputSpec | Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Export a model-output spec-like object into a plain dictionary."""
+    """Export a policy-output spec-like object into a plain dictionary."""
 
-    normalized = coerce_model_output_spec(spec)
+    normalized = coerce_policy_output_spec(spec)
     return {
         "target": normalized.target,
         "command_kind": normalized.command_kind,
@@ -108,16 +108,16 @@ def model_output_spec_to_dict(
     }
 
 
-def model_spec_to_dict(spec: ModelSpec | Mapping[str, Any]) -> dict[str, Any]:
-    """Export a model spec-like object into a plain dictionary."""
+def policy_spec_to_dict(spec: PolicySpec | Mapping[str, Any]) -> dict[str, Any]:
+    """Export a policy spec-like object into a plain dictionary."""
 
-    normalized = coerce_model_spec(spec)
+    normalized = coerce_policy_spec(spec)
     return {
         "name": normalized.name,
         "required_image_keys": list(normalized.required_image_keys),
         "required_state_keys": list(normalized.required_state_keys),
         "required_task_keys": list(normalized.required_task_keys),
-        "outputs": [model_output_spec_to_dict(output) for output in normalized.outputs],
+        "outputs": [policy_output_spec_to_dict(output) for output in normalized.outputs],
         "meta": dict(normalized.meta),
     }
 
@@ -127,7 +127,7 @@ __all__ = [
     "component_spec_to_dict",
     "command_to_dict",
     "frame_to_dict",
-    "model_output_spec_to_dict",
-    "model_spec_to_dict",
+    "policy_output_spec_to_dict",
+    "policy_spec_to_dict",
     "robot_spec_to_dict",
 ]

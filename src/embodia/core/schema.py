@@ -1,7 +1,7 @@
-"""Lightweight shared schema for robot/model runtime interaction.
+"""Lightweight shared schema for robot/policy runtime interaction.
 
 This module is intentionally small. It standardizes the data objects that sit
-between robot adapters and model adapters without turning embodia into a full
+between robot adapters and policy adapters without turning embodia into a full
 robotics middleware stack.
 """
 
@@ -273,8 +273,8 @@ class RobotSpec:
 
 
 @dataclass(slots=True)
-class ModelOutputSpec:
-    """Description of one model output command slot."""
+class PolicyOutputSpec:
+    """Description of one policy output command slot."""
 
     target: str
     command_kind: str
@@ -283,17 +283,17 @@ class ModelOutputSpec:
 
 
 @dataclass(slots=True)
-class ModelSpec:
-    """Description of one model's required inputs and emitted commands."""
+class PolicySpec:
+    """Description of one policy's required inputs and emitted commands."""
 
     name: str
     required_image_keys: list[str]
     required_state_keys: list[str]
     required_task_keys: list[str] = field(default_factory=list)
-    outputs: list[ModelOutputSpec] = field(default_factory=list)
+    outputs: list[PolicyOutputSpec] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def get_output(self, target: str) -> ModelOutputSpec | None:
+    def get_output(self, target: str) -> PolicyOutputSpec | None:
         """Return one output spec by target when present."""
 
         for output in self.outputs:
@@ -538,23 +538,23 @@ def validate_robot_spec(spec: RobotSpec) -> None:
         seen_names.add(component.name)
 
 
-def validate_model_output_spec(spec: ModelOutputSpec) -> None:
-    """Validate one model-output description."""
+def validate_policy_output_spec(spec: PolicyOutputSpec) -> None:
+    """Validate one policy-output description."""
 
-    if not isinstance(spec, ModelOutputSpec):
+    if not isinstance(spec, PolicyOutputSpec):
         raise InterfaceValidationError(
-            "spec must be a ModelOutputSpec instance, got "
+            "spec must be a PolicyOutputSpec instance, got "
             f"{type(spec).__name__}."
         )
 
-    _ensure_non_empty_string(spec.target, "model_output_spec.target")
+    _ensure_non_empty_string(spec.target, "policy_output_spec.target")
     command_kind = _validate_command_kind_name(
         spec.command_kind,
-        "model_output_spec.command_kind",
+        "policy_output_spec.command_kind",
         allow_unregistered_custom=True,
     )
-    _ensure_positive_int(spec.dim, "model_output_spec.dim")
-    _ensure_string_key_dict(spec.meta, "model_output_spec.meta")
+    _ensure_positive_int(spec.dim, "policy_output_spec.dim")
+    _ensure_string_key_dict(spec.meta, "policy_output_spec.meta")
 
     if not is_known_command_kind(command_kind):
         return
@@ -562,54 +562,54 @@ def validate_model_output_spec(spec: ModelOutputSpec) -> None:
     kind_spec = get_command_kind_spec(command_kind)
     if kind_spec.default_dim is not None and spec.dim != kind_spec.default_dim:
         raise InterfaceValidationError(
-            f"model_output_spec.command_kind {command_kind!r} expects dim="
+            f"policy_output_spec.command_kind {command_kind!r} expects dim="
             f"{kind_spec.default_dim}, got {spec.dim}."
         )
 
 
-def validate_model_spec(spec: ModelSpec) -> None:
-    """Validate one model interface spec."""
+def validate_policy_spec(spec: PolicySpec) -> None:
+    """Validate one policy interface spec."""
 
-    if not isinstance(spec, ModelSpec):
+    if not isinstance(spec, PolicySpec):
         raise InterfaceValidationError(
-            f"spec must be a ModelSpec instance, got {type(spec).__name__}."
+            f"spec must be a PolicySpec instance, got {type(spec).__name__}."
         )
 
-    _ensure_non_empty_string(spec.name, "model_spec.name")
+    _ensure_non_empty_string(spec.name, "policy_spec.name")
     _ensure_string_list(
         spec.required_image_keys,
-        "model_spec.required_image_keys",
+        "policy_spec.required_image_keys",
         allow_empty=True,
     )
     _ensure_string_list(
         spec.required_state_keys,
-        "model_spec.required_state_keys",
+        "policy_spec.required_state_keys",
         allow_empty=True,
     )
     _ensure_string_list(
         spec.required_task_keys,
-        "model_spec.required_task_keys",
+        "policy_spec.required_task_keys",
         allow_empty=True,
     )
-    _ensure_string_key_dict(spec.meta, "model_spec.meta")
+    _ensure_string_key_dict(spec.meta, "policy_spec.meta")
     if not isinstance(spec.outputs, list):
         raise InterfaceValidationError(
-            f"model_spec.outputs must be a list, got {type(spec.outputs).__name__}."
+            f"policy_spec.outputs must be a list, got {type(spec.outputs).__name__}."
         )
     if not spec.outputs:
-        raise InterfaceValidationError("model_spec.outputs must not be empty.")
+        raise InterfaceValidationError("policy_spec.outputs must not be empty.")
 
     seen_targets: set[str] = set()
     for index, output in enumerate(spec.outputs):
         try:
-            validate_model_output_spec(output)
+            validate_policy_output_spec(output)
         except InterfaceValidationError as exc:
             raise InterfaceValidationError(
-                f"invalid model_spec.outputs[{index}]: {exc}"
+                f"invalid policy_spec.outputs[{index}]: {exc}"
             ) from exc
         if output.target in seen_targets:
             raise InterfaceValidationError(
-                f"model_spec.outputs contains duplicate target {output.target!r}."
+                f"policy_spec.outputs contains duplicate target {output.target!r}."
             )
         seen_targets.add(output.target)
 
@@ -653,11 +653,11 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
             )
 
 
-def ensure_action_matches_model_spec(action: Action, spec: ModelSpec) -> None:
-    """Ensure an action matches one model's declared outputs."""
+def ensure_action_matches_policy_spec(action: Action, spec: PolicySpec) -> None:
+    """Ensure an action matches one policy's declared outputs."""
 
     validate_action(action)
-    validate_model_spec(spec)
+    validate_policy_spec(spec)
 
     command_targets = {command.target for command in action.commands}
     output_targets = {output.target for output in spec.outputs}
@@ -670,7 +670,7 @@ def ensure_action_matches_model_spec(action: Action, spec: ModelSpec) -> None:
         if extra:
             details.append(f"unexpected targets: {extra!r}")
         raise InterfaceValidationError(
-            f"model {spec.name!r} produced commands that do not match its outputs; "
+            f"policy {spec.name!r} produced commands that do not match its outputs; "
             + ", ".join(details)
             + "."
         )
@@ -681,12 +681,12 @@ def ensure_action_matches_model_spec(action: Action, spec: ModelSpec) -> None:
         )
         if command.kind != output.command_kind:
             raise InterfaceValidationError(
-                f"model {spec.name!r} output {output.target!r} declared command "
+                f"policy {spec.name!r} output {output.target!r} declared command "
                 f"kind {output.command_kind!r}, but produced {command.kind!r}."
             )
         if len(command.value) != output.dim:
             raise InterfaceValidationError(
-                f"model {spec.name!r} output {output.target!r} declared dim "
+                f"policy {spec.name!r} output {output.target!r} declared dim "
                 f"{output.dim}, but produced dim {len(command.value)}."
             )
 
@@ -793,10 +793,10 @@ __all__ = [
     "CommandKindSpec",
     "Frame",
     "KNOWN_COMPONENT_KINDS",
-    "ModelOutputSpec",
-    "ModelSpec",
+    "PolicyOutputSpec",
+    "PolicySpec",
     "RobotSpec",
-    "ensure_action_matches_model_spec",
+    "ensure_action_matches_policy_spec",
     "ensure_action_supported_by_robot",
     "get_command_kind_spec",
     "is_custom_command_kind_name",
@@ -806,7 +806,7 @@ __all__ = [
     "validate_command",
     "validate_component_spec",
     "validate_frame",
-    "validate_model_output_spec",
-    "validate_model_spec",
+    "validate_policy_output_spec",
+    "validate_policy_spec",
     "validate_robot_spec",
 ]

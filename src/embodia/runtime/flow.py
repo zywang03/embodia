@@ -11,9 +11,9 @@ from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
 from ..core.transform import coerce_action, coerce_frame
 from ._dispatch import (
-    MODEL_INFER_CHUNK_METHODS,
-    MODEL_INFER_METHODS,
-    MODEL_RESET_METHODS,
+    POLICY_INFER_CHUNK_METHODS,
+    POLICY_INFER_METHODS,
+    POLICY_RESET_METHODS,
     ROBOT_ACT_METHODS,
     ROBOT_HAS_REMOTE_POLICY_METHODS,
     ROBOT_OBSERVE_METHODS,
@@ -123,7 +123,7 @@ def _resolve_action_source(
 
     if source is not None and action_fn is not None:
         raise InterfaceValidationError(
-            "run_step() accepts either a model/callable source as the second "
+            "run_step() accepts either a policy/callable source as the second "
             "argument or action_fn=..., not both."
         )
 
@@ -148,19 +148,19 @@ def _resolve_action_source(
                 if enabled:
                     return request_remote, False
             raise InterfaceValidationError(
-                "run_step() requires a model-like source, action_fn=..., or a "
+                "run_step() requires a policy-like source, action_fn=..., or a "
                 "robot with configured remote policy."
             )
         return action_fn, False
 
-    reset_method, _ = resolve_callable_method(source, MODEL_RESET_METHODS)
+    reset_method, _ = resolve_callable_method(source, POLICY_RESET_METHODS)
     can_reset = callable(reset_method)
 
-    infer, _ = resolve_callable_method(source, MODEL_INFER_METHODS)
+    infer, _ = resolve_callable_method(source, POLICY_INFER_METHODS)
     if callable(infer):
         return infer, can_reset
 
-    infer_chunk, _ = resolve_callable_method(source, MODEL_INFER_CHUNK_METHODS)
+    infer_chunk, _ = resolve_callable_method(source, POLICY_INFER_CHUNK_METHODS)
     if callable(infer_chunk):
         return (
             lambda frame, _infer_chunk=infer_chunk: _first_action_from_chunk_call(
@@ -175,20 +175,20 @@ def _resolve_action_source(
 
     raise InterfaceValidationError(
         "run_step() source must expose "
-        f"{format_method_options(MODEL_INFER_METHODS)}, "
-        f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, or be "
+        f"{format_method_options(POLICY_INFER_METHODS)}, "
+        f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, or be "
         f"callable(frame), got {type(source).__name__}."
     )
 
 
 def run_step(
     robot: object,
-    model: object | None = None,
+    policy: object | None = None,
     *,
     action_fn: ActionSource | None = None,
     frame: Frame | Mapping[str, Any] | None = None,
     execute_action: bool = True,
-    reset_model: bool = False,
+    reset_policy: bool = False,
     runtime: object | None = None,
     pace_control: bool = True,
 ) -> StepResult:
@@ -216,40 +216,40 @@ def run_step(
             )
         return run_with_runtime(
             robot,
-            model,
+            policy,
             action_fn=action_fn,
             frame=frame,
             execute_action=execute_action,
-            reset_model=reset_model,
+            reset_policy=reset_policy,
             pace_control=pace_control,
         )
 
     action_source, can_reset = _resolve_action_source(
-        model,
+        policy,
         action_fn,
         robot=robot,
     )
-    if reset_model and not can_reset:
+    if reset_policy and not can_reset:
         raise InterfaceValidationError(
-            "reset_model=True requires a source object that exposes "
-            f"{format_method_options(MODEL_RESET_METHODS)} together with "
-            f"{format_method_options(MODEL_INFER_METHODS)} or "
-            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}, not a bare callable."
+            "reset_policy=True requires a source object that exposes "
+            f"{format_method_options(POLICY_RESET_METHODS)} together with "
+            f"{format_method_options(POLICY_INFER_METHODS)} or "
+            f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, not a bare callable."
         )
 
-    if reset_model:
-        assert model is not None
-        reset, reset_name = resolve_callable_method(model, MODEL_RESET_METHODS)
+    if reset_policy:
+        assert policy is not None
+        reset, reset_name = resolve_callable_method(policy, POLICY_RESET_METHODS)
         if not callable(reset) or reset_name is None:
             raise InterfaceValidationError(
-                "reset_model=True requires a model object exposing "
-                f"{format_method_options(MODEL_RESET_METHODS)}."
+                "reset_policy=True requires a policy object exposing "
+                f"{format_method_options(POLICY_RESET_METHODS)}."
             )
         try:
             reset()
         except Exception as exc:
             raise InterfaceValidationError(
-                f"{type(model).__name__}.{reset_name}() raised "
+                f"{type(policy).__name__}.{reset_name}() raised "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 

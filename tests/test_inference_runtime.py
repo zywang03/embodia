@@ -54,8 +54,8 @@ class RuntimeRobot(em.RobotMixin):
         return self._observe_impl()
 
 
-class RuntimeModel(em.ModelMixin):
-    """Single-step model plus optional chunk hooks for runtime tests."""
+class RuntimePolicy(em.PolicyMixin):
+    """Single-step policy plus optional chunk hooks for runtime tests."""
 
     def __init__(self) -> None:
         self.step_index = 0
@@ -185,14 +185,14 @@ class InferenceRuntimeTests(unittest.TestCase):
 
     def test_sync_runtime_applies_action_optimizers_before_execution(self) -> None:
         robot = RuntimeRobot()
-        model = RuntimeModel()
+        policy = RuntimePolicy()
         runtime = em.InferenceRuntime(
             mode=em.InferenceMode.SYNC,
             action_optimizers=[em.ActionEnsembler(current_weight=0.5)],
         )
 
-        first = em.run_step(robot, model, runtime=runtime)
-        second = em.run_step(robot, model, runtime=runtime)
+        first = em.run_step(robot, policy, runtime=runtime)
+        second = em.run_step(robot, policy, runtime=runtime)
 
         self.assertEqual(arm_value(first.raw_action), 1.0)
         self.assertEqual(arm_value(first.action), 1.0)
@@ -202,15 +202,15 @@ class InferenceRuntimeTests(unittest.TestCase):
 
     def test_sync_runtime_can_use_overlap_with_plan_provider(self) -> None:
         robot = RuntimeRobot()
-        model = RuntimeModel()
+        policy = RuntimePolicy()
         runtime = em.InferenceRuntime(
             mode=em.InferenceMode.SYNC,
             overlap_ratio=0.5,
         )
 
-        first = em.run_step(robot, model, runtime=runtime)
-        second = em.run_step(robot, model, runtime=runtime)
-        third = em.run_step(robot, model, runtime=runtime)
+        first = em.run_step(robot, policy, runtime=runtime)
+        second = em.run_step(robot, policy, runtime=runtime)
+        third = em.run_step(robot, policy, runtime=runtime)
 
         self.assertEqual(arm_value(first.action), 1.0)
         self.assertEqual(arm_value(second.action), 2.0)
@@ -218,15 +218,15 @@ class InferenceRuntimeTests(unittest.TestCase):
 
     def test_async_runtime_can_use_internal_scheduler(self) -> None:
         robot = RuntimeRobot()
-        model = RuntimeModel()
+        policy = RuntimePolicy()
         runtime = em.InferenceRuntime(
             mode=em.InferenceMode.ASYNC,
             overlap_ratio=0.5,
         )
 
-        first = runtime.step(robot, model)
-        second = runtime.step(robot, model)
-        third = runtime.step(robot, model)
+        first = runtime.step(robot, policy)
+        second = runtime.step(robot, policy)
+        third = runtime.step(robot, policy)
 
         self.assertTrue(first.plan_refreshed)
         self.assertEqual(arm_value(first.action), 1.0)
@@ -235,13 +235,13 @@ class InferenceRuntimeTests(unittest.TestCase):
 
     def test_profile_sync_inference_writes_json_report(self) -> None:
         robot = RuntimeRobot()
-        model = RuntimeModel()
+        policy = RuntimePolicy()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "profile.json"
             profile = em.profile_sync_inference(
                 robot,
-                model,
+                policy,
                 steps=4,
                 execute_action=False,
                 output_path=output_path,

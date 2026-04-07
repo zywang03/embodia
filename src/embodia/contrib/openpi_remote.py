@@ -39,11 +39,11 @@ from ..core.arraylike import (
 )
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
-from ..core.transform import coerce_frame, model_spec_to_dict
+from ..core.transform import coerce_frame, policy_spec_to_dict
 from ..runtime._dispatch import (
-    MODEL_GET_SPEC_METHODS,
-    MODEL_INFER_METHODS,
-    MODEL_RESET_METHODS,
+    POLICY_GET_SPEC_METHODS,
+    POLICY_INFER_METHODS,
+    POLICY_RESET_METHODS,
     ROBOT_GET_SPEC_METHODS,
     format_method_options,
     resolve_callable_method,
@@ -314,32 +314,32 @@ def _request_header(request: object, header_name: str) -> str | None:
     return None
 
 
-class EmbodiaModelPolicyAdapter:
-    """Expose an embodia-style model through the OpenPI websocket protocol.
+class EmbodiaPolicyAdapter:
+    """Expose an embodia-style policy through the OpenPI websocket protocol.
 
-    This adapter keeps the model itself simple: the model still only receives a
+    This adapter keeps the policy itself simple: the policy still only receives a
     normalized frame and returns one action. Chunking, alternate response
-    shapes, or native observation conversion stay outside the model and can be
+    shapes, or native observation conversion stay outside the policy and can be
     swapped in here.
     """
 
     def __init__(
         self,
-        model: object,
+        policy: object,
         *,
         obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
         action_plan_provider: Callable[[object, Frame], Any] | None = None,
         response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
         server_metadata: Mapping[str, Any] | None = None,
-        reset_model_on_connect: bool = False,
+        reset_policy_on_connect: bool = False,
         transform: OpenPITransform | None = None,
     ) -> None:
-        self.model = model
+        self.policy = policy
         if transform is not None and (
             obs_to_frame is not None or response_builder is not None
         ):
             raise InterfaceValidationError(
-                "EmbodiaModelPolicyAdapter accepts either transform=... or "
+                "EmbodiaPolicyAdapter accepts either transform=... or "
                 "obs_to_frame=/response_builder=..., not both."
             )
 
@@ -373,7 +373,7 @@ class EmbodiaModelPolicyAdapter:
         self._server_metadata = (
             dict(server_metadata) if server_metadata is not None else {}
         )
-        self._reset_model_on_connect = reset_model_on_connect
+        self._reset_policy_on_connect = reset_policy_on_connect
 
     def _coerce_frame(self, obs: Mapping[str, Any]) -> Frame:
         """Convert one raw remote observation into a validated frame."""
@@ -396,38 +396,38 @@ class EmbodiaModelPolicyAdapter:
                 "server_metadata['embodia'] must be a mapping when provided."
             )
 
-        get_spec, _ = resolve_callable_method(self.model, MODEL_GET_SPEC_METHODS)
+        get_spec, _ = resolve_callable_method(self.policy, POLICY_GET_SPEC_METHODS)
         if callable(get_spec):
-            embodia_meta.setdefault("model_spec", model_spec_to_dict(get_spec()))
+            embodia_meta.setdefault("policy_spec", policy_spec_to_dict(get_spec()))
 
         return metadata
 
     def on_connect(self) -> None:
         """Optional lifecycle hook used by :class:`WebsocketPolicyServer`."""
 
-        if self._reset_model_on_connect:
+        if self._reset_policy_on_connect:
             self.reset()
 
     def reset(self) -> None:
-        """Reset the wrapped model when it exposes ``reset()``."""
+        """Reset the wrapped policy when it exposes ``reset()``."""
 
-        reset, _ = resolve_callable_method(self.model, MODEL_RESET_METHODS)
+        reset, _ = resolve_callable_method(self.policy, POLICY_RESET_METHODS)
         if callable(reset):
             reset()
 
     def infer(self, obs: Mapping[str, Any]) -> dict[str, Any]:
-        """Convert remote observations, run the model, and build a response."""
+        """Convert remote observations, run the policy, and build a response."""
 
         frame = self._coerce_frame(obs)
         if self._action_plan_provider is not None:
-            raw_plan = self._action_plan_provider(self.model, frame)
+            raw_plan = self._action_plan_provider(self.policy, frame)
         else:
-            infer, _ = resolve_callable_method(self.model, MODEL_INFER_METHODS)
+            infer, _ = resolve_callable_method(self.policy, POLICY_INFER_METHODS)
             if not callable(infer):
                 raise InterfaceValidationError(
-                    f"{type(self.model).__name__} must expose "
-                    f"{format_method_options(MODEL_INFER_METHODS)} to be "
-                    "served through EmbodiaModelPolicyAdapter."
+                    f"{type(self.policy).__name__} must expose "
+                    f"{format_method_options(POLICY_INFER_METHODS)} to be "
+                    "served through EmbodiaPolicyAdapter."
                 )
             raw_plan = infer(frame)
 
@@ -441,39 +441,39 @@ class EmbodiaModelPolicyAdapter:
         return dict(response)
 
 
-def build_model_policy_adapter(
-    model: object,
+def build_policy_adapter(
+    policy: object,
     *,
     obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
     action_plan_provider: Callable[[object, Frame], Any] | None = None,
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
-    reset_model_on_connect: bool = False,
+    reset_policy_on_connect: bool = False,
     transform: OpenPITransform | None = None,
-) -> EmbodiaModelPolicyAdapter:
-    """Build one OpenPI-compatible adapter around a model-like object."""
+) -> EmbodiaPolicyAdapter:
+    """Build one OpenPI-compatible adapter around a policy-like object."""
 
     if transform is not None and (
         obs_to_frame is not None or response_builder is not None
     ):
         raise InterfaceValidationError(
-            "build_model_policy_adapter() accepts either transform=... or "
+            "build_policy_adapter() accepts either transform=... or "
             "obs_to_frame=/response_builder=..., not both."
         )
 
-    return EmbodiaModelPolicyAdapter(
-        model,
+    return EmbodiaPolicyAdapter(
+        policy,
         obs_to_frame=obs_to_frame,
         action_plan_provider=action_plan_provider,
         response_builder=response_builder,
         server_metadata=server_metadata,
-        reset_model_on_connect=reset_model_on_connect,
+        reset_policy_on_connect=reset_policy_on_connect,
         transform=transform,
     )
 
 
-def build_model_policy_server(
-    model: object,
+def build_policy_server(
+    policy: object,
     *,
     obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
     host: str = "0.0.0.0",
@@ -484,18 +484,18 @@ def build_model_policy_server(
     action_plan_provider: Callable[[object, Frame], Any] | None = None,
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
-    reset_model_on_connect: bool = False,
+    reset_policy_on_connect: bool = False,
     transform: OpenPITransform | None = None,
 ) -> "WebsocketPolicyServer":
-    """Build one OpenPI-compatible websocket server around a model-like object."""
+    """Build one OpenPI-compatible websocket server around a policy-like object."""
 
-    adapter = build_model_policy_adapter(
-        model,
+    adapter = build_policy_adapter(
+        policy,
         obs_to_frame=obs_to_frame,
         action_plan_provider=action_plan_provider,
         response_builder=response_builder,
         server_metadata=server_metadata,
-        reset_model_on_connect=reset_model_on_connect,
+        reset_policy_on_connect=reset_policy_on_connect,
         transform=transform,
     )
     return WebsocketPolicyServer(
@@ -508,8 +508,8 @@ def build_model_policy_server(
     )
 
 
-def serve_model_policy(
-    model: object,
+def serve_policy(
+    policy: object,
     *,
     obs_to_frame: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None,
     host: str = "0.0.0.0",
@@ -520,13 +520,13 @@ def serve_model_policy(
     action_plan_provider: Callable[[object, Frame], Any] | None = None,
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
-    reset_model_on_connect: bool = False,
+    reset_policy_on_connect: bool = False,
     transform: OpenPITransform | None = None,
 ) -> None:
-    """Serve one model-like object through the OpenPI-compatible websocket API."""
+    """Serve one policy-like object through the OpenPI-compatible websocket API."""
 
-    server = build_model_policy_server(
-        model,
+    server = build_policy_server(
+        policy,
         obs_to_frame=obs_to_frame,
         host=host,
         port=port,
@@ -536,7 +536,7 @@ def serve_model_policy(
         action_plan_provider=action_plan_provider,
         response_builder=response_builder,
         server_metadata=server_metadata,
-        reset_model_on_connect=reset_model_on_connect,
+        reset_policy_on_connect=reset_policy_on_connect,
         transform=transform,
     )
     server.serve_forever()
@@ -1013,7 +1013,7 @@ class RemotePolicyRunner:
 
         if not self.enabled:
             raise InterfaceValidationError(
-                "Remote policy access is disabled for this model instance. "
+                "Remote policy access is disabled for this policy instance. "
                 "Enable it with use_remote_policy=True."
             )
 
@@ -1059,16 +1059,16 @@ OpenPIWebsocketPolicyServer = WebsocketPolicyServer
 
 
 __all__ = [
-    "EmbodiaModelPolicyAdapter",
+    "EmbodiaPolicyAdapter",
     "OpenPITransform",
     "OpenPIMsgpackCodec",
     "RemotePolicyRunner",
-    "build_model_policy_adapter",
-    "build_model_policy_server",
+    "build_policy_adapter",
+    "build_policy_server",
     "configure_robot_remote_policy",
     "OpenPIWebsocketClientPolicy",
     "OpenPIWebsocketPolicyServer",
-    "serve_model_policy",
+    "serve_policy",
     "WebsocketClientPolicy",
     "WebsocketPolicyServer",
     "is_official_openpi_client_available",

@@ -24,7 +24,7 @@ robot:
     act: send_command
     reset: home
 
-model:
+policy:
   name: vendor_model
   method_aliases:
     reset: clear_state

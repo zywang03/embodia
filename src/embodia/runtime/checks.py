@@ -17,23 +17,23 @@ from ..core.modalities import images, state, task
 from ..core.schema import (
     Action,
     Frame,
-    ModelSpec,
+    PolicySpec,
     RobotSpec,
-    ensure_action_matches_model_spec,
+    ensure_action_matches_policy_spec,
     ensure_action_supported_by_robot,
     validate_action,
     validate_component_spec,
     validate_command,
     validate_frame,
-    validate_model_output_spec,
-    validate_model_spec,
+    validate_policy_output_spec,
+    validate_policy_spec,
     validate_robot_spec,
 )
 from ._dispatch import (
-    MODEL_GET_SPEC_METHODS,
-    MODEL_INFER_CHUNK_METHODS,
-    MODEL_INFER_METHODS,
-    MODEL_RESET_METHODS,
+    POLICY_GET_SPEC_METHODS,
+    POLICY_INFER_CHUNK_METHODS,
+    POLICY_INFER_METHODS,
+    POLICY_RESET_METHODS,
     ROBOT_ACT_METHODS,
     ROBOT_GET_SPEC_METHODS,
     ROBOT_OBSERVE_METHODS,
@@ -97,7 +97,7 @@ def _ensure_signature_accepts(method: Any, method_name: str, *args: object) -> N
 
 
 def _single_step_chunk_request() -> object:
-    """Build one minimal request object for chunk-model acceptance checks."""
+    """Build one minimal request object for chunk-policy acceptance checks."""
 
     return SimpleNamespace(
         request_step=0,
@@ -114,26 +114,26 @@ def _single_step_chunk_request() -> object:
     )
 
 
-def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
-    """Return compatibility problems between a robot spec and a model spec."""
+def _pair_problems(robot_spec: RobotSpec, policy_spec: PolicySpec) -> list[str]:
+    """Return compatibility problems between a robot spec and a policy spec."""
 
     problems: list[str] = []
 
     image_problem = images.pair_problem(
         available_keys=robot_spec.image_keys,
-        required_keys=model_spec.required_image_keys,
+        required_keys=policy_spec.required_image_keys,
     )
     if image_problem is not None:
         problems.append(image_problem)
 
     state_problem = state.pair_problem(
         available_keys=robot_spec.all_state_keys(),
-        required_keys=model_spec.required_state_keys,
+        required_keys=policy_spec.required_state_keys,
     )
     if state_problem is not None:
         problems.append(state_problem)
 
-    for output in model_spec.outputs:
+    for output in policy_spec.outputs:
         component = robot_spec.get_component(output.target)
         if component is None:
             problems.append(
@@ -142,13 +142,13 @@ def _pair_problems(robot_spec: RobotSpec, model_spec: ModelSpec) -> list[str]:
             continue
         if output.command_kind not in component.supported_command_kinds:
             problems.append(
-                f"component {output.target!r} does not support model output "
+                f"component {output.target!r} does not support policy output "
                 f"command kind {output.command_kind!r}; supported command kinds: "
                 f"{component.supported_command_kinds!r}."
             )
         if output.dim != component.dof:
             problems.append(
-                f"component {output.target!r} has dof={component.dof}, but model "
+                f"component {output.target!r} has dof={component.dof}, but policy "
                 f"declares dim={output.dim}."
             )
 
@@ -190,21 +190,21 @@ def check_robot(robot: object, *, call_observe: bool = True) -> None:
     state.ensure_frame_keys(frame, spec.all_state_keys(), owner_label="robot")
 
 
-def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
-    """Runtime-check whether an object is a compatible model implementation."""
+def check_policy(policy: object, *, sample_frame: Frame | None = None) -> None:
+    """Runtime-check whether an object is a compatible policy implementation."""
 
-    get_spec, get_spec_name = _require_method(model, MODEL_GET_SPEC_METHODS)
-    reset, reset_name = _require_method(model, MODEL_RESET_METHODS)
-    infer, infer_name = resolve_callable_method(model, MODEL_INFER_METHODS)
+    get_spec, get_spec_name = _require_method(policy, POLICY_GET_SPEC_METHODS)
+    reset, reset_name = _require_method(policy, POLICY_RESET_METHODS)
+    infer, infer_name = resolve_callable_method(policy, POLICY_INFER_METHODS)
     infer_chunk, infer_chunk_name = resolve_callable_method(
-        model,
-        MODEL_INFER_CHUNK_METHODS,
+        policy,
+        POLICY_INFER_CHUNK_METHODS,
     )
     if not callable(infer) and not callable(infer_chunk):
         raise InterfaceValidationError(
-            f"{_object_label(model)} must expose "
-            f"{format_method_options(MODEL_INFER_METHODS)} or "
-            f"{format_method_options(MODEL_INFER_CHUNK_METHODS)}."
+            f"{_object_label(policy)} must expose "
+            f"{format_method_options(POLICY_INFER_METHODS)} or "
+            f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}."
         )
 
     _ensure_signature_accepts(get_spec, get_spec_name)
@@ -214,18 +214,18 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
     if callable(infer_chunk) and infer_chunk_name is not None:
         _ensure_signature_accepts(infer_chunk, infer_chunk_name, object(), object())
 
-    spec = _call_method(get_spec, model, get_spec_name)
-    if not isinstance(spec, ModelSpec):
+    spec = _call_method(get_spec, policy, get_spec_name)
+    if not isinstance(spec, PolicySpec):
         raise InterfaceValidationError(
-            f"{_object_label(model)} {get_spec_name}() must return ModelSpec, "
+            f"{_object_label(policy)} {get_spec_name}() must return PolicySpec, "
             f"got {type(spec).__name__}."
         )
-    validate_model_spec(spec)
+    validate_policy_spec(spec)
 
-    reset_result = _call_method(reset, model, reset_name)
+    reset_result = _call_method(reset, policy, reset_name)
     if reset_result is not None:
         raise InterfaceValidationError(
-            f"{_object_label(model)} {reset_name}() must return None, "
+            f"{_object_label(policy)} {reset_name}() must return None, "
             f"got {type(reset_result).__name__}."
         )
 
@@ -236,34 +236,34 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
     images.ensure_frame_keys(
         sample_frame,
         spec.required_image_keys,
-        owner_label="model",
+        owner_label="policy",
     )
     state.ensure_frame_keys(
         sample_frame,
         spec.required_state_keys,
-        owner_label="model",
+        owner_label="policy",
     )
     task.ensure_frame_keys(
         sample_frame,
         spec.required_task_keys,
-        owner_label="model",
+        owner_label="policy",
     )
 
     if callable(infer) and infer_name is not None:
-        action = _call_method(infer, model, infer_name, sample_frame)
+        action = _call_method(infer, policy, infer_name, sample_frame)
         if not isinstance(action, Action):
             raise InterfaceValidationError(
-                f"{_object_label(model)} {infer_name}(frame) must return Action, "
+                f"{_object_label(policy)} {infer_name}(frame) must return Action, "
                 f"got {type(action).__name__}."
             )
         validate_action(action)
-        ensure_action_matches_model_spec(action, spec)
+        ensure_action_matches_policy_spec(action, spec)
         return
 
     assert callable(infer_chunk) and infer_chunk_name is not None
     plan = _call_method(
         infer_chunk,
-        model,
+        policy,
         infer_chunk_name,
         sample_frame,
         _single_step_chunk_request(),
@@ -274,63 +274,66 @@ def check_model(model: object, *, sample_frame: Frame | None = None) -> None:
         actions = plan
     else:
         raise InterfaceValidationError(
-            f"{_object_label(model)} {infer_chunk_name}(frame, request) must return "
+            f"{_object_label(policy)} {infer_chunk_name}(frame, request) must return "
             f"list[Action], got {type(plan).__name__}."
         )
     if not actions:
         raise InterfaceValidationError(
-            f"{_object_label(model)} {infer_chunk_name}(frame, request) must not "
+            f"{_object_label(policy)} {infer_chunk_name}(frame, request) must not "
             "return an empty chunk."
         )
     for index, action in enumerate(actions):
         if not isinstance(action, Action):
             raise InterfaceValidationError(
-                f"{_object_label(model)} {infer_chunk_name}(frame, request) returned "
+                f"{_object_label(policy)} {infer_chunk_name}(frame, request) returned "
                 f"non-Action item at index {index}: {type(action).__name__}."
             )
         validate_action(action)
-        ensure_action_matches_model_spec(action, spec)
+        ensure_action_matches_policy_spec(action, spec)
 
 
 def check_pair(
     robot: object,
-    model: object,
+    policy: object,
     *,
     sample_frame: Frame | None = None,
 ) -> None:
-    """Validate that a robot and a model are individually valid and compatible."""
+    """Validate that a robot and a policy are individually valid and compatible."""
 
     check_robot(robot, call_observe=sample_frame is None)
-    check_model(model, sample_frame=sample_frame)
+    check_policy(policy, sample_frame=sample_frame)
 
     robot_get_spec, robot_get_spec_name = _require_method(robot, ROBOT_GET_SPEC_METHODS)
-    model_get_spec, model_get_spec_name = _require_method(model, MODEL_GET_SPEC_METHODS)
+    policy_get_spec, policy_get_spec_name = _require_method(
+        policy,
+        POLICY_GET_SPEC_METHODS,
+    )
 
     robot_spec = _call_method(robot_get_spec, robot, robot_get_spec_name)
-    model_spec = _call_method(model_get_spec, model, model_get_spec_name)
+    policy_spec = _call_method(policy_get_spec, policy, policy_get_spec_name)
 
     validate_robot_spec(robot_spec)
-    validate_model_spec(model_spec)
+    validate_policy_spec(policy_spec)
 
-    problems = _pair_problems(robot_spec, model_spec)
+    problems = _pair_problems(robot_spec, policy_spec)
     if problems:
         raise InterfaceValidationError(
-            "Robot/model pair is incompatible:\n- " + "\n- ".join(problems)
+            "Robot/policy pair is incompatible:\n- " + "\n- ".join(problems)
         )
 
 
 __all__ = [
     "InterfaceValidationError",
-    "check_model",
+    "check_policy",
     "check_pair",
     "check_robot",
-    "ensure_action_matches_model_spec",
+    "ensure_action_matches_policy_spec",
     "ensure_action_supported_by_robot",
     "validate_action",
     "validate_component_spec",
     "validate_command",
     "validate_frame",
-    "validate_model_output_spec",
-    "validate_model_spec",
+    "validate_policy_output_spec",
+    "validate_policy_spec",
     "validate_robot_spec",
 ]

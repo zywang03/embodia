@@ -11,8 +11,8 @@ from ..schema import (
     ComponentSpec,
     Command,
     Frame,
-    ModelOutputSpec,
-    ModelSpec,
+    PolicyOutputSpec,
+    PolicySpec,
     RobotSpec,
 )
 from .coerce import (
@@ -20,8 +20,8 @@ from .coerce import (
     coerce_command,
     coerce_component_spec,
     coerce_frame,
-    coerce_model_output_spec,
-    coerce_model_spec,
+    coerce_policy_output_spec,
+    coerce_policy_spec,
     coerce_robot_spec,
 )
 
@@ -231,16 +231,16 @@ def remap_robot_spec(
     )
 
 
-def remap_model_output_spec(
-    spec: ModelOutputSpec | Mapping[str, Any],
+def remap_policy_output_spec(
+    spec: PolicyOutputSpec | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
-) -> ModelOutputSpec:
-    """Rename a model-output spec."""
+) -> PolicyOutputSpec:
+    """Rename a policy-output spec."""
 
-    normalized = coerce_model_output_spec(spec)
-    return ModelOutputSpec(
+    normalized = coerce_policy_output_spec(spec)
+    return PolicyOutputSpec(
         target=_remap_name(normalized.target, target_map or {}),
         command_kind=_remap_name(normalized.command_kind, command_kind_map or {}),
         dim=normalized.dim,
@@ -248,37 +248,37 @@ def remap_model_output_spec(
     )
 
 
-def remap_model_spec(
-    spec: ModelSpec | Mapping[str, Any],
+def remap_policy_spec(
+    spec: PolicySpec | Mapping[str, Any],
     *,
     image_key_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
     command_kind_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
-) -> ModelSpec:
-    """Rename model spec keys and output definitions according to mappings."""
+) -> PolicySpec:
+    """Rename policy spec keys and output definitions according to mappings."""
 
-    normalized = coerce_model_spec(spec)
-    return ModelSpec(
+    normalized = coerce_policy_spec(spec)
+    return PolicySpec(
         name=normalized.name,
         required_image_keys=_remap_name_list(
             normalized.required_image_keys,
             image_key_map or {},
-            "model_spec.required_image_keys",
+            "policy_spec.required_image_keys",
         ),
         required_state_keys=_remap_name_list(
             normalized.required_state_keys,
             state_key_map or {},
-            "model_spec.required_state_keys",
+            "policy_spec.required_state_keys",
         ),
         required_task_keys=_remap_name_list(
             normalized.required_task_keys,
             task_key_map or {},
-            "model_spec.required_task_keys",
+            "policy_spec.required_task_keys",
         ),
         outputs=[
-            remap_model_output_spec(
+            remap_policy_output_spec(
                 output,
                 target_map=target_map,
                 command_kind_map=command_kind_map,
@@ -296,7 +296,7 @@ __all__ = [
     "remap_component_spec",
     "remap_frame",
     "remap_mapping_keys",
-    "remap_model_output_spec",
-    "remap_model_spec",
+    "remap_policy_output_spec",
+    "remap_policy_spec",
     "remap_robot_spec",
 ]

@@ -1,4 +1,4 @@
-"""Model-facing mixin for embodia runtime integration."""
+"""Policy-facing mixin for embodia runtime integration."""
 
 from __future__ import annotations
 
@@ -12,21 +12,21 @@ from ..config_io import (
     load_component_yaml_config,
 )
 from ...runtime.checks import (
-    ensure_action_matches_model_spec as _ensure_action_matches_model_spec,
-    validate_model_spec as _validate_model_spec,
+    ensure_action_matches_policy_spec as _ensure_action_matches_policy_spec,
+    validate_policy_spec as _validate_policy_spec,
 )
 from ..errors import InterfaceValidationError
 from ..modalities import images, meta, state, task
 from ..modalities._common import CONTROL_TARGETS
-from ..schema import Action, Frame, ModelSpec
-from ..transform import invert_mapping, model_spec_to_dict, remap_frame, remap_model_spec
+from ..schema import Action, Frame, PolicySpec
+from ..transform import invert_mapping, policy_spec_to_dict, remap_frame, remap_policy_spec
 from .common import _CommonInterfaceMixin
 
 
-class ModelMixin(_CommonInterfaceMixin):
-    """Mixin that wraps a model implementation with embodia behavior."""
+class PolicyMixin(_CommonInterfaceMixin):
+    """Mixin that wraps a policy implementation with embodia behavior."""
 
-    MODEL_SPEC: ModelSpec | Mapping[str, Any] | None = None
+    POLICY_SPEC: PolicySpec | Mapping[str, Any] | None = None
     GET_SPEC_METHOD = "get_spec"
     RESET_METHOD = "reset"
     INFER_METHOD = "infer"
@@ -51,43 +51,43 @@ class ModelMixin(_CommonInterfaceMixin):
 
         super().__init_subclass__(**kwargs)
         direct_bases = cls.__bases__
-        if ModelMixin in direct_bases and direct_bases[0] is not ModelMixin:
+        if PolicyMixin in direct_bases and direct_bases[0] is not PolicyMixin:
             raise TypeError(
-                f"{cls.__name__} must list ModelMixin as its first base class, "
-                f"for example: class {cls.__name__}(ModelMixin, VendorModel): ..."
+                f"{cls.__name__} must list PolicyMixin as its first base class, "
+                f"for example: class {cls.__name__}(PolicyMixin, VendorPolicy): ..."
             )
 
     @classmethod
     def from_config(
         cls,
         *args: Any,
-        model_spec: ModelSpec | Mapping[str, Any] | None = None,
+        policy_spec: PolicySpec | Mapping[str, Any] | None = None,
         method_aliases: Mapping[str, str] | None = None,
         modality_maps: Mapping[object, Mapping[str, str]] | None = None,
         **kwargs: Any,
     ) -> Self:
-        """Instantiate one model from validated embodia runtime config."""
+        """Instantiate one policy from validated embodia runtime config."""
 
         cls._validate_declared_runtime_interface_config()
         validated_method_aliases = cls._validate_method_aliases_config(method_aliases)
         validated_modality_maps = cls._validate_modality_maps_config(modality_maps)
-        validated_model_spec = (
-            cls._validate_model_spec_config(
-                model_spec,
+        validated_policy_spec = (
+            cls._validate_policy_spec_config(
+                policy_spec,
                 modality_maps=validated_modality_maps,
             )
-            if model_spec is not None
+            if policy_spec is not None
             else None
         )
 
-        model = cls(*args, **kwargs)
-        model._configure_runtime_interface(
+        policy = cls(*args, **kwargs)
+        policy._configure_runtime_interface(
             method_aliases=validated_method_aliases,
             modality_maps=validated_modality_maps,
         )
-        if validated_model_spec is not None:
-            model._embodia_runtime_model_spec = validated_model_spec
-        return model
+        if validated_policy_spec is not None:
+            policy._embodia_runtime_policy_spec = validated_policy_spec
+        return policy
 
     @classmethod
     def from_yaml(
@@ -95,36 +95,36 @@ class ModelMixin(_CommonInterfaceMixin):
         path: str | PathLike[str],
         **overrides: Any,
     ) -> Self:
-        """Instantiate one model from a YAML config file.
+        """Instantiate one policy from a YAML config file.
 
-        The file may either contain a top-level ``model:`` section or be a
-        direct model-only config mapping.
+        The file may either contain a top-level ``policy:`` section or be a
+        direct policy-only config mapping.
         """
 
-        loaded = load_component_yaml_config(path, component="model")
+        loaded = load_component_yaml_config(path, component="policy")
         cls._validate_yaml_section_keys(
             loaded,
             allowed_keys=cls._YAML_CONFIG_KEYS,
-            config_label=f"model YAML config at {path}",
+            config_label=f"policy YAML config at {path}",
         )
         loaded = expand_component_yaml_config(
             loaded,
-            component="model",
+            component="policy",
             path=path,
         )
         loaded.update(overrides)
         return cls.from_config(**loaded)
 
     @classmethod
-    def _validate_model_spec_config(
+    def _validate_policy_spec_config(
         cls,
-        spec: ModelSpec | Mapping[str, Any],
+        spec: PolicySpec | Mapping[str, Any],
         *,
         modality_maps: Mapping[str, Mapping[str, str]] | None = None,
-    ) -> ModelSpec:
-        """Validate one model spec before instance construction."""
+    ) -> PolicySpec:
+        """Validate one policy spec before instance construction."""
 
-        normalized = remap_model_spec(
+        normalized = remap_policy_spec(
             spec,
             image_key_map=cls._effective_modality_map(
                 images.IMAGE_KEYS,
@@ -146,13 +146,13 @@ class ModelMixin(_CommonInterfaceMixin):
                 modality_maps=modality_maps
             ),
         )
-        _validate_model_spec(normalized)
+        _validate_policy_spec(normalized)
         return normalized
 
-    def normalize_spec(self, spec: ModelSpec | Mapping[str, Any]) -> ModelSpec:
-        """Transform a model spec-like value into :class:`ModelSpec`."""
+    def normalize_spec(self, spec: PolicySpec | Mapping[str, Any]) -> PolicySpec:
+        """Transform a policy spec-like value into :class:`PolicySpec`."""
 
-        return remap_model_spec(
+        return remap_policy_spec(
             spec,
             image_key_map=self.get_image_key_map(),
             target_map=self.get_control_target_map(),
@@ -161,48 +161,48 @@ class ModelMixin(_CommonInterfaceMixin):
             command_kind_map=self.get_command_kind_map(),
         )
 
-    def transform_spec(self, spec: ModelSpec | Mapping[str, Any]) -> ModelSpec:
+    def transform_spec(self, spec: PolicySpec | Mapping[str, Any]) -> PolicySpec:
         """Alias for :meth:`normalize_spec`."""
 
         return self.normalize_spec(spec)
 
-    def validate_spec(self, spec: ModelSpec | Mapping[str, Any]) -> ModelSpec:
-        """Normalize and validate a model spec-like value."""
+    def validate_spec(self, spec: PolicySpec | Mapping[str, Any]) -> PolicySpec:
+        """Normalize and validate a policy spec-like value."""
 
         normalized = self.normalize_spec(spec)
-        _validate_model_spec(normalized)
+        _validate_policy_spec(normalized)
         return normalized
 
-    def spec_to_dict(self, spec: ModelSpec | Mapping[str, Any]) -> dict[str, Any]:
-        """Export a model spec-like value into a plain dictionary."""
+    def spec_to_dict(self, spec: PolicySpec | Mapping[str, Any]) -> dict[str, Any]:
+        """Export a policy spec-like value into a plain dictionary."""
 
-        return model_spec_to_dict(spec)
+        return policy_spec_to_dict(spec)
 
-    def _get_runtime_spec(self) -> ModelSpec:
-        """Return the model spec with caching for declarative class specs."""
+    def _get_runtime_spec(self) -> PolicySpec:
+        """Return the policy spec with caching for declarative class specs."""
 
-        instance_cached = getattr(self, "_embodia_runtime_model_spec", None)
+        instance_cached = getattr(self, "_embodia_runtime_policy_spec", None)
         if instance_cached is not None:
             return instance_cached
 
-        if type(self).MODEL_SPEC is None:
+        if type(self).POLICY_SPEC is None:
             raw_get_spec = self._resolve_impl("get_spec", "_get_spec_impl")
             return self.validate_spec(raw_get_spec())
 
-        cached = self._get_cached_class_value("_EMBODIA_CACHED_MODEL_SPEC")
+        cached = self._get_cached_class_value("_EMBODIA_CACHED_POLICY_SPEC")
         if cached is not None:
             return cached
         return self._set_cached_class_value(
-            "_EMBODIA_CACHED_MODEL_SPEC",
-            self.validate_spec(type(self).MODEL_SPEC),
+            "_EMBODIA_CACHED_POLICY_SPEC",
+            self.validate_spec(type(self).POLICY_SPEC),
         )
 
     def ensure_frame_satisfies_spec(
         self,
         frame: Frame | Mapping[str, Any],
-        spec: ModelSpec | Mapping[str, Any] | None = None,
+        spec: PolicySpec | Mapping[str, Any] | None = None,
     ) -> Frame:
-        """Ensure frame keys satisfy the model spec."""
+        """Ensure frame keys satisfy the policy spec."""
 
         normalized_frame = self.validate_frame(frame)
         normalized_spec = (
@@ -210,17 +210,17 @@ class ModelMixin(_CommonInterfaceMixin):
         )
         images.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=normalized_spec.required_image_keys,
         )
         state.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=normalized_spec.required_state_keys,
         )
         task.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=normalized_spec.required_task_keys,
         )
         return normalized_frame
@@ -228,15 +228,15 @@ class ModelMixin(_CommonInterfaceMixin):
     def ensure_output_matches_spec(
         self,
         action: Action | Mapping[str, Any],
-        spec: ModelSpec | Mapping[str, Any] | None = None,
+        spec: PolicySpec | Mapping[str, Any] | None = None,
     ) -> Action:
-        """Ensure emitted command kinds and dims match the model spec."""
+        """Ensure emitted command kinds and dims match the policy spec."""
 
         normalized_action = self.validate_action(action)
         normalized_spec = (
             self.embodia_get_spec() if spec is None else self.validate_spec(spec)
         )
-        _ensure_action_matches_model_spec(normalized_action, normalized_spec)
+        _ensure_action_matches_policy_spec(normalized_action, normalized_spec)
         return normalized_action
 
     def to_native_frame(self, frame: Frame) -> Any:
@@ -246,28 +246,28 @@ class ModelMixin(_CommonInterfaceMixin):
             frame,
             image_key_map=invert_mapping(
                 self.get_image_key_map(),
-                "ModelMixin image key mapping",
+                "PolicyMixin image key mapping",
             ),
             state_key_map=invert_mapping(
                 self.get_state_key_map(),
-                "ModelMixin state key mapping",
+                "PolicyMixin state key mapping",
             ),
             task_key_map=invert_mapping(
                 self.get_task_key_map(),
-                "ModelMixin task key mapping",
+                "PolicyMixin task key mapping",
             ),
             meta_key_map=invert_mapping(
                 self.get_meta_key_map(),
-                "ModelMixin meta key mapping",
+                "PolicyMixin meta key mapping",
             ),
         )
 
-    def embodia_get_spec(self) -> ModelSpec:
-        """Return the normalized model spec used internally by embodia."""
+    def embodia_get_spec(self) -> PolicySpec:
+        """Return the normalized policy spec used internally by embodia."""
 
         return self._get_runtime_spec()
 
-    def get_spec(self) -> ModelSpec:
+    def get_spec(self) -> PolicySpec:
         """Backward-compatible alias for :meth:`embodia_get_spec`."""
 
         return self.embodia_get_spec()
@@ -279,7 +279,7 @@ class ModelMixin(_CommonInterfaceMixin):
         result = raw_reset()
         if result is not None:
             raise InterfaceValidationError(
-                f"model reset() must return None, got {type(result).__name__}."
+                f"policy reset() must return None, got {type(result).__name__}."
             )
 
     def reset(self) -> None:
@@ -305,27 +305,27 @@ class ModelMixin(_CommonInterfaceMixin):
             history_actions=[],
         )
 
-    def _validate_model_input_frame(
+    def _validate_policy_input_frame(
         self,
         frame: Frame | Mapping[str, Any],
-    ) -> tuple[Frame, ModelSpec]:
-        """Normalize one model input frame and ensure it satisfies the spec."""
+    ) -> tuple[Frame, PolicySpec]:
+        """Normalize one policy input frame and ensure it satisfies the spec."""
 
         normalized_frame = self.validate_frame(frame)
         spec = self._get_runtime_spec()
         images.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=spec.required_image_keys,
         )
         state.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=spec.required_state_keys,
         )
         task.ensure_frame_keys(
             normalized_frame,
-            owner_label="model",
+            owner_label="policy",
             required_keys=spec.required_task_keys,
         )
         return normalized_frame, spec
@@ -334,7 +334,7 @@ class ModelMixin(_CommonInterfaceMixin):
         self,
         raw_plan: Action | Mapping[str, Any] | Sequence[Action | Mapping[str, Any]],
         *,
-        spec: ModelSpec,
+        spec: PolicySpec,
     ) -> list[Action]:
         """Normalize one step result or chunk result into validated actions."""
 
@@ -342,7 +342,7 @@ class ModelMixin(_CommonInterfaceMixin):
             items = [raw_plan]
         elif isinstance(raw_plan, (str, bytes)) or not isinstance(raw_plan, Sequence):
             raise InterfaceValidationError(
-                "model infer_chunk() must return one action-like object or a "
+                "policy infer_chunk() must return one action-like object or a "
                 f"sequence of action-like objects, got {type(raw_plan).__name__}."
             )
         else:
@@ -350,14 +350,14 @@ class ModelMixin(_CommonInterfaceMixin):
 
         if not items:
             raise InterfaceValidationError(
-                "model infer_chunk() must not return an empty chunk."
+                "policy infer_chunk() must not return an empty chunk."
             )
 
         actions: list[Action] = []
         for index, item in enumerate(items):
             action = self.validate_action(item)
             try:
-                _ensure_action_matches_model_spec(action, spec)
+                _ensure_action_matches_policy_spec(action, spec)
             except InterfaceValidationError as exc:
                 raise InterfaceValidationError(
                     f"invalid action at chunk index {index}: {exc}"
@@ -368,20 +368,20 @@ class ModelMixin(_CommonInterfaceMixin):
     def embodia_infer(self, frame: Frame | Mapping[str, Any]) -> Action:
         """Normalize inputs and outputs around one wrapped single-step inference."""
 
-        normalized_frame, spec = self._validate_model_input_frame(frame)
+        normalized_frame, spec = self._validate_policy_input_frame(frame)
         raw_infer = self._resolve_optional_impl("infer", "_infer_impl")
 
         if callable(raw_infer):
             raw_action = raw_infer(self.to_native_frame(normalized_frame))
             normalized_action = self.validate_action(raw_action)
-            _ensure_action_matches_model_spec(normalized_action, spec)
+            _ensure_action_matches_policy_spec(normalized_action, spec)
             return normalized_action
 
         raw_step = self._resolve_optional_impl("step", "_step_impl")
         if callable(raw_step):
             raw_action = raw_step(self.to_native_frame(normalized_frame))
             normalized_action = self.validate_action(raw_action)
-            _ensure_action_matches_model_spec(normalized_action, spec)
+            _ensure_action_matches_policy_spec(normalized_action, spec)
             return normalized_action
 
         raw_infer_chunk = self._resolve_optional_impl("infer_chunk", "_infer_chunk_impl")
@@ -414,7 +414,7 @@ class ModelMixin(_CommonInterfaceMixin):
     ) -> list[Action]:
         """Normalize inputs and outputs around one chunk-producing inference."""
 
-        normalized_frame, spec = self._validate_model_input_frame(frame)
+        normalized_frame, spec = self._validate_policy_input_frame(frame)
         raw_infer_chunk = self._resolve_optional_impl("infer_chunk", "_infer_chunk_impl")
 
         if callable(raw_infer_chunk):
@@ -430,14 +430,14 @@ class ModelMixin(_CommonInterfaceMixin):
         if callable(raw_infer):
             raw_action = raw_infer(self.to_native_frame(normalized_frame))
             normalized_action = self.validate_action(raw_action)
-            _ensure_action_matches_model_spec(normalized_action, spec)
+            _ensure_action_matches_policy_spec(normalized_action, spec)
             return [normalized_action]
 
         raw_step = self._resolve_optional_impl("step", "_step_impl")
         if callable(raw_step):
             raw_action = raw_step(self.to_native_frame(normalized_frame))
             normalized_action = self.validate_action(raw_action)
-            _ensure_action_matches_model_spec(normalized_action, spec)
+            _ensure_action_matches_policy_spec(normalized_action, spec)
             return [normalized_action]
 
         raise InterfaceValidationError(
@@ -454,9 +454,9 @@ class ModelMixin(_CommonInterfaceMixin):
         return self.embodia_infer_chunk(frame, request)
 
     def embodia_plan(self, frame: Frame | Mapping[str, Any]) -> list[Action]:
-        """Return one normalized action plan when the wrapped model exposes one."""
+        """Return one normalized action plan when the wrapped policy exposes one."""
 
-        normalized_frame, spec = self._validate_model_input_frame(frame)
+        normalized_frame, spec = self._validate_policy_input_frame(frame)
         raw_plan = self._resolve_optional_impl("plan", "_plan_impl")
         if callable(raw_plan):
             return self._coerce_action_plan(
@@ -468,4 +468,4 @@ class ModelMixin(_CommonInterfaceMixin):
             self._single_step_chunk_request(),
         )
 
-__all__ = ["ModelMixin"]
+__all__ = ["PolicyMixin"]

@@ -1,4 +1,4 @@
-"""Shared mixin helpers for embodia robot/model integrations."""
+"""Shared mixin helpers for embodia robot/policy integrations."""
 
 from __future__ import annotations
 

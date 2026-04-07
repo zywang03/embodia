@@ -12,8 +12,8 @@ from ..schema import (
     ComponentSpec,
     Command,
     Frame,
-    ModelOutputSpec,
-    ModelSpec,
+    PolicyOutputSpec,
+    PolicySpec,
     RobotSpec,
 )
 
@@ -258,13 +258,13 @@ def coerce_robot_spec(value: RobotSpec | Mapping[str, Any]) -> RobotSpec:
     )
 
 
-def coerce_model_output_spec(
-    value: ModelOutputSpec | Mapping[str, Any],
-) -> ModelOutputSpec:
-    """Normalize a model-output spec-like value."""
+def coerce_policy_output_spec(
+    value: PolicyOutputSpec | Mapping[str, Any],
+) -> PolicyOutputSpec:
+    """Normalize a policy-output spec-like value."""
 
-    if isinstance(value, ModelOutputSpec):
-        return ModelOutputSpec(
+    if isinstance(value, PolicyOutputSpec):
+        return PolicyOutputSpec(
             target=value.target,
             command_kind=value.command_kind,
             dim=value.dim,
@@ -272,7 +272,7 @@ def coerce_model_output_spec(
         )
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
-            "model output spec must be ModelOutputSpec or mapping, got "
+            "policy output spec must be PolicyOutputSpec or mapping, got "
             f"{type(value).__name__}."
         )
 
@@ -281,37 +281,37 @@ def coerce_model_output_spec(
         dim = value["dim"]
     except KeyError as exc:
         raise InterfaceValidationError(
-            f"model output spec mapping is missing required field {exc.args[0]!r}."
+            f"policy output spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
     command_kind = value.get("command_kind")
     if command_kind is None:
         raise InterfaceValidationError(
-            "model output spec mapping is missing required field 'command_kind'."
+            "policy output spec mapping is missing required field 'command_kind'."
         )
 
-    return ModelOutputSpec(
+    return PolicyOutputSpec(
         target=target,
         command_kind=command_kind,
         dim=dim,
-        meta=_copy_string_key_mapping(value.get("meta"), "model_output_spec.meta"),
+        meta=_copy_string_key_mapping(value.get("meta"), "policy_output_spec.meta"),
     )
 
 
-def coerce_model_spec(value: ModelSpec | Mapping[str, Any]) -> ModelSpec:
-    """Normalize a ``ModelSpec`` or mapping into a standard :class:`ModelSpec`."""
+def coerce_policy_spec(value: PolicySpec | Mapping[str, Any]) -> PolicySpec:
+    """Normalize a ``PolicySpec`` or mapping into a standard :class:`PolicySpec`."""
 
-    if isinstance(value, ModelSpec):
-        return ModelSpec(
+    if isinstance(value, PolicySpec):
+        return PolicySpec(
             name=value.name,
             required_image_keys=list(value.required_image_keys),
             required_state_keys=list(value.required_state_keys),
             required_task_keys=list(value.required_task_keys),
-            outputs=[coerce_model_output_spec(output) for output in value.outputs],
+            outputs=[coerce_policy_output_spec(output) for output in value.outputs],
             meta=dict(value.meta),
         )
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
-            f"model spec must be a ModelSpec or mapping, got {type(value).__name__}."
+            f"policy spec must be a PolicySpec or mapping, got {type(value).__name__}."
         )
 
     try:
@@ -321,25 +321,25 @@ def coerce_model_spec(value: ModelSpec | Mapping[str, Any]) -> ModelSpec:
         outputs = value["outputs"]
     except KeyError as exc:
         raise InterfaceValidationError(
-            f"model spec mapping is missing required field {exc.args[0]!r}."
+            f"policy spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
 
-    return ModelSpec(
+    return PolicySpec(
         name=name,
         required_image_keys=_copy_sequence(
             required_image_keys,
-            "model_spec.required_image_keys",
+            "policy_spec.required_image_keys",
         ),
         required_state_keys=_copy_sequence(
             required_state_keys,
-            "model_spec.required_state_keys",
+            "policy_spec.required_state_keys",
         ),
         required_task_keys=_copy_sequence(
             value.get("required_task_keys", []),
-            "model_spec.required_task_keys",
+            "policy_spec.required_task_keys",
         ),
-        outputs=[coerce_model_output_spec(item) for item in _copy_sequence(outputs, "model_spec.outputs")],
-        meta=_copy_string_key_mapping(value.get("meta"), "model_spec.meta"),
+        outputs=[coerce_policy_output_spec(item) for item in _copy_sequence(outputs, "policy_spec.outputs")],
+        meta=_copy_string_key_mapping(value.get("meta"), "policy_spec.meta"),
     )
 
 
@@ -348,7 +348,7 @@ __all__ = [
     "coerce_command",
     "coerce_component_spec",
     "coerce_frame",
-    "coerce_model_output_spec",
-    "coerce_model_spec",
+    "coerce_policy_output_spec",
+    "coerce_policy_spec",
     "coerce_robot_spec",
 ]

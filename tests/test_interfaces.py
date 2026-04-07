@@ -7,7 +7,7 @@ import unittest
 
 import embodia as em
 
-from helpers import DummyModel, DummyRobot
+from helpers import DummyPolicy, DummyRobot
 
 
 class InterfaceTests(unittest.TestCase):
@@ -120,17 +120,17 @@ class InterfaceTests(unittest.TestCase):
 
     def test_dummy_components_pass_pair_check(self) -> None:
         robot = DummyRobot()
-        model = DummyModel()
+        policy = DummyPolicy()
 
         sample_frame = robot.reset()
         em.check_robot(robot)
-        em.check_model(model, sample_frame=sample_frame)
-        em.check_pair(robot, model, sample_frame=sample_frame)
+        em.check_policy(policy, sample_frame=sample_frame)
+        em.check_pair(robot, policy, sample_frame=sample_frame)
 
     def test_check_pair_reports_group_mismatch(self) -> None:
         robot = DummyRobot()
 
-        class IncompatibleModel(em.ModelMixin):
+        class IncompatiblePolicy(em.PolicyMixin):
             def _get_spec_impl(self) -> dict[str, object]:
                 return {
                     "name": "bad_model",
@@ -157,9 +157,9 @@ class InterfaceTests(unittest.TestCase):
                     value=[1.0],
                 )
 
-        model = IncompatibleModel()
+        policy = IncompatiblePolicy()
         with self.assertRaises(em.InterfaceValidationError) as ctx:
-            em.check_pair(robot, model, sample_frame=robot.reset())
+            em.check_pair(robot, policy, sample_frame=robot.reset())
 
         self.assertIn("missing required component", str(ctx.exception))
 
@@ -172,7 +172,7 @@ class InterfaceTests(unittest.TestCase):
             class WrongOrder(VendorRobot, em.RobotMixin):
                 pass
 
-    def test_robot_and_model_mixins_remap_targets_modes_and_state(self) -> None:
+    def test_robot_and_policy_mixins_remap_targets_modes_and_state(self) -> None:
         class VendorRobot:
             def __init__(self) -> None:
                 self.last_action: em.Action | None = None
@@ -232,7 +232,7 @@ class InterfaceTests(unittest.TestCase):
                 },
             }
 
-        class VendorModel:
+        class VendorPolicy:
             def clear_state(self) -> None:
                 return None
 
@@ -254,8 +254,8 @@ class InterfaceTests(unittest.TestCase):
                     "dt": 0.05,
                 }
 
-        class YourModel(em.ModelMixin, VendorModel):
-            MODEL_SPEC = {
+        class YourPolicy(em.PolicyMixin, VendorPolicy):
+            POLICY_SPEC = {
                 "name": "vendor_model",
                 "required_image_keys": ["front_rgb"],
                 "required_state_keys": ["joint_positions", "position"],
@@ -292,8 +292,8 @@ class InterfaceTests(unittest.TestCase):
             }
 
         robot = YourRobot()
-        model = YourModel()
-        result = em.run_step(robot, model)
+        policy = YourPolicy()
+        result = em.run_step(robot, policy)
 
         self.assertEqual(
             result.action.get_command("arm").kind,  # type: ignore[union-attr]
@@ -304,8 +304,8 @@ class InterfaceTests(unittest.TestCase):
             robot.last_action.get_command("vendor_arm").kind,  # type: ignore[union-attr]
             "cartesian_delta",
         )
-        self.assertEqual(model.seen.state["qpos"], [1.0] * 6)
-        self.assertEqual(model.seen.task["prompt"], "fold")
+        self.assertEqual(policy.seen.state["qpos"], [1.0] * 6)
+        self.assertEqual(policy.seen.task["prompt"], "fold")
 
     def test_run_step_accepts_action_function(self) -> None:
         robot = DummyRobot()
@@ -324,8 +324,8 @@ class InterfaceTests(unittest.TestCase):
 
     def test_run_step_result_can_be_exported(self) -> None:
         robot = DummyRobot()
-        model = DummyModel()
-        result = em.run_step(robot, model)
+        policy = DummyPolicy()
+        result = em.run_step(robot, policy)
 
         self.assertEqual(em.frame_to_dict(result.frame)["state"]["joint_positions"], [0.0] * 6)
         self.assertEqual(

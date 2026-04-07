@@ -1,11 +1,11 @@
 # embodia mixin guide
 
 This guide explains the intentionally small integration surface around
-`RobotMixin` and `ModelMixin`.
+`RobotMixin` and `PolicyMixin`.
 
 For most users, the main path should stay small:
 
-1. inherit `RobotMixin` / `ModelMixin`
+1. inherit `RobotMixin` / `PolicyMixin`
 2. load a shared runtime schema with `from_yaml(...)`
 3. call `run_step(...)`
 4. add `InferenceRuntime(...)` only when needed
@@ -15,12 +15,12 @@ The preferred direction is now:
 - YAML describes the shared embodia schema only
 - your Python class keeps its own constructor and native methods
 - if your native names already match the schema, you do not need any remapping
-- model inputs and outputs are inferred from that shared schema
+- policy inputs and outputs are inferred from that shared schema
 
 embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
 That means your native methods can stay named `infer`, `capture`, `home`, and so
 on, while embodia still has one collision-free internal dispatch path.
-`task` is model-side context, not robot capability, so robot specs no longer
+`task` is policy-side context, not robot capability, so robot specs no longer
 declare task-related fields.
 
 ## Method aliases
@@ -36,8 +36,8 @@ METHOD_ALIASES = {
 ```
 
 The same keys can also live in YAML under `robot.method_aliases` or
-`model.method_aliases`. On the model side, `infer` is the default native method
-name, so you only need `model.method_aliases.infer` when your class uses a
+`policy.method_aliases`. On the policy side, `infer` is the default native method
+name, so you only need `policy.method_aliases.infer` when your class uses a
 different name.
 
 ## Shared schema
@@ -67,10 +67,10 @@ ROBOT_SPEC = {
 }
 ```
 
-Model outputs should align with the same shared targets and command kinds:
+Policy outputs should align with the same shared targets and command kinds:
 
 ```python
-MODEL_SPEC = {
+POLICY_SPEC = {
     "name": "your_model",
     "required_image_keys": ["front_rgb"],
     "required_state_keys": ["joint_positions", "position"],
@@ -82,7 +82,7 @@ MODEL_SPEC = {
 ```
 
 When you use `from_yaml(...)`, you do not repeat that information inside the
-`model:` block. embodia derives:
+`policy:` block. embodia derives:
 
 - `required_image_keys` from `schema.images`
 - `required_state_keys` from the union of `schema.components[*].state`
@@ -90,8 +90,8 @@ When you use `from_yaml(...)`, you do not repeat that information inside the
 - `outputs` from `schema.components[*].command_kinds`
 
 That YAML auto-derivation expects each component to declare exactly one
-command kind. If a component supports multiple command kinds and your model needs a
-more specific spec, declare `MODEL_SPEC` in Python instead of relying on YAML
+command kind. If a component supports multiple command kinds and your policy needs a
+more specific spec, declare `POLICY_SPEC` in Python instead of relying on YAML
 inference.
 
 The normalized runtime action is grouped by control target:
@@ -136,7 +136,7 @@ existing projects into the shared schema.
 ## YAML shape
 
 `from_yaml(...)` reads one top-level `schema:` block plus either `robot:` or
-`model:`:
+`policy:`:
 
 ```yaml
 schema:
@@ -165,7 +165,7 @@ robot:
     act: send_command
     reset: home
 
-model:
+policy:
   name: your_model
   method_aliases:
     reset: clear_state

@@ -19,8 +19,8 @@ class RobotSpecKey(StrEnum):
     META = "meta"
 
 
-class ModelSpecKey(StrEnum):
-    """Keys used inside ``ModelMixin.MODEL_SPEC`` mappings."""
+class PolicySpecKey(StrEnum):
+    """Keys used inside ``PolicyMixin.POLICY_SPEC`` mappings."""
 
     NAME = "name"
     REQUIRED_IMAGE_KEYS = "required_image_keys"
@@ -42,4 +42,4 @@ class MethodAliasKey(StrEnum):
     PLAN = "plan"
 
 
-__all__ = ["MethodAliasKey", "ModelSpecKey", "RobotSpecKey"]
+__all__ = ["MethodAliasKey", "PolicySpecKey", "RobotSpecKey"]

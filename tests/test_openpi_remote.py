@@ -73,8 +73,8 @@ class OpenPIRemoteTests(unittest.TestCase):
         self.assertEqual(command.kind, "joint_position")
         self.assertEqual(command.value, [1.0, 2.0, 3.0])
 
-    def test_build_model_policy_adapter_serves_grouped_action_model(self) -> None:
-        class DemoModel(em.ModelMixin):
+    def test_build_policy_adapter_serves_grouped_action_policy(self) -> None:
+        class DemoPolicy(em.PolicyMixin):
             def _get_spec_impl(self) -> dict[str, object]:
                 return {
                     "name": "demo_model",
@@ -102,7 +102,7 @@ class OpenPIRemoteTests(unittest.TestCase):
                     dt=0.05,
                 )
 
-        adapter = em_openpi_remote.build_model_policy_adapter(DemoModel())
+        adapter = em_openpi_remote.build_policy_adapter(DemoPolicy())
         response = adapter.infer(
             {
                 "timestamp_ns": 1,
@@ -112,7 +112,7 @@ class OpenPIRemoteTests(unittest.TestCase):
         )
 
         self.assertEqual(response["actions"][0], [1.0, 2.0, 3.0])
-        self.assertIn("model_spec", adapter.get_server_metadata()["embodia"])
+        self.assertIn("policy_spec", adapter.get_server_metadata()["embodia"])
 
     def test_robot_mixin_can_use_hidden_remote_policy_backend(self) -> None:
         class DemoRobot(em.RobotMixin):

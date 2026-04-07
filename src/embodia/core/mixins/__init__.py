@@ -1,6 +1,6 @@
 """Reusable mixins that add normalization and validation behavior."""
 
-from .model import ModelMixin
+from .policy import PolicyMixin
 from .robot import RobotMixin
 
-__all__ = ["ModelMixin", "RobotMixin"]
+__all__ = ["PolicyMixin", "RobotMixin"]

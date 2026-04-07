@@ -40,7 +40,7 @@ def pair_problem(
     available_keys: Sequence[str],
     required_keys: Sequence[str],
 ) -> str | None:
-    """Return a robot/model image compatibility problem, if any."""
+    """Return a robot/policy image compatibility problem, if any."""
 
     missing_keys = sorted(set(required_keys) - set(available_keys))
     if not missing_keys:
@@ -48,7 +48,7 @@ def pair_problem(
 
     return (
         "missing image keys: "
-        f"model requires {missing_keys!r}, "
+        f"policy requires {missing_keys!r}, "
         f"but robot exposes {list(available_keys)!r}."
     )
 

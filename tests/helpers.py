@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from embodia import Action, Frame, ModelMixin, RobotMixin
+from embodia import Action, Frame, PolicyMixin, RobotMixin
 
 
 class DummyRobot(RobotMixin):
@@ -40,7 +40,7 @@ class DummyRobot(RobotMixin):
         return self._observe_impl()
 
 
-class DummyModel(ModelMixin):
+class DummyPolicy(PolicyMixin):
     def _get_spec_impl(self) -> dict[str, object]:
         return {
             "name": "dummy_model",

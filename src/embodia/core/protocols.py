@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .schema import Action, Frame, ModelSpec, RobotSpec
+from .schema import Action, Frame, PolicySpec, RobotSpec
 
 
 @runtime_checkable
@@ -25,31 +25,31 @@ class RobotProtocol(Protocol):
 
 
 @runtime_checkable
-class ModelProtocol(Protocol):
-    """Structural interface for runtime-compatible model implementations."""
+class PolicyProtocol(Protocol):
+    """Structural interface for runtime-compatible policy implementations."""
 
-    def get_spec(self) -> ModelSpec:
-        """Return a static description of model requirements."""
+    def get_spec(self) -> PolicySpec:
+        """Return a static description of policy requirements."""
 
     def reset(self) -> None:
-        """Reset any internal model state."""
+        """Reset any internal policy state."""
 
     def infer(self, frame: Frame) -> Action:
         """Consume one frame and produce one action."""
 
 
 @runtime_checkable
-class ChunkModelProtocol(Protocol):
-    """Structural interface for chunk-producing model implementations."""
+class ChunkPolicyProtocol(Protocol):
+    """Structural interface for chunk-producing policy implementations."""
 
-    def get_spec(self) -> ModelSpec:
-        """Return a static description of model requirements."""
+    def get_spec(self) -> PolicySpec:
+        """Return a static description of policy requirements."""
 
     def reset(self) -> None:
-        """Reset any internal model state."""
+        """Reset any internal policy state."""
 
     def infer_chunk(self, frame: Frame, request: object) -> list[Action]:
         """Consume one frame and produce one action chunk."""
 
 
-__all__ = ["ChunkModelProtocol", "ModelProtocol", "RobotProtocol"]
+__all__ = ["ChunkPolicyProtocol", "PolicyProtocol", "RobotProtocol"]

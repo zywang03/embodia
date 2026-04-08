@@ -41,9 +41,6 @@ class YourRobot(em.RobotMixin):
 
 
 def main() -> None:
-    if not em.is_yaml_available():
-        print("yaml_config: skipped, install embodia[yaml] or PyYAML")
-        return
     if not em_remote.is_remote_available():
         print("remote: skipped, install embodia[remote]")
         return

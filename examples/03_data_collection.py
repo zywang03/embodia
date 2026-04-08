@@ -89,10 +89,6 @@ class DemoTeleop:
 
 
 def main() -> None:
-    if not em.is_yaml_available():
-        print("yaml_config: skipped, install embodia[yaml] or PyYAML")
-        return
-
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     teleop = DemoTeleop()
     output_path = Path("tmp") / "episode_0000.jsonl"

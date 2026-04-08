@@ -66,19 +66,7 @@ class YourPolicy(em.PolicyMixin):
         }
 
 
-def arm_value0(action: em.Action) -> float:
-    """Return the first arm dimension for compact demo printing."""
-
-    arm = action.get_command("YOUR_OWN_arm")
-    assert arm is not None
-    return float(arm.value[0])
-
-
 def main() -> None:
-    if not em.is_yaml_available():
-        print("yaml_config: skipped, install embodia[yaml] or PyYAML")
-        return
-
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     policy = YourPolicy.from_yaml("examples/basic_runtime.yml")
     runtime = em.InferenceRuntime(
@@ -96,11 +84,14 @@ def main() -> None:
     for step_index in range(5):
         result = em.run_step(robot, source=policy, runtime=runtime)
         print(
-            f"step={step_index} "
-            f"raw0={arm_value0(result.raw_action):.2f} "
-            f"action0={arm_value0(result.action):.2f} "
-            f"plan_refreshed={result.plan_refreshed} "
-            f"wait={result.control_wait_s:.4f}"
+            "step:",
+            step_index,
+            "action:",
+            em.action_to_dict(result.action),
+            "plan_refreshed:",
+            result.plan_refreshed,
+            "wait:",
+            f"{result.control_wait_s:.4f}",
         )
 
     print("native_robot_received:", robot.last_native_action)

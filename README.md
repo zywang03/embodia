@@ -114,6 +114,17 @@ Only these method boundaries need to align with the YAML schema:
 return value is ignored. Numeric payloads are expected to be numpy-backed.
 embodia manages frame timestamps and step ids internally.
 
+`command` is not a free-form string. For each component, it must match one of
+the entries declared in `schema.components.<name>.command`. embodia ships these
+built-in command kinds:
+`joint_position`, `joint_position_delta`, `joint_velocity`,
+`cartesian_pose`, `cartesian_pose_delta`, `cartesian_twist`,
+`gripper_position`, `gripper_position_delta`, `gripper_velocity`,
+`gripper_open_close`, `hand_joint_position`,
+`hand_joint_position_delta`, and `eef_activation`.
+If you need a project-specific command, register a `custom:...` kind with
+`register_command_kind(...)`.
+
 If your existing project uses different native names, keep that remapping in
 Python with `MODALITY_MAPS`. embodia will translate at the boundary:
 

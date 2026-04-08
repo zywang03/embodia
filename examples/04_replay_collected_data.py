@@ -88,41 +88,29 @@ class DemoTeleop:
         return self.script[index]
 
 
-def ensure_demo_episode(path: Path, robot: YourRobot) -> None:
-    """Create one small recording first so the replay example is self-contained."""
-
-    if path.exists():
-        return
-
-    teleop = DemoTeleop()
-    records: list[dict[str, object]] = [
-        {"frame": em.frame_to_dict(robot.reset()), "action": None}
-    ]
-    for _ in range(3):
-        result = em.run_step(robot, source=teleop)
-        records.append(
-            {
-                "frame": em.frame_to_dict(result.frame),
-                "action": em.action_to_dict(result.action),
-            }
-        )
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            # JSON serialization converts numpy arrays into plain lists on disk.
-            handle.write(json.dumps(record, ensure_ascii=True))
-            handle.write("\n")
-
-
 def main() -> None:
-    if not em.is_yaml_available():
-        print("yaml_config: skipped, install embodia[yaml] or PyYAML")
-        return
-
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     episode_path = Path("tmp") / "episode_0000.jsonl"
-    ensure_demo_episode(episode_path, robot)
+    if not episode_path.exists():
+        teleop = DemoTeleop()
+        records: list[dict[str, object]] = [
+            {"frame": em.frame_to_dict(robot.reset()), "action": None}
+        ]
+        for _ in range(3):
+            result = em.run_step(robot, source=teleop)
+            records.append(
+                {
+                    "frame": em.frame_to_dict(result.frame),
+                    "action": em.action_to_dict(result.action),
+                }
+            )
+
+        episode_path.parent.mkdir(parents=True, exist_ok=True)
+        with episode_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                # JSON serialization converts numpy arrays into plain lists on disk.
+                handle.write(json.dumps(record, ensure_ascii=True))
+                handle.write("\n")
 
     replayed = 0
     with episode_path.open("r", encoding="utf-8") as handle:

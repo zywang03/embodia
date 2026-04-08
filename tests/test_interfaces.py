@@ -366,6 +366,82 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(result.action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
         self.assertEqual(robot.last_action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
 
+    def test_run_step_accepts_source_keyword(self) -> None:
+        robot = DummyRobot()
+        policy = DummyPolicy()
+
+        result = em.run_step(robot, source=policy)
+
+        self.assertEqual(result.action.get_command("arm").kind, "cartesian_pose_delta")  # type: ignore[union-attr]
+
+    def test_run_step_accepts_generic_source_object(self) -> None:
+        robot = DummyRobot()
+
+        class TeleopSource:
+            def next_action(self, frame: em.Frame) -> dict[str, object]:
+                del frame
+                return {
+                    "arm": {
+                        "kind": "cartesian_pose_delta",
+                        "value": [0.3] * 6,
+                    }
+                }
+
+        result = em.run_step(robot, source=TeleopSource())
+        self.assertEqual(result.action.get_command("arm").value, [0.3] * 6)  # type: ignore[union-attr]
+
+    def test_run_step_accepts_robot_as_its_own_source(self) -> None:
+        class TeleopRobot(em.RobotMixin):
+            def __init__(self) -> None:
+                self.last_action: em.Action | None = None
+
+            def _get_spec_impl(self) -> dict[str, object]:
+                return {
+                    "name": "teleop_robot",
+                    "image_keys": ["front_rgb"],
+                    "components": [
+                        {
+                            "name": "arm",
+                            "kind": "arm",
+                            "dof": 6,
+                            "supported_command_kinds": ["cartesian_pose_delta"],
+                            "state_keys": ["joint_positions"],
+                        }
+                    ],
+                }
+
+            def _observe_impl(self) -> dict[str, object]:
+                return {
+                    "images": {"front_rgb": None},
+                    "state": {"joint_positions": [0.0] * 6},
+                }
+
+            def _act_impl(self, action: em.Action) -> None:
+                self.last_action = action
+
+            def _reset_impl(self) -> dict[str, object]:
+                return self._observe_impl()
+
+            def next_action(self, frame: em.Frame) -> dict[str, object]:
+                del frame
+                return {
+                    "arm": {
+                        "kind": "cartesian_pose_delta",
+                        "value": [0.7] * 6,
+                    }
+                }
+
+        robot = TeleopRobot()
+        result = em.run_step(robot, source=robot)
+        self.assertEqual(result.action.get_command("arm").value, [0.7] * 6)  # type: ignore[union-attr]
+
+    def test_run_step_rejects_source_and_policy_together(self) -> None:
+        robot = DummyRobot()
+        policy = DummyPolicy()
+
+        with self.assertRaises(em.InterfaceValidationError):
+            em.run_step(robot, source=policy, policy=policy)
+
     def test_run_step_prefers_robot_returned_action(self) -> None:
         class ReturningRobot(em.RobotMixin):
             def __init__(self) -> None:
@@ -430,22 +506,45 @@ class InterfaceTests(unittest.TestCase):
             "cartesian_pose_delta",
         )
 
-    def test_run_step_can_report_embodia_timing(self) -> None:
+    def test_embodia_auto_fills_frame_sequence_id(self) -> None:
+        robot = DummyRobot()
+
+        reset_frame = robot.reset()
+        self.assertEqual(reset_frame.sequence_id, 0)
+
+        first = em.run_step(robot, action_fn=lambda _frame: em.Action.single(
+            target="arm",
+            kind="cartesian_pose_delta",
+            value=[0.0] * 6,
+        ))
+        second = em.run_step(robot, action_fn=lambda _frame: em.Action.single(
+            target="arm",
+            kind="cartesian_pose_delta",
+            value=[0.0] * 6,
+        ))
+
+        self.assertEqual(first.frame.sequence_id, 1)
+        self.assertEqual(second.frame.sequence_id, 2)
+
+    def test_coerce_frame_auto_fills_timestamp_ns(self) -> None:
+        frame = em.coerce_frame(
+            {
+                "images": {"front_rgb": None},
+                "state": {"joint_positions": [0.0] * 6},
+            }
+        )
+
+        self.assertIsInstance(frame.timestamp_ns, int)
+        self.assertGreaterEqual(frame.timestamp_ns, 0)
+
+    def test_run_step_result_keeps_public_shape_small(self) -> None:
         robot = DummyRobot()
         policy = DummyPolicy()
 
-        result = em.run_step(robot, policy, measure_timing=True)
+        result = em.run_step(robot, source=policy)
 
-        self.assertIsNotNone(result.timing)
-        assert result.timing is not None
-        self.assertGreaterEqual(result.timing.total_s, 0.0)
-        self.assertGreaterEqual(result.timing.embodia_overhead_s, 0.0)
-        self.assertGreaterEqual(result.timing.source_call_s, 0.0)
-        self.assertGreaterEqual(result.timing.observe_call_s, 0.0)
-        self.assertGreaterEqual(
-            result.timing.total_s,
-            result.timing.embodia_overhead_s,
-        )
+        self.assertFalse(hasattr(result, "timing"))
+        self.assertTrue(hasattr(result, "control_wait_s"))
 
 
 if __name__ == "__main__":

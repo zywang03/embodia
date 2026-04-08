@@ -14,6 +14,7 @@ from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 from ..shared.action_source import (
     ActionSource,
+    coalesce_source_argument as _coalesce_source_argument,
     call_action_fn as _call_action_fn,
     resolve_action_source as _resolve_action_source,
 )
@@ -26,6 +27,7 @@ from ..shared.dispatch import (
     format_method_options,
     resolve_callable_method,
 )
+from ..shared.sequence import ensure_frame_sequence_id
 from ..checks import validate_action, validate_frame
 from .chunk_scheduler import _RobustMeanEstimator
 from .common import as_action, as_frame
@@ -76,8 +78,9 @@ class SyncInferenceProfile:
 
 def profile_sync_inference(
     robot: object,
-    policy: object | None = None,
+    source: object | None = None,
     *,
+    policy: object | None = None,
     action_fn: ActionSource | None = None,
     steps: int = 8,
     execute_action: bool = False,
@@ -136,7 +139,12 @@ def profile_sync_inference(
                 f"overlap_ratio must be in (0, 1), got {overlap_ratio!r}."
             )
 
-    action_source, can_reset = _resolve_action_source(policy, action_fn, robot=robot)
+    source_obj = _coalesce_source_argument(source, policy)
+    action_source, can_reset = _resolve_action_source(
+        source_obj,
+        action_fn,
+        robot=robot,
+    )
     if reset_policy and not can_reset:
         raise InterfaceValidationError(
             "reset_policy=True requires a source object exposing "
@@ -144,18 +152,18 @@ def profile_sync_inference(
             f"{format_method_options(POLICY_INFER_METHODS)} or "
             f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, not a bare callable."
         )
-    if reset_policy and policy is not None:
-        reset, reset_name = resolve_callable_method(policy, POLICY_RESET_METHODS)
+    if reset_policy and source_obj is not None:
+        reset, reset_name = resolve_callable_method(source_obj, POLICY_RESET_METHODS)
         if not callable(reset) or reset_name is None:
             raise InterfaceValidationError(
-                "reset_policy=True requires a policy object exposing "
+                "reset_policy=True requires a source object exposing "
                 f"{format_method_options(POLICY_RESET_METHODS)}."
             )
         try:
             reset()
         except Exception as exc:
             raise InterfaceValidationError(
-                f"{type(policy).__name__}.{reset_name}() raised "
+                f"{type(source_obj).__name__}.{reset_name}() raised "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
@@ -185,7 +193,10 @@ def profile_sync_inference(
                 f"{type(robot).__name__}.{observe_name}() raised "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
-        frame = as_frame(raw_frame)
+        frame = ensure_frame_sequence_id(
+            as_frame(raw_frame),
+            owner=robot,
+        )
         validate_frame(frame)
 
         inference_start = float(clock())

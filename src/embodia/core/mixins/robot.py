@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-import inspect
+from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Self
 
@@ -15,6 +14,7 @@ from ...runtime.checks import (
     ensure_action_supported_by_robot as _ensure_action_supported_by_robot,
     validate_robot_spec as _validate_robot_spec,
 )
+from ...runtime.shared.sequence import ensure_frame_sequence_id
 from ..errors import InterfaceValidationError
 from ..modalities import images, state
 from ..modalities._common import CONTROL_TARGETS
@@ -27,9 +27,6 @@ class RobotMixin(_CommonInterfaceMixin):
     """Mixin that wraps a robot implementation with embodia behavior."""
 
     ROBOT_SPEC: RobotSpec | Mapping[str, Any] | None = None
-    REMOTE_POLICY_ENABLED = False
-    REMOTE_POLICY_REQUEST_METHOD: str | None = None
-    REMOTE_POLICY_RESPONSE_METHOD: str | None = None
     GET_SPEC_METHOD = "get_spec"
     OBSERVE_METHOD = "observe"
     ACT_METHOD = "act"
@@ -45,7 +42,6 @@ class RobotMixin(_CommonInterfaceMixin):
         "schema",
         "name",
         "method_aliases",
-        "remote_policy",
     }
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -66,7 +62,6 @@ class RobotMixin(_CommonInterfaceMixin):
         robot_spec: RobotSpec | Mapping[str, Any] | None = None,
         method_aliases: Mapping[str, str] | None = None,
         modality_maps: Mapping[object, Mapping[str, str]] | None = None,
-        remote_policy: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Self:
         """Instantiate one robot from validated embodia runtime config."""
@@ -82,11 +77,6 @@ class RobotMixin(_CommonInterfaceMixin):
             if robot_spec is not None
             else None
         )
-        validated_remote_policy = (
-            cls._validate_remote_policy_config(remote_policy)
-            if remote_policy is not None
-            else None
-        )
 
         robot = cls(*args, **kwargs)
         robot._configure_runtime_interface(
@@ -95,9 +85,6 @@ class RobotMixin(_CommonInterfaceMixin):
         )
         if validated_robot_spec is not None:
             robot._embodia_runtime_robot_spec = validated_robot_spec
-        if validated_remote_policy is None:
-            return robot
-        robot.configure_remote_policy(**validated_remote_policy)
         return robot
 
     @classmethod
@@ -155,246 +142,6 @@ class RobotMixin(_CommonInterfaceMixin):
         )
         _validate_robot_spec(normalized)
         return normalized
-
-    @classmethod
-    def _validate_remote_policy_config(
-        cls,
-        value: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        """Validate remote-policy config before instance construction."""
-
-        if not isinstance(value, Mapping):
-            raise InterfaceValidationError(
-                "remote_policy must be a mapping of "
-                "RobotMixin.configure_remote_policy(...) arguments."
-            )
-
-        copied: dict[str, Any] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise InterfaceValidationError(
-                    "remote_policy must use string keys, got "
-                    f"{key!r} of type {type(key).__name__}."
-                )
-            copied[key] = item
-
-        try:
-            inspect.signature(cls.configure_remote_policy).bind_partial(None, **copied)
-        except TypeError as exc:
-            raise InterfaceValidationError(
-                "remote_policy contains unsupported keys for "
-                "RobotMixin.configure_remote_policy(...)."
-            ) from exc
-
-        raw_runner = copied.get("runner")
-        if raw_runner is not None:
-            cls._validate_remote_policy_runner(raw_runner)
-
-        raw_request_builder = copied.get("request_builder")
-        if raw_request_builder is not None and not callable(raw_request_builder):
-            raise InterfaceValidationError(
-                "remote_policy.request_builder must be callable when provided."
-            )
-
-        raw_response_to_action = copied.get("response_to_action")
-        if raw_response_to_action is not None and not callable(raw_response_to_action):
-            raise InterfaceValidationError(
-                "remote_policy.response_to_action must be callable when provided."
-            )
-
-        raw_enabled = copied.get("enabled")
-        if raw_enabled is not None and not isinstance(raw_enabled, bool):
-            raise InterfaceValidationError(
-                "remote_policy.enabled must be a bool when provided."
-            )
-
-        return copied
-
-    @classmethod
-    def _validate_remote_policy_runner(cls, runner: object) -> object:
-        """Validate one remote-policy runner by duck typing."""
-
-        infer = getattr(runner, "infer", None)
-        if not callable(infer):
-            raise InterfaceValidationError(
-                "remote_policy.runner must expose infer(request)."
-            )
-        return runner
-
-    def uses_remote_policy(self) -> bool:
-        """Return whether this robot instance is configured for remote policy use."""
-
-        return self.has_remote_policy()
-
-    def embodia_has_remote_policy(self) -> bool:
-        """Internal embodia-prefixed alias for remote-policy availability."""
-
-        return self.has_remote_policy()
-
-    def has_remote_policy(self) -> bool:
-        """Return whether a remote policy backend has been configured."""
-
-        runner = getattr(self, "_embodia_remote_policy_runner", None)
-        enabled = getattr(
-            self,
-            "_embodia_remote_policy_enabled",
-            bool(type(self).REMOTE_POLICY_ENABLED),
-        )
-        return bool(enabled) and runner is not None
-
-    def close_remote_policy(self) -> None:
-        """Close the hidden remote-policy backend when present."""
-
-        runner = getattr(self, "_embodia_remote_policy_runner", None)
-        if runner is None:
-            return
-
-        close = getattr(runner, "close", None)
-        if callable(close):
-            close()
-
-    def configure_remote_policy(
-        self,
-        *,
-        runner: object | None = None,
-        request_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
-        response_to_action: Callable[[object], Action | Mapping[str, Any]] | None = None,
-        enabled: bool = True,
-    ) -> None:
-        """Configure one generic remote-policy backend for this robot."""
-
-        if not isinstance(enabled, bool):
-            raise InterfaceValidationError("enabled must be a bool.")
-
-        if runner is not None:
-            self._embodia_remote_policy_runner = self._validate_remote_policy_runner(
-                runner
-            )
-        elif enabled:
-            raise InterfaceValidationError(
-                "configure_remote_policy() requires runner=... when enabled=True."
-            )
-
-        if request_builder is not None:
-            if not callable(request_builder):
-                raise InterfaceValidationError(
-                    "request_builder must be callable when provided."
-                )
-            self._embodia_remote_policy_request_builder = request_builder
-
-        if response_to_action is not None:
-            if not callable(response_to_action):
-                raise InterfaceValidationError(
-                    "response_to_action must be callable when provided."
-                )
-            self._embodia_remote_policy_response_to_action = response_to_action
-
-        self._embodia_remote_policy_enabled = enabled
-
-    def _resolve_remote_policy_request_builder(self) -> Any:
-        """Resolve the method that converts a frame into a remote request payload."""
-
-        configured = getattr(self, "_embodia_remote_policy_request_builder", None)
-        if callable(configured):
-            return configured
-
-        method_name = type(self).REMOTE_POLICY_REQUEST_METHOD
-        if method_name is None and callable(
-            getattr(self, "_build_remote_policy_request", None)
-        ):
-            method_name = "_build_remote_policy_request"
-
-        if method_name is None:
-            raise InterfaceValidationError(
-                f"{type(self).__name__} uses remote policy mode, but does not "
-                "declare REMOTE_POLICY_REQUEST_METHOD or define "
-                "_build_remote_policy_request()."
-            )
-        method = getattr(self, method_name, None)
-        if not callable(method):
-            raise InterfaceValidationError(
-                f"{type(self).__name__}.{method_name} must be callable for remote "
-                "policy mode."
-            )
-        return method
-
-    def _resolve_remote_policy_response_to_action(self) -> Any:
-        """Resolve the method that converts one remote response into an action."""
-
-        configured = getattr(self, "_embodia_remote_policy_response_to_action", None)
-        if callable(configured):
-            return configured
-
-        method_name = type(self).REMOTE_POLICY_RESPONSE_METHOD
-        if method_name is None and callable(
-            getattr(self, "_parse_remote_policy_action", None)
-        ):
-            method_name = "_parse_remote_policy_action"
-
-        if method_name is None:
-            raise InterfaceValidationError(
-                f"{type(self).__name__} uses remote policy mode, but does not "
-                "declare REMOTE_POLICY_RESPONSE_METHOD or define "
-                "_parse_remote_policy_action()."
-            )
-        method = getattr(self, method_name, None)
-        if not callable(method):
-            raise InterfaceValidationError(
-                f"{type(self).__name__}.{method_name} must be callable for remote "
-                "policy mode."
-            )
-        return method
-
-    def embodia_request_remote_policy_action(
-        self,
-        frame: Frame | Mapping[str, Any] | None = None,
-    ) -> Action:
-        """Internal helper used by embodia runtime for remote policy actions."""
-
-        runner = getattr(self, "_embodia_remote_policy_runner", None)
-        if runner is None or not self.has_remote_policy():
-            raise InterfaceValidationError(
-                "Remote policy access is disabled for this robot instance. "
-                "Configure it with configure_remote_policy(...)."
-            )
-
-        normalized_frame = (
-            self.embodia_observe() if frame is None else self.validate_frame(frame)
-        )
-        spec = self.embodia_get_spec()
-        images.ensure_frame_keys(
-            normalized_frame,
-            owner_label="robot",
-            required_keys=spec.image_keys,
-        )
-        state.ensure_frame_keys(
-            normalized_frame,
-            owner_label="robot",
-            required_keys=spec.all_state_keys(),
-        )
-        build_request = self._resolve_remote_policy_request_builder()
-        policy_output = runner.infer(build_request(normalized_frame))
-        setattr(self, "last_policy_output", policy_output)
-
-        parse_action = self._resolve_remote_policy_response_to_action()
-        action = self.validate_action(parse_action(policy_output))
-        return self.ensure_action_supported(action)
-
-    def request_remote_policy_action(
-        self,
-        frame: Frame | Mapping[str, Any] | None = None,
-    ) -> Action:
-        """Backward-compatible alias for embodia's internal remote action path."""
-
-        return self.embodia_request_remote_policy_action(frame)
-
-    def _request_remote_policy_action(
-        self,
-        frame: Frame | Mapping[str, Any] | None = None,
-    ) -> Action:
-        """Backward-compatible alias kept for older internal embodia call sites."""
-
-        return self.embodia_request_remote_policy_action(frame)
 
     def normalize_spec(self, spec: RobotSpec | Mapping[str, Any]) -> RobotSpec:
         """Transform a robot spec-like value into :class:`RobotSpec`."""
@@ -509,7 +256,10 @@ class RobotMixin(_CommonInterfaceMixin):
         """Return the normalized frame used internally by embodia."""
 
         raw_observe = self._resolve_impl("observe", "_observe_impl")
-        frame = self.validate_frame(raw_observe())
+        frame = ensure_frame_sequence_id(
+            self.validate_frame(raw_observe()),
+            owner=self,
+        )
         spec = self.embodia_get_spec()
         images.ensure_frame_keys(
             frame,
@@ -559,7 +309,11 @@ class RobotMixin(_CommonInterfaceMixin):
         """Return the normalized reset frame used internally by embodia."""
 
         raw_reset = self._resolve_impl("reset", "_reset_impl")
-        frame = self.validate_frame(raw_reset())
+        frame = ensure_frame_sequence_id(
+            self.validate_frame(raw_reset()),
+            owner=self,
+            reset=True,
+        )
         spec = self.embodia_get_spec()
         images.ensure_frame_keys(
             frame,

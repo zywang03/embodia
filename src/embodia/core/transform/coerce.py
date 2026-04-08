@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import time
 from typing import Any
 
 from ..arraylike import optional_array_to_list
@@ -155,7 +156,12 @@ def _copy_float_vector(value: object, field_name: str) -> list[Any]:
 
 
 def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
-    """Normalize a ``Frame`` or mapping into a standard :class:`Frame`."""
+    """Normalize a ``Frame`` or mapping into a standard :class:`Frame`.
+
+    For frame-like mappings, ``images`` and ``state`` are the only required
+    payload fields. When ``timestamp_ns`` is omitted, embodia fills it with
+    ``time.time_ns()`` before validation.
+    """
 
     if isinstance(value, Frame):
         return Frame(
@@ -172,13 +178,13 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
         )
 
     try:
-        timestamp_ns = value["timestamp_ns"]
         images = value["images"]
         state = value["state"]
     except KeyError as exc:
         raise InterfaceValidationError(
             f"frame mapping is missing required field {exc.args[0]!r}."
         ) from exc
+    timestamp_ns = value.get("timestamp_ns", time.time_ns())
 
     return Frame(
         timestamp_ns=timestamp_ns,

@@ -221,7 +221,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(result.action), 9.0)
         self.assertEqual(arm_value(robot.last_action), 9.0)  # type: ignore[arg-type]
 
-    def test_runtime_step_can_report_embodia_timing(self) -> None:
+    def test_runtime_step_keeps_public_shape_small(self) -> None:
         robot = RuntimeRobot()
         policy = RuntimePolicy()
         runtime = em.InferenceRuntime(
@@ -229,14 +229,10 @@ class InferenceRuntimeTests(unittest.TestCase):
             action_optimizers=[em.ActionEnsembler(current_weight=0.5)],
         )
 
-        result = em.run_step(robot, policy, runtime=runtime, measure_timing=True)
+        result = em.run_step(robot, policy, runtime=runtime)
 
-        self.assertIsNotNone(result.timing)
-        assert result.timing is not None
-        self.assertGreaterEqual(result.timing.total_s, 0.0)
-        self.assertGreaterEqual(result.timing.embodia_overhead_s, 0.0)
-        self.assertGreaterEqual(result.timing.source_call_s, 0.0)
-        self.assertGreaterEqual(result.timing.act_call_s, 0.0)
+        self.assertFalse(hasattr(result, "timing"))
+        self.assertGreaterEqual(result.control_wait_s, 0.0)
 
     def test_sync_runtime_can_use_overlap_with_plan_provider(self) -> None:
         robot = RuntimeRobot()

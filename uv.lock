@@ -22,7 +22,7 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
-openpi-remote = [
+remote = [
     { name = "msgpack" },
     { name = "websockets" },
 ]
@@ -32,11 +32,11 @@ yaml = [
 
 [package.metadata]
 requires-dist = [
-    { name = "msgpack", marker = "extra == 'openpi-remote'", specifier = ">=1.0.5" },
+    { name = "msgpack", marker = "extra == 'remote'", specifier = ">=1.0.5" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6.0" },
-    { name = "websockets", marker = "extra == 'openpi-remote'", specifier = ">=11.0" },
+    { name = "websockets", marker = "extra == 'remote'", specifier = ">=11.0" },
 ]
-provides-extras = ["yaml", "openpi-remote"]
+provides-extras = ["yaml", "remote"]
 
 [[package]]
 name = "msgpack"

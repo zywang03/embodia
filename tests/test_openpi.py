@@ -1,0 +1,157 @@
+"""Tests for the optional OpenPI compatibility helpers."""
+
+from __future__ import annotations
+
+import unittest
+
+import embodia as em
+from embodia.contrib import openpi as em_openpi
+
+
+class OpenPITests(unittest.TestCase):
+    """Coverage for OpenPI request/response adaptation."""
+
+    def test_frame_to_openpi_obs_remaps_frame_fields(self) -> None:
+        frame = em.Frame(
+            timestamp_ns=123,
+            images={"front_rgb": "rgb-bytes"},
+            state={"joint_positions": [1.0, 2.0, 3.0], "position": 0.5},
+            task={"prompt": "fold the cloth"},
+            meta={"episode_id": "demo-1"},
+            sequence_id=7,
+        )
+
+        obs = em_openpi.frame_to_openpi_obs(
+            frame,
+            image_map={"observation/front_image": "front_rgb"},
+            state_map={
+                "observation/joint_position": "joint_positions",
+                "observation/gripper_position": "position",
+            },
+            task_map={"prompt": "prompt"},
+            meta_map={"episode_id": "episode_id"},
+            include_timestamp_ns=True,
+            include_sequence_id=True,
+        )
+
+        self.assertEqual(obs["observation/front_image"], "rgb-bytes")
+        self.assertEqual(obs["observation/joint_position"], [1.0, 2.0, 3.0])
+        self.assertEqual(obs["observation/gripper_position"], 0.5)
+        self.assertEqual(obs["prompt"], "fold the cloth")
+        self.assertEqual(obs["episode_id"], "demo-1")
+        self.assertEqual(obs["timestamp_ns"], 123)
+        self.assertEqual(obs["sequence_id"], 7)
+
+    def test_openpi_action_plan_from_response_splits_groups(self) -> None:
+        plan = em_openpi.openpi_action_plan_from_response(
+            {"actions": [[0.1, 0.2, 0.3, 0.9], [0.4, 0.5, 0.6, 0.8]]},
+            action_groups=[
+                em_openpi.OpenPIActionGroup(
+                    target="arm",
+                    kind="joint_position",
+                    selector=(0, 3),
+                ),
+                em_openpi.OpenPIActionGroup(
+                    target="gripper",
+                    kind="gripper_position",
+                    selector=3,
+                ),
+            ],
+        )
+
+        self.assertEqual(len(plan), 2)
+        self.assertEqual(plan[0].get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
+        self.assertEqual(plan[0].get_command("gripper").value, [0.9])  # type: ignore[union-attr]
+        self.assertEqual(plan[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
+        self.assertEqual(plan[1].get_command("gripper").value, [0.8])  # type: ignore[union-attr]
+
+    def test_openpi_policy_source_drives_run_step_and_chunk(self) -> None:
+        class DemoRobot(em.RobotMixin):
+            ROBOT_SPEC = {
+                "name": "demo_robot",
+                "image_keys": ["front_rgb"],
+                "components": [
+                    {
+                        "name": "arm",
+                        "kind": "arm",
+                        "dof": 3,
+                        "supported_command_kinds": ["joint_position"],
+                        "state_keys": ["joint_positions"],
+                    },
+                    {
+                        "name": "gripper",
+                        "kind": "gripper",
+                        "dof": 1,
+                        "supported_command_kinds": ["gripper_position"],
+                        "state_keys": ["position"],
+                    },
+                ],
+            }
+
+            def __init__(self) -> None:
+                self.last_action: em.Action | None = None
+
+            def _observe_impl(self) -> dict[str, object]:
+                return {
+                    "images": {"front_rgb": "rgb"},
+                    "state": {
+                        "joint_positions": [0.0, 0.0, 0.0],
+                        "position": 0.0,
+                    },
+                    "task": {"prompt": "stack blocks"},
+                }
+
+            def _act_impl(self, action: em.Action) -> None:
+                self.last_action = action
+
+            def _reset_impl(self) -> dict[str, object]:
+                return self._observe_impl()
+
+        class StubRunner:
+            def __init__(self) -> None:
+                self.last_obs: dict[str, object] | None = None
+
+            def infer(self, obs: dict[str, object]) -> dict[str, object]:
+                self.last_obs = dict(obs)
+                return {
+                    "actions": [
+                        [0.1, 0.2, 0.3, 0.9],
+                        [0.4, 0.5, 0.6, 0.8],
+                    ]
+                }
+
+        runner = StubRunner()
+        source = em_openpi.OpenPIPolicySource(
+            runner=runner,
+            obs_builder=lambda frame: {
+                "state": list(frame.state["joint_positions"]) + [frame.state["position"]],
+                "prompt": frame.task["prompt"],
+            },
+            action_groups=[
+                em_openpi.OpenPIActionGroup(
+                    target="arm",
+                    kind="joint_position",
+                    selector=(0, 3),
+                ),
+                em_openpi.OpenPIActionGroup(
+                    target="gripper",
+                    kind="gripper_position",
+                    selector=3,
+                ),
+            ],
+        )
+
+        robot = DemoRobot()
+        frame = robot.reset()
+        result = em.run_step(robot, source=source, frame=frame)
+        chunk = source.infer_chunk(frame, object())
+
+        self.assertEqual(runner.last_obs["prompt"], "stack blocks")  # type: ignore[index]
+        self.assertEqual(result.action.get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
+        self.assertEqual(result.action.get_command("gripper").value, [0.9])  # type: ignore[union-attr]
+        self.assertEqual(len(chunk), 2)
+        self.assertEqual(chunk[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -7,7 +7,7 @@ For most users, the main path should stay small:
 
 1. inherit `RobotMixin` / `PolicyMixin`
 2. load a shared runtime schema with `from_yaml(...)`
-3. call `run_step(...)`
+3. call `run_step(robot, source=...)`
 4. add `InferenceRuntime(...)` only when needed
 
 The preferred direction is now:
@@ -21,7 +21,8 @@ embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
 That means your native methods can stay named `infer`, `capture`, `home`, and so
 on, while embodia still has one collision-free internal dispatch path.
 `task` is policy-side context, not robot capability, so robot specs no longer
-declare task-related fields.
+declare task-related fields. `robot` stays local-only; if you need remote
+deployment, put it on the policy/source side.
 
 ## Method aliases
 

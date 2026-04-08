@@ -8,7 +8,6 @@ Run with:
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import embodia as em
@@ -18,19 +17,15 @@ class YourRobot(em.RobotMixin):
     """Pretend this is your original outer robot class after one small edit."""
 
     def __init__(self) -> None:
-        self.step_index = 0
         self.last_native_action: object | None = None
 
     def capture(self) -> dict[str, object]:
-        self.step_index += 1
         return {
-            "timestamp_ns": time.time_ns(),
             "images": {"front_rgb": None},
             "state": {
-                "joint_positions": [float(self.step_index)] * 6,
-                "position": min(self.step_index * 0.1, 1.0),
+                "joint_positions": [0.25] * 6,
+                "position": 0.5,
             },
-            "meta": {"step_index": self.step_index},
         }
 
     def send_command(self, action: object) -> object:
@@ -41,55 +36,50 @@ class YourRobot(em.RobotMixin):
         return accepted
 
     def home(self) -> dict[str, object]:
-        self.step_index = 0
         return self.capture()
 
 
 class DemoTeleop:
     """Tiny stand-in for teleop input or an external data-collection source."""
 
-    def __init__(self) -> None:
-        self.step_index = 0
-        self.script = [
-            {
-                "arm": {
-                    "kind": "cartesian_pose_delta",
-                    "value": [0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
-                },
-                "gripper": {
-                    "kind": "gripper_position",
-                    "value": [1.0],
-                },
+    script = [
+        {
+            "arm": {
+                "kind": "cartesian_pose_delta",
+                "value": [0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
             },
-            {
-                "arm": {
-                    "kind": "cartesian_pose_delta",
-                    "value": [0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
-                },
-                "gripper": {
-                    "kind": "gripper_position",
-                    "value": [0.5],
-                },
+            "gripper": {
+                "kind": "gripper_position",
+                "value": [1.0],
             },
-            {
-                "arm": {
-                    "kind": "cartesian_pose_delta",
-                    "value": [-0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
-                },
-                "gripper": {
-                    "kind": "gripper_position",
-                    "value": [0.0],
-                },
+        },
+        {
+            "arm": {
+                "kind": "cartesian_pose_delta",
+                "value": [0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
             },
-        ]
+            "gripper": {
+                "kind": "gripper_position",
+                "value": [0.5],
+            },
+        },
+        {
+            "arm": {
+                "kind": "cartesian_pose_delta",
+                "value": [-0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            "gripper": {
+                "kind": "gripper_position",
+                "value": [0.0],
+            },
+        },
+    ]
 
     def next_action(self, frame: em.Frame) -> dict[str, object]:
-        """Return the next operator-provided action, independent of robot state."""
+        """Return the scripted action indexed by embodia-managed sequence_id."""
 
-        del frame
-        action = self.script[min(self.step_index, len(self.script) - 1)]
-        self.step_index += 1
-        return action
+        sequence_id = int(frame.sequence_id or 0)
+        return self.script[min(sequence_id, len(self.script) - 1)]
 
 
 def main() -> None:
@@ -107,7 +97,7 @@ def main() -> None:
     records.append({"frame": em.frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
-        result = em.run_step(robot, action_fn=teleop.next_action)
+        result = em.run_step(robot, source=teleop)
         records.append(
             {
                 "frame": em.frame_to_dict(result.frame),

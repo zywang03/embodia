@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-import time
 from typing import Any
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 from ..shared.action_source import (
     ActionSource,
+    coalesce_source_argument as _coalesce_source_argument,
     resolve_action_source as _resolve_action_source,
 )
 from ..shared.coerce import maybe_as_action as _maybe_as_action
@@ -25,8 +25,9 @@ from ..shared.dispatch import (
     format_method_options,
     resolve_callable_method,
 )
+from ..shared.sequence import ensure_frame_sequence_id
 from ..checks import validate_action, validate_frame
-from ..flow import StepResult, build_step_timing, run_step
+from ..flow import StepResult, run_step
 from .chunk_scheduler import ChunkScheduler
 from .common import as_action, as_frame, reset_if_possible
 from .control import RealtimeController
@@ -94,21 +95,27 @@ class InferenceRuntime:
                     f"got {self.overlap_ratio!r}."
                 )
 
-    def reset(self, *, policy: object | None = None) -> None:
-        """Reset policy state and any attached runtime components."""
+    def reset(
+        self,
+        *,
+        source: object | None = None,
+        policy: object | None = None,
+    ) -> None:
+        """Reset source state and any attached runtime components."""
 
-        if policy is not None:
-            reset, reset_name = resolve_callable_method(policy, POLICY_RESET_METHODS)
+        source_obj = _coalesce_source_argument(source, policy)
+        if source_obj is not None:
+            reset, reset_name = resolve_callable_method(source_obj, POLICY_RESET_METHODS)
             if not callable(reset) or reset_name is None:
                 raise InterfaceValidationError(
-                    "InferenceRuntime.reset(policy=...) requires the policy to expose "
+                    "InferenceRuntime.reset(source=...) requires the source to expose "
                     f"{format_method_options(POLICY_RESET_METHODS)}."
                 )
             try:
                 reset()
             except Exception as exc:
                 raise InterfaceValidationError(
-                    f"{type(policy).__name__}.{reset_name}() raised "
+                    f"{type(source_obj).__name__}.{reset_name}() raised "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
 
@@ -246,24 +253,20 @@ class InferenceRuntime:
     def _run_step_impl(
         self,
         robot: object,
-        policy: object | None = None,
+        source: object | None = None,
         *,
+        policy: object | None = None,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
         reset_policy: bool = False,
         pace_control: bool = True,
-        measure_timing: bool = False,
     ) -> StepResult:
         """Internal implementation for runtime-managed inference."""
-
-        total_start_s = time.perf_counter() if measure_timing else 0.0
-        observe_call_s = 0.0
-        source_call_s = 0.0
-        act_call_s = 0.0
+        source_obj = _coalesce_source_argument(source, policy)
 
         resolved_action_source, can_reset = _resolve_action_source(
-            policy,
+            source_obj,
             action_fn,
             robot=robot,
         )
@@ -276,30 +279,26 @@ class InferenceRuntime:
             )
 
         if reset_policy:
-            self.reset(policy=policy)
+            self.reset(source=source_obj)
 
         chunk_scheduler = self._ensure_chunk_scheduler(
-            source=policy,
+            source=source_obj,
             action_source=resolved_action_source,
         )
 
         if chunk_scheduler is None:
             raw_result = run_step(
                 robot,
-                policy,
+                source=source_obj,
                 action_fn=action_fn,
                 frame=frame,
                 execute_action=False,
                 reset_policy=False,
                 runtime=None,
-                measure_timing=measure_timing,
             )
             normalized_frame = raw_result.frame
             raw_action = raw_result.raw_action
             plan_refreshed = True
-            if raw_result.timing is not None:
-                observe_call_s += raw_result.timing.observe_call_s
-                source_call_s += raw_result.timing.source_call_s
         else:
             if frame is None:
                 observe, observe_name = resolve_callable_method(
@@ -312,13 +311,7 @@ class InferenceRuntime:
                         f"{format_method_options(ROBOT_OBSERVE_METHODS)}."
                     )
                 try:
-                    observe_started_at_s = time.perf_counter() if measure_timing else 0.0
                     raw_frame = observe()
-                    if measure_timing:
-                        observe_call_s = max(
-                            time.perf_counter() - observe_started_at_s,
-                            0.0,
-                        )
                 except Exception as exc:
                     raise InterfaceValidationError(
                         f"{type(robot).__name__}.{observe_name}() raised "
@@ -326,7 +319,10 @@ class InferenceRuntime:
                     ) from exc
             else:
                 raw_frame = frame
-            normalized_frame = as_frame(raw_frame)
+            normalized_frame = ensure_frame_sequence_id(
+                as_frame(raw_frame),
+                owner=robot,
+            )
             validate_frame(normalized_frame)
 
             if (
@@ -336,25 +332,16 @@ class InferenceRuntime:
                 chunk_scheduler.bind_control_hz(self.realtime_controller.hz)
 
             action_context = (
-                policy
-                if policy is not None
+                source_obj
+                if source_obj is not None
                 else (action_fn if action_fn is not None else resolved_action_source)
             )
-            scheduler_timing = None
-            raw_action, plan_refreshed, scheduler_timing = chunk_scheduler.next_action(
+            raw_action, plan_refreshed, _ = chunk_scheduler.next_action(
                 action_context,
                 normalized_frame,
                 fallback_action_source=resolved_action_source,
                 prefetch_async=self.mode is InferenceMode.ASYNC,
-                measure_timing=measure_timing,
             )
-            if scheduler_timing is not None:
-                source_call_s += scheduler_timing.provider_call_s
-                scheduler_wait_s = scheduler_timing.wait_for_ready_s
-            else:
-                scheduler_wait_s = 0.0
-        if chunk_scheduler is None:
-            scheduler_wait_s = 0.0
 
         optimized_action = self.optimize_action(raw_action, frame=normalized_frame)
 
@@ -368,10 +355,7 @@ class InferenceRuntime:
                     f"{format_method_options(ROBOT_ACT_METHODS)}."
                 )
             try:
-                act_started_at_s = time.perf_counter() if measure_timing else 0.0
                 raw_executed_action = act(optimized_action)
-                if measure_timing:
-                    act_call_s = max(time.perf_counter() - act_started_at_s, 0.0)
             except Exception as exc:
                 raise InterfaceValidationError(
                     f"{type(robot).__name__}.{act_name}(action) raised "
@@ -386,75 +370,63 @@ class InferenceRuntime:
         if pace_control and self.realtime_controller is not None:
             control_wait_s = self.realtime_controller.wait()
 
-        timing = None
-        if measure_timing:
-            timing = build_step_timing(
-                time.perf_counter() - total_start_s,
-                observe_call_s=observe_call_s,
-                source_call_s=source_call_s,
-                act_call_s=act_call_s,
-                scheduler_wait_s=scheduler_wait_s,
-                control_wait_s=control_wait_s,
-            )
-
         return StepResult(
             frame=normalized_frame,
             raw_action=raw_action,
             action=final_action,
             plan_refreshed=plan_refreshed,
             control_wait_s=control_wait_s,
-            timing=timing,
         )
 
     def step(
         self,
         robot: object,
-        policy: object | None = None,
+        source: object | None = None,
         *,
+        policy: object | None = None,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
         reset_policy: bool = False,
         pace_control: bool = True,
-        measure_timing: bool = False,
     ) -> StepResult:
         """Compatibility wrapper around :func:`embodia.run_step`."""
 
         return run_step(
             robot,
-            policy,
+            source,
+            policy=policy,
             action_fn=action_fn,
             frame=frame,
             execute_action=True if execute_action is None else execute_action,
             reset_policy=reset_policy,
             runtime=self,
             pace_control=pace_control,
-            measure_timing=measure_timing,
         )
 
     def run_step(
         self,
         robot: object,
-        policy: object | None = None,
+        source: object | None = None,
         *,
+        policy: object | None = None,
         action_fn: ActionSource | None = None,
         frame: Frame | Mapping[str, Any] | None = None,
         execute_action: bool | None = None,
         reset_policy: bool = False,
         pace_control: bool = True,
-        measure_timing: bool = False,
     ) -> StepResult:
         """Alias for :meth:`step` for users who prefer function-style naming."""
 
         return self.step(
             robot,
-            policy,
+            source,
+            policy=policy,
             action_fn=action_fn,
             frame=frame,
             execute_action=execute_action,
             reset_policy=reset_policy,
             pace_control=pace_control,
-            measure_timing=measure_timing,
         )
 
 __all__ = ["InferenceMode", "InferenceRuntime"]

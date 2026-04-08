@@ -274,7 +274,7 @@ def _expand_robot_config(
     _validate_keys(
         loaded,
         field_name=field_name,
-        allowed_keys={"name", "method_aliases", "remote_policy"},
+        allowed_keys={"name", "method_aliases"},
     )
 
     shared = _expand_shared_schema(schema, field_name=f"{field_name}.schema")

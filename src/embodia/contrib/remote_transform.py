@@ -1,4 +1,4 @@
-"""OpenPI-specific payload transforms for embodia remote inference."""
+"""Payload transforms for embodia remote inference."""
 
 from __future__ import annotations
 
@@ -55,12 +55,12 @@ def _ensure_float_list(value: object, *, field_name: str) -> list[float]:
 def _extract_actions_value(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
 ) -> object:
-    """Return the raw OpenPI ``actions`` payload."""
+    """Return the raw remote ``actions`` payload."""
 
     if isinstance(response_or_actions, Mapping):
         if "actions" not in response_or_actions:
             raise InterfaceValidationError(
-                "OpenPI response must contain an 'actions' field."
+                "remote response must contain an 'actions' field."
             )
         return response_or_actions["actions"]
     return response_or_actions
@@ -69,7 +69,7 @@ def _extract_actions_value(
 def _coerce_action_rows(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
 ) -> list[list[float]]:
-    """Normalize OpenPI action payloads into ``list[list[float]]``."""
+    """Normalize remote action payloads into ``list[list[float]]``."""
 
     actions = _coerce_optional_python_list(
         _extract_actions_value(response_or_actions),
@@ -80,16 +80,16 @@ def _coerce_action_rows(
 
     if not isinstance(actions, list):
         raise InterfaceValidationError(
-            "OpenPI actions must be a 1D or 2D list-like numeric payload, got "
+            "remote actions must be a 1D or 2D list-like numeric payload, got "
             f"{type(actions).__name__}."
         )
     if not actions:
-        raise InterfaceValidationError("OpenPI returned an empty action chunk.")
+        raise InterfaceValidationError("remote inference returned an empty action chunk.")
 
     first = actions[0]
     if isinstance(first, bool):
         raise InterfaceValidationError(
-            "OpenPI actions must contain numeric values, not booleans."
+            "remote actions must contain numeric values, not booleans."
         )
     if isinstance(first, Real):
         return [_ensure_float_list(actions, field_name="actions")]
@@ -100,6 +100,37 @@ def _coerce_action_rows(
             _ensure_float_list(row, field_name=f"actions[{row_index}]")
         )
     return rows
+
+
+def _read_action_shape_from_embodia_metadata(
+    response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
+) -> tuple[str | None, str | None, str | None]:
+    """Read action target/kind/ref-frame hints from one remote response."""
+
+    if not isinstance(response_or_actions, Mapping):
+        return None, None, None
+
+    embodia_meta = response_or_actions.get("embodia")
+    if not isinstance(embodia_meta, Mapping):
+        return None, None, None
+
+    target = embodia_meta.get("action_target")
+    if not isinstance(target, str) or not target.strip():
+        target = None
+
+    kind = embodia_meta.get("action_kind")
+    if not isinstance(kind, str) or not kind.strip():
+        kind = None
+
+    ref_frame = embodia_meta.get("action_ref_frame")
+    if ref_frame is not None:
+        if not isinstance(ref_frame, str) or not ref_frame.strip():
+            raise InterfaceValidationError(
+                "remote response embodia.action_ref_frame must be a non-empty "
+                "string when provided."
+            )
+
+    return target, kind, ref_frame
 
 
 def _coerce_embodia_action_plan(
@@ -134,21 +165,43 @@ def _coerce_embodia_action_plan(
     return actions
 
 
-def openpi_actions_to_action_plan(
+def actions_to_action_plan(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
-    target: str = "arm",
-    kind: str,
+    target: str | None = None,
+    kind: str | None = None,
     ref_frame: str | None = None,
 ) -> list[Action]:
-    """Convert an OpenPI action chunk into embodia-standard actions."""
+    """Convert one remote action chunk into embodia-standard actions."""
+
+    metadata_target, metadata_kind, metadata_ref_frame = (
+        _read_action_shape_from_embodia_metadata(response_or_actions)
+    )
+    resolved_target = target if target is not None else metadata_target
+    resolved_kind = kind if kind is not None else metadata_kind
+    resolved_ref_frame = (
+        ref_frame if ref_frame is not None else metadata_ref_frame
+    )
+
+    if resolved_target is None:
+        raise InterfaceValidationError(
+            "remote action payload does not define an action target. Provide "
+            "target=..., include embodia.action_target in the response, or "
+            "use a custom response_to_action callback."
+        )
+    if resolved_kind is None:
+        raise InterfaceValidationError(
+            "remote action payload does not define a command kind. Provide "
+            "kind=..., include embodia.action_kind in the response, or use "
+            "a custom response_to_action callback."
+        )
 
     plan = [
         Action.single(
-            target=target,
-            kind=kind,
+            target=resolved_target,
+            kind=resolved_kind,
             value=row,
-            ref_frame=ref_frame,
+            ref_frame=resolved_ref_frame,
         )
         for row in _coerce_action_rows(response_or_actions)
     ]
@@ -157,16 +210,16 @@ def openpi_actions_to_action_plan(
     return plan
 
 
-def openpi_first_action(
+def first_action_from_response(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
-    target: str = "arm",
-    kind: str,
+    target: str | None = None,
+    kind: str | None = None,
     ref_frame: str | None = None,
 ) -> Action:
-    """Convert an OpenPI action chunk and return its first action."""
+    """Convert one remote action chunk and return its first action."""
 
-    return openpi_actions_to_action_plan(
+    return actions_to_action_plan(
         response_or_actions,
         target=target,
         kind=kind,
@@ -174,19 +227,20 @@ def openpi_first_action(
     )[0]
 
 
-def openpi_response_from_action_plan(
+def response_from_action_plan(
     plan: Action | Mapping[str, Any] | Sequence[Action | Mapping[str, Any]],
     *,
     include_embodia_metadata: bool = True,
 ) -> dict[str, Any]:
-    """Convert embodia actions into an OpenPI-compatible response dict."""
+    """Convert embodia actions into one remote response dictionary."""
 
     actions = _coerce_embodia_action_plan(plan)
     commands_per_action = [len(action.commands) for action in actions]
     if any(count != 1 for count in commands_per_action):
         raise InterfaceValidationError(
-            "openpi_response_from_action_plan() currently expects one command per "
-            "action because OpenPI responses carry one action vector per step."
+            "response_from_action_plan() currently expects one command per "
+            "action because the current remote wire format carries one action "
+            "vector per step."
         )
 
     first_target, first_command = next(iter(actions[0].commands.items()))
@@ -206,11 +260,11 @@ def openpi_response_from_action_plan(
 
 
 @dataclass(slots=True)
-class OpenPITransform:
-    """Bundle OpenPI payload conversion in one small object.
+class RemoteTransform:
+    """Bundle remote payload conversion in one small object.
 
     This keeps robot/policy code focused on one transform object instead of
-    scattering OpenPI-specific conversion details across multiple callbacks.
+    scattering transport-specific conversion details across multiple callbacks.
     """
 
     command_kind: str
@@ -226,37 +280,37 @@ class OpenPITransform:
 
         if not isinstance(self.action_target, str) or not self.action_target.strip():
             raise InterfaceValidationError(
-                "OpenPITransform.action_target must be a non-empty string."
+                "RemoteTransform.action_target must be a non-empty string."
             )
         if not isinstance(self.command_kind, str) or not self.command_kind.strip():
             raise InterfaceValidationError(
-                "OpenPITransform.command_kind must be a non-empty string."
+                "RemoteTransform.command_kind must be a non-empty string."
             )
         if self.ref_frame is not None and (
             not isinstance(self.ref_frame, str) or not self.ref_frame.strip()
         ):
             raise InterfaceValidationError(
-                "OpenPITransform.ref_frame must be a non-empty string when provided."
+                "RemoteTransform.ref_frame must be a non-empty string when provided."
             )
         if self.frame_to_obs_fn is not None and not callable(self.frame_to_obs_fn):
             raise InterfaceValidationError(
-                "OpenPITransform.frame_to_obs_fn must be callable when provided."
+                "RemoteTransform.frame_to_obs_fn must be callable when provided."
             )
         if self.obs_to_frame_fn is not None and not callable(self.obs_to_frame_fn):
             raise InterfaceValidationError(
-                "OpenPITransform.obs_to_frame_fn must be callable when provided."
+                "RemoteTransform.obs_to_frame_fn must be callable when provided."
             )
         if self.response_builder is not None and not callable(self.response_builder):
             raise InterfaceValidationError(
-                "OpenPITransform.response_builder must be callable when provided."
+                "RemoteTransform.response_builder must be callable when provided."
             )
         if not isinstance(self.include_embodia_metadata, bool):
             raise InterfaceValidationError(
-                "OpenPITransform.include_embodia_metadata must be a bool."
+                "RemoteTransform.include_embodia_metadata must be a bool."
             )
 
     def build_obs(self, frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
-        """Convert one embodia frame into an OpenPI observation payload."""
+        """Convert one embodia frame into one remote observation payload."""
 
         normalized_frame = coerce_frame(frame)
         validate_frame(normalized_frame)
@@ -266,13 +320,13 @@ class OpenPITransform:
         obs = self.frame_to_obs_fn(normalized_frame)
         if not isinstance(obs, Mapping):
             raise InterfaceValidationError(
-                "OpenPITransform.frame_to_obs_fn must return a mapping, got "
+                "RemoteTransform.frame_to_obs_fn must return a mapping, got "
                 f"{type(obs).__name__}."
             )
         return dict(obs)
 
     def build_frame(self, obs: Mapping[str, Any]) -> Frame:
-        """Convert one OpenPI observation mapping into an embodia frame."""
+        """Convert one remote observation mapping into an embodia frame."""
 
         if not isinstance(obs, Mapping):
             raise InterfaceValidationError(
@@ -290,9 +344,9 @@ class OpenPITransform:
         self,
         response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     ) -> list[Action]:
-        """Convert one OpenPI response into a validated embodia action plan."""
+        """Convert one remote response into a validated embodia action plan."""
 
-        return openpi_actions_to_action_plan(
+        return actions_to_action_plan(
             response_or_actions,
             target=self.action_target,
             kind=self.command_kind,
@@ -303,7 +357,7 @@ class OpenPITransform:
         self,
         response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     ) -> Action:
-        """Convert one OpenPI response into the first embodia action."""
+        """Convert one remote response into the first embodia action."""
 
         return self.action_plan_from_response(response_or_actions)[0]
 
@@ -313,17 +367,17 @@ class OpenPITransform:
         *,
         frame: Frame | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Convert embodia actions into an OpenPI response payload."""
+        """Convert embodia actions into one remote response payload."""
 
         if self.response_builder is None:
-            return openpi_response_from_action_plan(
+            return response_from_action_plan(
                 plan,
                 include_embodia_metadata=self.include_embodia_metadata,
             )
 
         if frame is None:
             raise InterfaceValidationError(
-                "OpenPITransform.response_from_action_plan() requires frame=... "
+                "RemoteTransform.response_from_action_plan() requires frame=... "
                 "when using a custom response_builder."
             )
 
@@ -335,15 +389,15 @@ class OpenPITransform:
         )
         if not isinstance(response, Mapping):
             raise InterfaceValidationError(
-                "OpenPITransform.response_builder must return a mapping, got "
+                "RemoteTransform.response_builder must return a mapping, got "
                 f"{type(response).__name__}."
             )
         return dict(response)
 
 
 __all__ = [
-    "OpenPITransform",
-    "openpi_actions_to_action_plan",
-    "openpi_first_action",
-    "openpi_response_from_action_plan",
+    "RemoteTransform",
+    "actions_to_action_plan",
+    "first_action_from_response",
+    "response_from_action_plan",
 ]

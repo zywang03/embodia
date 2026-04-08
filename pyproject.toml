@@ -23,7 +23,7 @@ classifiers = [
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6.0"]
-openpi-remote = ["msgpack>=1.0.5", "websockets>=11.0"]
+remote = ["msgpack>=1.0.5", "websockets>=11.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

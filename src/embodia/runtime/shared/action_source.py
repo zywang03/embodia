@@ -13,14 +13,31 @@ from .dispatch import (
     POLICY_INFER_CHUNK_METHODS,
     POLICY_INFER_METHODS,
     POLICY_RESET_METHODS,
-    ROBOT_HAS_REMOTE_POLICY_METHODS,
-    ROBOT_REMOTE_ACTION_METHODS,
     format_method_options,
     resolve_callable_method,
 )
 from ..checks import validate_action
 
 ActionSource = Callable[[Frame], Action | Mapping[str, Any] | None]
+SOURCE_STEP_METHODS: tuple[str, ...] = (
+    *POLICY_INFER_METHODS,
+    "embodia_next_action",
+    "next_action",
+    "get_action",
+)
+
+
+def coalesce_source_argument(
+    source: object | None,
+    policy: object | None,
+) -> object | None:
+    """Resolve the preferred ``source=...`` argument with ``policy=...`` fallback."""
+
+    if source is not None and policy is not None:
+        raise InterfaceValidationError(
+            "run_step() accepts either source=... or policy=..., not both."
+        )
+    return source if source is not None else policy
 
 
 def call_action_fn(action_fn: ActionSource, frame: Frame) -> Action | Mapping[str, Any]:
@@ -78,40 +95,22 @@ def resolve_action_source(
 
     if source is not None and action_fn is not None:
         raise InterfaceValidationError(
-            "run_step() accepts either a policy/callable source as the second "
-            "argument or action_fn=..., not both."
+            "run_step() accepts either source=... or action_fn=..., not both."
         )
 
     if source is None:
         if action_fn is None:
-            request_remote, _ = resolve_callable_method(
-                robot,
-                ROBOT_REMOTE_ACTION_METHODS,
-            )
-            has_remote, _ = resolve_callable_method(
-                robot,
-                ROBOT_HAS_REMOTE_POLICY_METHODS,
-            )
-            if callable(request_remote) and callable(has_remote):
-                try:
-                    enabled = bool(has_remote())
-                except Exception as exc:
-                    raise InterfaceValidationError(
-                        f"{type(robot).__name__}.has_remote_policy() raised "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
-                if enabled:
-                    return request_remote, False
             raise InterfaceValidationError(
-                "run_step() requires a policy-like source, action_fn=..., or a "
-                "robot with configured remote policy."
+                "run_step() requires source=... or action_fn=... "
+                "embodia keeps robot execution local; remote deployment belongs "
+                "on the policy/source side."
             )
         return action_fn, False
 
     reset_method, _ = resolve_callable_method(source, POLICY_RESET_METHODS)
     can_reset = callable(reset_method)
 
-    infer, _ = resolve_callable_method(source, POLICY_INFER_METHODS)
+    infer, _ = resolve_callable_method(source, SOURCE_STEP_METHODS)
     if callable(infer):
         return infer, can_reset
 
@@ -130,7 +129,7 @@ def resolve_action_source(
 
     raise InterfaceValidationError(
         "run_step() source must expose "
-        f"{format_method_options(POLICY_INFER_METHODS)}, "
+        f"{format_method_options(SOURCE_STEP_METHODS)}, "
         f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, or be "
         f"callable(frame), got {type(source).__name__}."
     )
@@ -138,6 +137,8 @@ def resolve_action_source(
 
 __all__ = [
     "ActionSource",
+    "SOURCE_STEP_METHODS",
+    "coalesce_source_argument",
     "call_action_fn",
     "first_action_from_chunk_call",
     "resolve_action_source",

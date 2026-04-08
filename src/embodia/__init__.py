@@ -73,7 +73,7 @@ from .runtime.checks import (
     validate_policy_spec,
     validate_robot_spec,
 )
-from .runtime.flow import StepResult, StepTiming, run_step
+from .runtime.flow import StepResult, run_step
 from .runtime.flow import ActionSource
 from .runtime.inference import (
     ActionEnsembler,
@@ -144,7 +144,6 @@ __all__ = [
     "component_spec_to_dict",
     "command_to_dict",
     "StepResult",
-    "StepTiming",
     "check_policy",
     "check_pair",
     "check_robot",

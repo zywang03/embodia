@@ -1,14 +1,14 @@
-"""Optional OpenPI remote-policy helpers.
+"""Optional remote-policy helpers.
 
 This module keeps embodia's core package free of websocket and msgpack
-dependencies, while still making it easy to talk to an OpenPI policy server
-from robot-side Python code.
+dependencies, while still making it easy to talk to a remote policy server
+from local Python code.
 
-OpenPI payload conversion lives in ``embodia.contrib.openpi_transform`` so this
+Payload conversion lives in ``embodia.contrib.remote_transform`` so this
 module can stay focused on transport, client/server lifecycle, and serving.
 
-The websocket client intentionally follows the same wire protocol and close-to-
-the-same API as OpenPI's official ``openpi_client.websocket_client_policy``:
+The websocket client intentionally follows one compact policy websocket
+protocol:
 
 - connect over websocket
 - receive one metadata message immediately after connect
@@ -16,10 +16,10 @@ the-same API as OpenPI's official ``openpi_client.websocket_client_policy``:
 - receive inference results as msgpack dictionaries
 - expose ``infer()``, ``reset()``, and ``get_server_metadata()``
 
-OpenPI's server sends NumPy arrays in a custom msgpack encoding. When the user
+The remote server can send NumPy arrays in a custom msgpack encoding. When the user
 environment already has ``numpy`` installed, this module decodes that payload
 back into ``numpy.ndarray`` objects. Without ``numpy``, pure Python payloads
-still work, but official ndarray payloads require installing numpy in the robot
+still work, but ndarray payloads require installing numpy in the robot
 environment.
 """
 
@@ -39,22 +39,27 @@ from ..core.arraylike import (
 )
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
-from ..core.transform import coerce_frame, policy_spec_to_dict
+from ..core.transform import (
+    coerce_action,
+    coerce_frame,
+    coerce_policy_spec,
+    frame_to_dict,
+    policy_spec_to_dict,
+)
 from ..runtime.shared.dispatch import (
     POLICY_GET_SPEC_METHODS,
     POLICY_INFER_METHODS,
     POLICY_RESET_METHODS,
-    ROBOT_GET_SPEC_METHODS,
     format_method_options,
     resolve_callable_method,
 )
-from ..runtime.checks import validate_frame
-from .openpi_transform import (
-    OpenPITransform,
+from ..runtime.checks import validate_action, validate_frame
+from .remote_transform import (
+    RemoteTransform,
     _coerce_embodia_action_plan,
-    openpi_actions_to_action_plan,
-    openpi_first_action,
-    openpi_response_from_action_plan,
+    actions_to_action_plan,
+    first_action_from_response,
+    response_from_action_plan,
 )
 
 
@@ -74,7 +79,7 @@ def _has_nested_module(module_name: str) -> bool:
     return True
 
 
-def is_openpi_remote_available() -> bool:
+def is_remote_available() -> bool:
     """Return whether the minimal websocket/msgpack client deps are available."""
 
     return _has_top_level_module("msgpack") and _has_nested_module(
@@ -82,20 +87,14 @@ def is_openpi_remote_available() -> bool:
     )
 
 
-def is_official_openpi_client_available() -> bool:
-    """Return whether the official ``openpi-client`` package is importable."""
-
-    return _has_top_level_module("openpi_client")
-
-
-def require_openpi_remote() -> None:
+def require_remote() -> None:
     """Raise a clear error if the minimal remote-policy deps are missing."""
 
-    if not is_openpi_remote_available():
+    if not is_remote_available():
         raise InterfaceValidationError(
-            "OpenPI remote policy support requires the optional 'msgpack' and "
+            "Remote policy support requires the optional 'msgpack' and "
             "'websockets' packages. Install them with "
-            "`pip install 'embodia[openpi-remote]'`."
+            "`pip install 'embodia[remote]'`."
         )
 
 
@@ -106,8 +105,8 @@ def _import_msgpack() -> Any:
         return importlib.import_module("msgpack")
     except ImportError as exc:
         raise InterfaceValidationError(
-            "OpenPI remote policy support requires the optional 'msgpack' "
-            "package. Install it with `pip install 'embodia[openpi-remote]'`."
+            "Remote policy support requires the optional 'msgpack' "
+            "package. Install it with `pip install 'embodia[remote]'`."
         ) from exc
 
 
@@ -118,9 +117,9 @@ def _import_websocket_client() -> Any:
         return importlib.import_module("websockets.sync.client")
     except ImportError as exc:
         raise InterfaceValidationError(
-            "OpenPI remote policy support requires the optional 'websockets' "
+            "Remote policy support requires the optional 'websockets' "
             "package with sync client support. Install it with "
-            "`pip install 'embodia[openpi-remote]'`."
+            "`pip install 'embodia[remote]'`."
         ) from exc
 
 
@@ -131,33 +130,33 @@ def _import_websocket_server() -> Any:
         return importlib.import_module("websockets.sync.server")
     except ImportError as exc:
         raise InterfaceValidationError(
-            "OpenPI remote policy serving requires the optional 'websockets' "
+            "Remote policy serving requires the optional 'websockets' "
             "package with sync server support. Install it with "
-            "`pip install 'embodia[openpi-remote]'`."
+            "`pip install 'embodia[remote]'`."
         ) from exc
 
 
 def _import_numpy() -> Any:
-    """Import ``numpy`` lazily for OpenPI ndarray payloads."""
+    """Import ``numpy`` lazily for ndarray payloads."""
 
     try:
         return importlib.import_module("numpy")
     except ImportError as exc:
         raise InterfaceValidationError(
-            "This OpenPI message contains NumPy array payloads encoded with the "
-            "official msgpack format, but numpy is not installed in the current "
-            "environment. Install numpy or the official 'openpi-client' package."
+            "This remote message contains NumPy array payloads encoded with the "
+            "expected msgpack format, but numpy is not installed in the current "
+            "environment. Install numpy in the runtime environment."
         ) from exc
 
 
-class OpenPIMsgpackCodec:
-    """Msgpack codec compatible with OpenPI's ndarray wire format."""
+class RemoteMsgpackCodec:
+    """Msgpack codec for embodia's remote ndarray wire format."""
 
     def __init__(self) -> None:
         self._packer: Any | None = None
 
     def _pack_array(self, obj: object) -> object:
-        """Encode optional ndarray/tensor values in OpenPI's msgpack format."""
+        """Encode optional ndarray/tensor values in the remote msgpack format."""
 
         numpy_type = numpy_ndarray_type()
         if numpy_type is not None and isinstance(obj, numpy_type):
@@ -203,7 +202,7 @@ class OpenPIMsgpackCodec:
         return obj
 
     def _unpack_array(self, obj: dict[Any, Any]) -> Any:
-        """Decode OpenPI's ndarray markers from one msgpack object hook."""
+        """Decode ndarray markers from one msgpack object hook."""
 
         if b"__ndarray__" in obj:
             numpy_module = _import_numpy()
@@ -228,19 +227,19 @@ class OpenPIMsgpackCodec:
         return self._packer
 
     def packb(self, obj: object) -> bytes:
-        """Serialize one OpenPI request payload."""
+        """Serialize one remote request payload."""
 
         return self._ensure_packer().pack(obj)
 
     def unpackb(self, data: bytes) -> Any:
-        """Deserialize one OpenPI response payload."""
+        """Deserialize one remote response payload."""
 
         msgpack = _import_msgpack()
         return msgpack.unpackb(data, object_hook=self._unpack_array)
 
 
 def _build_websocket_uri(host: str, port: int | None) -> str:
-    """Build a websocket URI compatible with OpenPI's official client."""
+    """Build a websocket URI for the current remote client."""
 
     if host.startswith("ws"):
         uri = host
@@ -315,7 +314,7 @@ def _request_header(request: object, header_name: str) -> str | None:
 
 
 class EmbodiaPolicyAdapter:
-    """Expose an embodia-style policy through the OpenPI websocket protocol.
+    """Expose an embodia-style policy through the remote websocket protocol.
 
     This adapter keeps the policy itself simple: the policy still only receives a
     normalized frame and returns one action. Chunking, alternate response
@@ -332,7 +331,7 @@ class EmbodiaPolicyAdapter:
         response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
         server_metadata: Mapping[str, Any] | None = None,
         reset_policy_on_connect: bool = False,
-        transform: OpenPITransform | None = None,
+        transform: RemoteTransform | None = None,
     ) -> None:
         self.policy = policy
         if transform is not None and (
@@ -346,19 +345,19 @@ class EmbodiaPolicyAdapter:
         self._transform = transform
         if transform is not None:
             build_frame = getattr(transform, "build_frame", None)
-            response_from_action_plan = getattr(
+            transform_response_builder = getattr(
                 transform,
                 "response_from_action_plan",
                 None,
             )
-            if not callable(build_frame) or not callable(response_from_action_plan):
+            if not callable(build_frame) or not callable(transform_response_builder):
                 raise InterfaceValidationError(
                     "transform must expose build_frame(obs) and "
                     "response_from_action_plan(plan, frame=...)."
                 )
             self._obs_to_frame = build_frame
             self._response_builder = (
-                lambda actions, frame: response_from_action_plan(
+                lambda actions, frame: transform_response_builder(
                     actions,
                     frame=frame,
                 )
@@ -367,7 +366,7 @@ class EmbodiaPolicyAdapter:
             self._obs_to_frame = obs_to_frame or (lambda obs: coerce_frame(obs))
             self._response_builder = (
                 response_builder
-                or (lambda actions, frame: openpi_response_from_action_plan(actions))
+                or (lambda actions, frame: response_from_action_plan(actions))
             )
         self._action_plan_provider = action_plan_provider
         self._server_metadata = (
@@ -449,9 +448,9 @@ def build_policy_adapter(
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
     reset_policy_on_connect: bool = False,
-    transform: OpenPITransform | None = None,
+    transform: RemoteTransform | None = None,
 ) -> EmbodiaPolicyAdapter:
-    """Build one OpenPI-compatible adapter around a policy-like object."""
+    """Build one remote adapter around a policy-like object."""
 
     if transform is not None and (
         obs_to_frame is not None or response_builder is not None
@@ -485,9 +484,9 @@ def build_policy_server(
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
     reset_policy_on_connect: bool = False,
-    transform: OpenPITransform | None = None,
+    transform: RemoteTransform | None = None,
 ) -> "WebsocketPolicyServer":
-    """Build one OpenPI-compatible websocket server around a policy-like object."""
+    """Build one websocket server around a policy-like object."""
 
     adapter = build_policy_adapter(
         policy,
@@ -521,9 +520,9 @@ def serve_policy(
     response_builder: Callable[[list[Action], Frame], Mapping[str, Any]] | None = None,
     server_metadata: Mapping[str, Any] | None = None,
     reset_policy_on_connect: bool = False,
-    transform: OpenPITransform | None = None,
+    transform: RemoteTransform | None = None,
 ) -> None:
-    """Serve one policy-like object through the OpenPI-compatible websocket API."""
+    """Serve one policy-like object through embodia's remote websocket API."""
 
     server = build_policy_server(
         policy,
@@ -542,115 +541,247 @@ def serve_policy(
     server.serve_forever()
 
 
-def configure_robot_remote_policy(
-    robot: object,
-    *,
-    host: str | None = None,
-    port: int | None = None,
-    api_key: str | None = None,
-    retry_interval_s: float | None = None,
-    connect_timeout_s: float | None = None,
-    additional_headers: Mapping[str, str] | None = None,
-    connect_immediately: bool | None = None,
-    wait_for_server: bool | None = None,
-    obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
-    action_target: str | None = None,
-    command_kind: str | None = None,
-    ref_frame: str | None = None,
-    transform: OpenPITransform | None = None,
-    enabled: bool = True,
-) -> None:
-    """Configure one RobotMixin-style object for OpenPI remote inference."""
+class RemotePolicy:
+    """Policy-like source that talks to embodia's remote policy server.
 
-    configure = getattr(robot, "configure_remote_policy", None)
-    if not callable(configure):
-        raise InterfaceValidationError(
-            f"{type(robot).__name__} must expose configure_remote_policy(...) "
-            "to use configure_robot_remote_policy(...)."
-        )
+    This keeps `robot` local-only. The remote deployment boundary lives on the
+    action-source side, so users can pass this object straight into
+    ``run_step(robot, source=...)`` or ``InferenceRuntime.step(...)``.
+    """
 
-    if transform is not None and any(
-        value is not None
-        for value in (obs_builder, action_target, command_kind, ref_frame)
-    ):
-        raise InterfaceValidationError(
-            "configure_robot_remote_policy() accepts either transform=... or "
-            "obs_builder=/action_target=/command_kind=/ref_frame, not both."
-        )
-
-    response_to_action: Callable[[object], Action]
-    request_builder: Callable[[Frame], Mapping[str, Any]] | None
-    if transform is not None:
-        request_builder = transform.build_obs
-        response_to_action = transform.first_action_from_response
-    else:
-        resolved_action_target = action_target
-        resolved_command_kind = command_kind
-        if resolved_action_target is None or resolved_command_kind is None:
-            get_spec, _ = resolve_callable_method(robot, ROBOT_GET_SPEC_METHODS)
-            if callable(get_spec):
-                spec = get_spec()
-                components = getattr(spec, "components", None)
-                if isinstance(components, list) and len(components) == 1:
-                    component = components[0]
-                    if resolved_action_target is None:
-                        resolved_action_target = getattr(component, "name", None)
-                    supported_command_kinds = getattr(
-                        component,
-                        "supported_command_kinds",
-                        None,
-                    )
-                    if (
-                        resolved_command_kind is None
-                        and isinstance(supported_command_kinds, list)
-                        and len(supported_command_kinds) == 1
-                    ):
-                        resolved_command_kind = supported_command_kinds[0]
-        if not isinstance(resolved_action_target, str) or not resolved_action_target.strip():
+    def __init__(
+        self,
+        *,
+        runner: object | None = None,
+        host: str = "localhost",
+        port: int | None = None,
+        api_key: str | None = None,
+        retry_interval_s: float = 5.0,
+        connect_timeout_s: float | None = None,
+        additional_headers: Mapping[str, str] | None = None,
+        connect_immediately: bool = False,
+        wait_for_server: bool = True,
+        frame_to_obs: Callable[[Frame], Mapping[str, Any]] | None = None,
+        response_to_action: Callable[[object], Action | Mapping[str, Any]] | None = None,
+        action_target: str | None = None,
+        command_kind: str | None = None,
+        ref_frame: str | None = None,
+        policy_spec: object | None = None,
+        transform: RemoteTransform | None = None,
+        enabled: bool = True,
+    ) -> None:
+        if transform is not None and (
+            frame_to_obs is not None
+            or response_to_action is not None
+            or command_kind is not None
+            or ref_frame is not None
+            or action_target is not None
+        ):
             raise InterfaceValidationError(
-                "configure_robot_remote_policy() requires action_target=... when "
-                "transform is not provided and the robot spec does not expose "
-                "exactly one component."
+                "RemotePolicy accepts either transform=... or "
+                "frame_to_obs=/response_to_action=/action_target=/command_kind=/ref_frame, "
+                "not both."
             )
-        if not isinstance(resolved_command_kind, str) or not resolved_command_kind.strip():
+
+        self._runner = (
+            runner
+            if runner is not None
+            else RemotePolicyRunner(
+                enabled=enabled,
+                host=host,
+                port=port,
+                api_key=api_key,
+                retry_interval_s=retry_interval_s,
+                connect_timeout_s=connect_timeout_s,
+                additional_headers=additional_headers,
+                connect_immediately=connect_immediately,
+                wait_for_server=wait_for_server,
+            )
+        )
+        infer = getattr(self._runner, "infer", None)
+        if not callable(infer):
             raise InterfaceValidationError(
-                "configure_robot_remote_policy() requires command_kind=... when "
-                "transform is not provided and the robot spec does not expose "
-                "exactly one supported command kind for its only component."
+                "RemotePolicy runner must expose infer(obs)."
             )
-        response_to_action = lambda response: openpi_first_action(
+
+        self._policy_spec = (
+            None if policy_spec is None else coerce_policy_spec(policy_spec)
+        )
+        self._action_target = action_target
+        self._command_kind = command_kind
+        self._ref_frame = ref_frame
+
+        if transform is not None:
+            self._frame_to_obs = transform.build_obs
+            self._response_to_action = transform.first_action_from_response
+        else:
+            self._frame_to_obs = frame_to_obs or frame_to_dict
+            if response_to_action is not None:
+                self._response_to_action = response_to_action
+            else:
+                self._response_to_action = self._default_response_to_action
+
+    def _default_response_to_action(self, response: object) -> Action:
+        """Convert one remote response into a validated embodia action."""
+
+        if isinstance(response, Mapping):
+            try:
+                action = coerce_action(response)
+                validate_action(action)
+                return action
+            except InterfaceValidationError:
+                pass
+
+        target, command_kind, ref_frame = self._resolve_action_shape(response)
+        action = first_action_from_response(
             response,
-            target=resolved_action_target,
-            kind=resolved_command_kind,
+            target=target,
+            kind=command_kind,
             ref_frame=ref_frame,
         )
-        request_builder = obs_builder
+        validate_action(action)
+        return action
 
-    runner = RemotePolicyRunner(
-        enabled=enabled,
-        host="localhost" if host is None else host,
-        port=port,
-        api_key=api_key,
-        retry_interval_s=5.0 if retry_interval_s is None else retry_interval_s,
-        connect_timeout_s=connect_timeout_s,
-        additional_headers=additional_headers,
-        connect_immediately=False if connect_immediately is None else connect_immediately,
-        wait_for_server=True if wait_for_server is None else wait_for_server,
-    )
+    def _resolve_action_shape(
+        self,
+        response: object,
+    ) -> tuple[str, str, str | None]:
+        """Resolve target/kind hints for one remote action response."""
 
-    configure(
-        runner=runner,
-        request_builder=request_builder,
-        response_to_action=response_to_action,
-        enabled=enabled,
-    )
+        target = self._action_target
+        command_kind = self._command_kind
+        ref_frame = self._ref_frame
+
+        if isinstance(response, Mapping):
+            embodia_meta = response.get("embodia")
+            if isinstance(embodia_meta, Mapping):
+                if target is None:
+                    raw_target = embodia_meta.get("action_target")
+                    if isinstance(raw_target, str) and raw_target.strip():
+                        target = raw_target
+                if command_kind is None:
+                    raw_kind = embodia_meta.get("action_kind")
+                    if isinstance(raw_kind, str) and raw_kind.strip():
+                        command_kind = raw_kind
+                if ref_frame is None:
+                    raw_ref_frame = embodia_meta.get("action_ref_frame")
+                    if raw_ref_frame is not None:
+                        if (
+                            not isinstance(raw_ref_frame, str)
+                            or not raw_ref_frame.strip()
+                        ):
+                            raise InterfaceValidationError(
+                                "remote response embodia.action_ref_frame "
+                                "must be a non-empty string when provided."
+                            )
+                        ref_frame = raw_ref_frame
+
+        if target is None or command_kind is None:
+            try:
+                spec = self.get_spec()
+            except InterfaceValidationError:
+                spec = None
+            if spec is not None:
+                outputs = getattr(spec, "outputs", None)
+                if isinstance(outputs, list) and len(outputs) == 1:
+                    output = outputs[0]
+                    if target is None:
+                        target = output.target
+                    if command_kind is None:
+                        command_kind = output.command_kind
+                    if ref_frame is None:
+                        output_meta = getattr(output, "meta", None)
+                        if isinstance(output_meta, Mapping):
+                            raw_ref_frame = output_meta.get("ref_frame")
+                            if isinstance(raw_ref_frame, str) and raw_ref_frame.strip():
+                                ref_frame = raw_ref_frame
+
+        if target is None and command_kind is not None:
+            target = "arm"
+
+        if target is None or command_kind is None:
+            raise InterfaceValidationError(
+                "RemotePolicy could not infer how to decode the remote action "
+                "payload. Return embodia action metadata from the server, "
+                "expose a single-output policy_spec through remote metadata, "
+                "or pass response_to_action=... for a custom wire format."
+            )
+        return target, command_kind, ref_frame
+
+    def infer(self, frame: Frame | Mapping[str, Any]) -> Action:
+        """Run one remote inference step and return a normalized action."""
+
+        normalized_frame = coerce_frame(frame)
+        validate_frame(normalized_frame)
+
+        obs = self._frame_to_obs(normalized_frame)
+        if not isinstance(obs, Mapping):
+            raise InterfaceValidationError(
+                "RemotePolicy frame_to_obs must return a mapping, got "
+                f"{type(obs).__name__}."
+            )
+
+        response = getattr(self._runner, "infer")(dict(obs))
+        action = coerce_action(self._response_to_action(response))
+        validate_action(action)
+        return action
+
+    def reset(self) -> None:
+        """Forward reset to the underlying remote runner when supported."""
+
+        reset = getattr(self._runner, "reset", None)
+        if callable(reset):
+            reset()
+
+    def close(self) -> None:
+        """Close the underlying remote runner when supported."""
+
+        close = getattr(self._runner, "close", None)
+        if callable(close):
+            close()
+
+    def get_server_metadata(self) -> dict[str, Any]:
+        """Return metadata exposed by the remote server when available."""
+
+        get_server_metadata = getattr(self._runner, "get_server_metadata", None)
+        if not callable(get_server_metadata):
+            return {}
+
+        metadata = get_server_metadata()
+        if not isinstance(metadata, Mapping):
+            raise InterfaceValidationError(
+                "RemotePolicy runner get_server_metadata() must return a "
+                f"mapping, got {type(metadata).__name__}."
+            )
+        return dict(metadata)
+
+    def get_spec(self) -> Any:
+        """Return a cached policy spec or read it from remote metadata."""
+
+        if self._policy_spec is not None:
+            return self._policy_spec
+
+        metadata = self.get_server_metadata()
+        embodia_metadata = metadata.get("embodia")
+        if not isinstance(embodia_metadata, Mapping):
+            raise InterfaceValidationError(
+                "remote server metadata does not contain embodia.policy_spec."
+            )
+
+        raw_spec = embodia_metadata.get("policy_spec")
+        if raw_spec is None:
+            raise InterfaceValidationError(
+                "remote server metadata does not contain embodia.policy_spec."
+            )
+
+        self._policy_spec = coerce_policy_spec(raw_spec)
+        return self._policy_spec
 
 
 class WebsocketPolicyServer:
-    """OpenPI-compatible websocket server for lightweight remote inference.
+    """Websocket server for lightweight remote inference.
 
-    Relative to OpenPI's official server, this version intentionally stays
-    smaller and more embeddable:
+    This version intentionally stays small and embeddable:
 
     - sync server API instead of forcing asyncio in user code
     - optional API-key check
@@ -667,7 +798,7 @@ class WebsocketPolicyServer:
         metadata: Mapping[str, Any] | None = None,
         api_key: str | None = None,
         include_server_timing: bool = True,
-        codec: OpenPIMsgpackCodec | None = None,
+        codec: RemoteMsgpackCodec | None = None,
     ) -> None:
         self._policy = policy
         self._host = host
@@ -675,7 +806,7 @@ class WebsocketPolicyServer:
         self._metadata = None if metadata is None else dict(metadata)
         self._api_key = api_key
         self._include_server_timing = include_server_timing
-        self._codec = codec or OpenPIMsgpackCodec()
+        self._codec = codec or RemoteMsgpackCodec()
 
     def _resolve_metadata(self) -> dict[str, Any]:
         """Return the metadata sent immediately after connect."""
@@ -797,7 +928,7 @@ class WebsocketPolicyServer:
 
 
 class WebsocketClientPolicy:
-    """Thin OpenPI-compatible websocket client for remote policy inference."""
+    """Thin websocket client for remote policy inference."""
 
     def __init__(
         self,
@@ -810,7 +941,7 @@ class WebsocketClientPolicy:
         additional_headers: Mapping[str, str] | None = None,
         connect_immediately: bool = True,
         wait_for_server: bool = True,
-        codec: OpenPIMsgpackCodec | None = None,
+        codec: RemoteMsgpackCodec | None = None,
     ) -> None:
         if retry_interval_s <= 0.0:
             raise InterfaceValidationError(
@@ -828,7 +959,7 @@ class WebsocketClientPolicy:
         self._additional_headers = (
             dict(additional_headers) if additional_headers is not None else {}
         )
-        self._codec = codec or OpenPIMsgpackCodec()
+        self._codec = codec or RemoteMsgpackCodec()
         self._ws: Any | None = None
         self._server_metadata: dict[str, Any] | None = None
 
@@ -856,7 +987,7 @@ class WebsocketClientPolicy:
         return headers or None
 
     def connect(self, *, wait_for_server: bool = True) -> dict[str, Any]:
-        """Connect to the remote OpenPI policy server and read metadata."""
+        """Connect to the remote policy server and read metadata."""
 
         deadline = (
             None
@@ -873,14 +1004,14 @@ class WebsocketClientPolicy:
                 metadata_message = connection.recv()
                 if isinstance(metadata_message, str):
                     raise RuntimeError(
-                        "OpenPI server sent a text frame during metadata "
+                        "remote server sent a text frame during metadata "
                         f"handshake:\n{metadata_message}"
                     )
 
                 metadata = self._codec.unpackb(metadata_message)
                 if not isinstance(metadata, dict):
                     raise InterfaceValidationError(
-                        "OpenPI server metadata must be a dict, got "
+                        "remote server metadata must be a dict, got "
                         f"{type(metadata).__name__}."
                     )
 
@@ -892,7 +1023,7 @@ class WebsocketClientPolicy:
                     raise
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"Timed out waiting for OpenPI server at {self._uri}."
+                        f"Timed out waiting for remote policy server at {self._uri}."
                     ) from exc
                 time.sleep(self._retry_interval_s)
 
@@ -901,7 +1032,7 @@ class WebsocketClientPolicy:
 
         if self._server_metadata is None:
             raise InterfaceValidationError(
-                "OpenPI server metadata is not available before connect(). "
+                "remote server metadata is not available before connect(). "
                 "Call connect() or infer() first."
             )
         return dict(self._server_metadata)
@@ -926,16 +1057,16 @@ class WebsocketClientPolicy:
         unpacked = self._codec.unpackb(response)
         if not isinstance(unpacked, dict):
             raise InterfaceValidationError(
-                "OpenPI inference response must be a dict, got "
+                "remote inference response must be a dict, got "
                 f"{type(unpacked).__name__}."
             )
         return unpacked
 
     def reset(self) -> None:
-        """Match the official client API.
+        """Keep API symmetry with local sources.
 
-        The current OpenPI websocket protocol exposes inference only, so reset is
-        intentionally a no-op on the client side.
+        The current remote websocket protocol exposes inference only, so reset
+        is intentionally a no-op on the client side.
         """
 
     def close(self) -> None:
@@ -964,9 +1095,9 @@ class WebsocketClientPolicy:
 class RemotePolicyRunner:
     """Small lazy wrapper that hides websocket-client lifecycle details.
 
-    The goal is to keep robot-side code from directly managing a websocket
-    client. A robot class can expose a single boolean like
-    ``use_remote_policy`` and delegate the rest to this helper.
+    The goal is to keep policy-source code from directly managing a websocket
+    client. Higher-level code can hold one local robot plus one remote policy
+    source without leaking transport details into the robot class.
     """
 
     def __init__(
@@ -1012,7 +1143,7 @@ class RemotePolicyRunner:
         if not self.enabled:
             raise InterfaceValidationError(
                 "Remote policy access is disabled for this policy instance. "
-                "Enable it with use_remote_policy=True."
+                "Enable it with enabled=True."
             )
 
         if self._client is None:
@@ -1051,28 +1182,26 @@ class RemotePolicyRunner:
             self._client.close()
             self._client = None
 
-
-OpenPIWebsocketClientPolicy = WebsocketClientPolicy
-OpenPIWebsocketPolicyServer = WebsocketPolicyServer
+RemoteWebsocketClientPolicy = WebsocketClientPolicy
+RemoteWebsocketPolicyServer = WebsocketPolicyServer
 
 
 __all__ = [
     "EmbodiaPolicyAdapter",
-    "OpenPITransform",
-    "OpenPIMsgpackCodec",
+    "RemoteTransform",
+    "RemotePolicy",
+    "RemoteMsgpackCodec",
     "RemotePolicyRunner",
     "build_policy_adapter",
     "build_policy_server",
-    "configure_robot_remote_policy",
-    "OpenPIWebsocketClientPolicy",
-    "OpenPIWebsocketPolicyServer",
+    "RemoteWebsocketClientPolicy",
+    "RemoteWebsocketPolicyServer",
     "serve_policy",
     "WebsocketClientPolicy",
     "WebsocketPolicyServer",
-    "is_official_openpi_client_available",
-    "is_openpi_remote_available",
-    "openpi_actions_to_action_plan",
-    "openpi_first_action",
-    "openpi_response_from_action_plan",
-    "require_openpi_remote",
+    "is_remote_available",
+    "actions_to_action_plan",
+    "first_action_from_response",
+    "response_from_action_plan",
+    "require_remote",
 ]

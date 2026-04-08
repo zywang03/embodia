@@ -31,10 +31,10 @@ If you want YAML-based config loading with `from_yaml(...)`:
 pip install ".[yaml]"
 ```
 
-If you want the optional OpenPI remote-policy helpers:
+If you want the optional remote policy helpers:
 
 ```bash
-pip install ".[openpi-remote]"
+pip install ".[remote]"
 ```
 
 embodia does not require `numpy` or `torch`. If a user project already has
@@ -96,9 +96,10 @@ The mapping is:
 That means the common method contracts are:
 
 - `capture()` / `observe()` returns `em.Frame` or a frame-like `dict` with
-  `timestamp_ns`, `images`, and `state`. `images` must use the keys from
-  `schema.images`. `state` must use the union of all
-  `schema.components[*].state` keys.
+  `images` and `state`. `images` must use the keys from `schema.images`.
+  `state` must use the union of all `schema.components[*].state` keys.
+  If `timestamp_ns` or `sequence_id` is omitted, embodia fills them
+  automatically at runtime.
 - `home()` / `reset()` on the robot has the same return contract as
   `capture()`.
 - `send_command(action)` / `act(action)` receives an `em.Action`. Its
@@ -117,7 +118,6 @@ For the example YAML in this repo, the expected runtime shapes are:
 ```python
 # robot.capture() / robot.home() return this shape
 {
-    "timestamp_ns": 1710000000000000000,
     "images": {
         "front_rgb": ...,
     },
@@ -139,6 +139,9 @@ For the example YAML in this repo, the expected runtime shapes are:
     },
 }
 ```
+
+embodia will normalize that into a full `Frame`, including framework-managed
+`timestamp_ns` and `sequence_id` when your native class does not provide them.
 
 If your existing project uses different native names, keep that remapping in
 Python with `MODALITY_MAPS`. embodia will translate at the boundary:
@@ -178,15 +181,7 @@ automatically switches to the wrapped form `{"commands": ..., "meta": ...}`.
 The smallest local inference path is:
 
 ```python
-result = em.run_step(robot, policy)
-```
-
-If you want to see how much synchronous wall time embodia itself adds on one
-closed-loop step, keep the same API and enable timing:
-
-```python
-result = em.run_step(robot, policy, measure_timing=True)
-print(result.timing.embodia_overhead_s)
+result = em.run_step(robot, source=policy)
 ```
 
 If you want runtime-side features such as async scheduling or pacing, keep the
@@ -198,8 +193,41 @@ runtime = em.InferenceRuntime(
     overlap_ratio=0.2,
 )
 
-result = em.run_step(robot, policy, runtime=runtime)
+result = em.run_step(robot, source=policy, runtime=runtime)
 ```
+
+`source=` is the preferred name because the second side may be a local policy,
+a remote policy client, a teleop object exposing `next_action(frame)`, or a
+plain callable. `policy=` still works as a compatibility alias. `robot` stays
+local-only in embodia's design; remote deployment belongs on the source/policy
+side. If one robot class also produces teleop actions itself, it can play both
+roles with `run_step(robot, source=robot)`.
+For embodia's own remote transport, `RemotePolicy(...)` only needs connection
+parameters. It infers action decoding from the remote response or server
+metadata instead of asking you to repeat schema fields locally.
+
+Per-step timing is now internal runtime bookkeeping rather than a public
+`run_step(...)` output. If you explicitly want timing analysis to choose async
+settings, use `profile_sync_inference(...)` instead.
+
+If the remote side is an OpenPI policy server, keep the same outer flow and
+adapt only the wire payload at the source boundary:
+
+```python
+from embodia.contrib import openpi as em_openpi
+
+source = em_openpi.OpenPIPolicySource(
+    host="127.0.0.1",
+    port=8000,
+    obs_builder=your_frame_to_openpi_obs,
+    action_groups=your_openpi_action_groups,
+)
+
+result = em.run_step(robot, source=source)
+```
+
+That OpenPI source can also wrap the official OpenPI client object through
+`runner=...` as long as it exposes `infer(obs)`.
 
 For normal usage, that is the whole story. `check_*`, `from_config(...)`, and
 other lower-level helpers are still available, but they are optional integration
@@ -213,6 +241,12 @@ tools rather than the main user path.
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
 3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
+
+There is also one optional remote folder:
+
+5. [`examples/remote/serve_embodia_policy.py`](./examples/remote/serve_embodia_policy.py)
+6. [`examples/remote/robot_with_embodia_remote_policy.py`](./examples/remote/robot_with_embodia_remote_policy.py)
+7. [`examples/remote/openpi_policy_source.py`](./examples/remote/openpi_policy_source.py)
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
 That shared config defines two components, `arm` and `gripper`, and the

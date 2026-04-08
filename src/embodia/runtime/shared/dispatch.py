@@ -16,15 +16,6 @@ ROBOT_GET_SPEC_METHODS: tuple[str, ...] = ("embodia_get_spec", "get_spec")
 ROBOT_OBSERVE_METHODS: tuple[str, ...] = ("embodia_observe", "observe")
 ROBOT_ACT_METHODS: tuple[str, ...] = ("embodia_act", "act")
 ROBOT_RESET_METHODS: tuple[str, ...] = ("embodia_reset", "reset")
-ROBOT_REMOTE_ACTION_METHODS: tuple[str, ...] = (
-    "embodia_request_remote_policy_action",
-    "_request_remote_policy_action",
-    "request_remote_policy_action",
-)
-ROBOT_HAS_REMOTE_POLICY_METHODS: tuple[str, ...] = (
-    "embodia_has_remote_policy",
-    "has_remote_policy",
-)
 
 POLICY_GET_SPEC_METHODS: tuple[str, ...] = ("embodia_get_spec", "get_spec")
 POLICY_RESET_METHODS: tuple[str, ...] = ("embodia_reset", "reset")
@@ -64,9 +55,7 @@ __all__ = [
     "POLICY_RESET_METHODS",
     "ROBOT_ACT_METHODS",
     "ROBOT_GET_SPEC_METHODS",
-    "ROBOT_HAS_REMOTE_POLICY_METHODS",
     "ROBOT_OBSERVE_METHODS",
-    "ROBOT_REMOTE_ACTION_METHODS",
     "ROBOT_RESET_METHODS",
     "format_method_options",
     "resolve_callable_method",

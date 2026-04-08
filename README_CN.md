@@ -28,10 +28,10 @@ pip install .
 pip install ".[yaml]"
 ```
 
-如果你想使用可选的 OpenPI 远程策略能力：
+如果你想使用可选的远程策略能力：
 
 ```bash
-pip install ".[openpi-remote]"
+pip install ".[remote]"
 ```
 
 `embodia` 本身不要求 `numpy` 或 `torch`。如果用户项目已经安装了这些库，embodia 可以在运行时边界接受它们并归一化成自己的核心数据结构。
@@ -87,8 +87,9 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 所以最常见的方法契约就是：
 
 - `capture()` / `observe()` 返回 `em.Frame` 或 frame-like `dict`，里面要有
-  `timestamp_ns`、`images`、`state`。`images` 的键来自 `schema.images`，
-  `state` 的键来自所有 `schema.components[*].state` 的并集。
+  `images`、`state`。`images` 的键来自 `schema.images`，`state` 的键来自
+  所有 `schema.components[*].state` 的并集。如果你不填 `timestamp_ns`
+  或 `sequence_id`，embodia 会在运行时自动补上。
 - robot 的 `home()` / `reset()` 返回结构和 `capture()` 一样。
 - `send_command(action)` / `act(action)` 接收的是一个 `em.Action`。其中
   `action.commands` 的键就是 YAML 里的组件名，
@@ -104,7 +105,6 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 ```python
 # robot.capture() / robot.home() 返回这种结构
 {
-    "timestamp_ns": 1710000000000000000,
     "images": {
         "front_rgb": ...,
     },
@@ -126,6 +126,9 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
     },
 }
 ```
+
+embodia 会把这种最小返回结构补全成完整 `Frame`，包括自动填上的
+`timestamp_ns` 和 `sequence_id`。
 
 如果你的原项目里名字不是这些标准名，那就把映射保留在 Python 代码里，用
 `MODALITY_MAPS` 处理。embodia 会在边界上自动转换：
@@ -163,15 +166,7 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 最小的本地推理路径就是：
 
 ```python
-result = em.run_step(robot, policy)
-```
-
-如果你想看 embodia 在单步闭环里自己同步消耗了多少时间，也不用换接口，
-只要打开计时：
-
-```python
-result = em.run_step(robot, policy, measure_timing=True)
-print(result.timing.embodia_overhead_s)
+result = em.run_step(robot, source=policy)
 ```
 
 如果你需要异步推理或其他推理期能力，仍然保持同一个入口，只是加一个 runtime：
@@ -182,8 +177,41 @@ runtime = em.InferenceRuntime(
     overlap_ratio=0.2,
 )
 
-result = em.run_step(robot, policy, runtime=runtime)
+result = em.run_step(robot, source=policy, runtime=runtime)
 ```
+
+之所以更推荐 `source=` 这个名字，是因为第二个输入不一定是本地 policy，
+也可能是远端 policy client、一个实现了 `next_action(frame)` 的遥操对象，
+或者一个普通 callable。`policy=` 仍然保留作为兼容别名。embodia 的边界现在
+更明确：`robot` 只负责本地执行，remote 部署放在 source/policy 这一侧。
+如果某个 robot 类自己也能产生命令，也可以直接写
+`run_step(robot, source=robot)`。
+对 embodia 自己的 remote 传输来说，`RemotePolicy(...)` 现在只需要连接参数，
+动作解析会直接从远端响应或服务端 metadata 里自动推断，不需要你在本地再重复
+填写 schema 相关字段。
+
+单步 timing 现在属于 embodia 内部运行时细节，不再作为
+`run_step(...)` 的公开输出。如果你确实想做时延分析来估计异步参数，
+使用 `profile_sync_inference(...)` 即可。
+
+如果远端是 OpenPI policy server，外层调用方式也不用变，只需要在
+source 边界做请求/响应适配：
+
+```python
+from embodia.contrib import openpi as em_openpi
+
+source = em_openpi.OpenPIPolicySource(
+    host="127.0.0.1",
+    port=8000,
+    obs_builder=your_frame_to_openpi_obs,
+    action_groups=your_openpi_action_groups,
+)
+
+result = em.run_step(robot, source=source)
+```
+
+如果你更想直接复用 OpenPI 官方 client，也可以通过 `runner=...` 传进来，
+只要它暴露 `infer(obs)` 即可。
 
 对普通使用者来说，到这里就够了。`check_*`、`from_config(...)` 等低层工具仍然保留，但它们是可选集成工具，不是主路径。
 
@@ -195,6 +223,12 @@ result = em.run_step(robot, policy, runtime=runtime)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
 3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
+
+另外还有一组可选的 remote 示例：
+
+5. [`examples/remote/serve_embodia_policy.py`](./examples/remote/serve_embodia_policy.py)
+6. [`examples/remote/robot_with_embodia_remote_policy.py`](./examples/remote/robot_with_embodia_remote_policy.py)
+7. [`examples/remote/openpi_policy_source.py`](./examples/remote/openpi_policy_source.py)
 
 它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
 这个共享配置定义了 `arm` 和 `gripper` 两个组件，Python 示例里每一步也都会输出对应的 `Action.commands` 映射。

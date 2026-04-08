@@ -15,10 +15,6 @@ import embodia as em
 from embodia.contrib import remote as em_remote
 
 
-HOST = "127.0.0.1"
-PORT = 8000
-
-
 class YourRobot(em.RobotMixin):
     """Small local robot that consumes one remote action source."""
 
@@ -53,8 +49,8 @@ def main() -> None:
 
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     remote_policy = em_remote.RemotePolicy(
-        host=HOST,
-        port=PORT,
+        host="127.0.0.1",
+        port=8000,
         # openpi=True, # whether or not use a openpi policy
         retry_interval_s=0.05,
         connect_timeout_s=2.0,

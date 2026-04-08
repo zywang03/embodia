@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from threading import Lock
+import time
 from weakref import WeakKeyDictionary
 
 from ...core.schema import Frame
@@ -84,5 +85,27 @@ def ensure_frame_sequence_id(
         sequence_id=_next_sequence_id(owner, reset=reset),
     )
 
+def attach_runtime_frame_metadata(
+    frame: Frame,
+    *,
+    owner: object | None,
+    reset: bool = False,
+) -> Frame:
+    """Return ``frame`` with embodia-managed timestamp and sequence metadata."""
 
-__all__ = ["ensure_frame_sequence_id"]
+    if frame.sequence_id is not None:
+        return replace(
+            frame,
+            timestamp_ns=time.time_ns(),
+        )
+
+    return replace(
+        frame,
+        timestamp_ns=time.time_ns(),
+        sequence_id=(
+            _next_sequence_id(owner, reset=reset) if owner is not None else None
+        ),
+    )
+
+
+__all__ = ["attach_runtime_frame_metadata", "ensure_frame_sequence_id"]

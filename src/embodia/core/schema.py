@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 from numbers import Real
+import time
 from typing import Any
 
 import numpy as np
@@ -208,9 +209,9 @@ def _kind_uses_component_dof(spec: CommandKindSpec) -> bool:
 class Frame:
     """One standardized observation frame."""
 
-    timestamp_ns: int
-    images: dict[str, np.ndarray]
-    state: dict[str, np.ndarray]
+    images: dict[str, np.ndarray] = field(default_factory=dict)
+    state: dict[str, np.ndarray] = field(default_factory=dict)
+    timestamp_ns: int = field(default_factory=time.time_ns)
     task: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     sequence_id: int | None = None

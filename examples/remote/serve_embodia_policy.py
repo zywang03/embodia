@@ -41,11 +41,15 @@ class ServedPolicy(em.PolicyMixin):
         ],
     }
 
+    def __init__(self) -> None:
+        self.step_index = 0
+
     def YOUR_OWN_clear_state(self) -> None:
-        return None
+        self.step_index = 0
 
     def YOUR_OWN_infer(self, frame: em.Frame) -> dict[str, object]:
-        base = float(frame.state["YOUR_OWN_arm"][0] + (frame.sequence_id or 0))
+        base = float(frame.state["YOUR_OWN_arm"][0] + self.step_index)
+        self.step_index += 1
         return {
             "YOUR_OWN_arm": {
                 "command": "cartesian_pose_delta",
@@ -63,7 +67,6 @@ def main() -> None:
     em.check_policy(
         policy,
         sample_frame=em.Frame(
-            timestamp_ns=1,
             images={"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             state={"YOUR_OWN_arm": np.zeros(6, dtype=np.float64)},
         ),

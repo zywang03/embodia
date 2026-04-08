@@ -26,7 +26,7 @@ from .shared.dispatch import (
     format_method_options,
     resolve_callable_method,
 )
-from .shared.sequence import ensure_frame_sequence_id
+from .shared.sequence import attach_runtime_frame_metadata
 from .checks import validate_action, validate_frame
 
 
@@ -152,7 +152,7 @@ def run_step(
             ) from exc
     else:
         raw_frame = frame
-    normalized_frame = ensure_frame_sequence_id(
+    normalized_frame = attach_runtime_frame_metadata(
         _as_frame(raw_frame),
         owner=robot,
     )

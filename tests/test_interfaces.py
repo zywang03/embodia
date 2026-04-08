@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 import unittest
 
 import embodia as em
@@ -228,7 +227,6 @@ class InterfaceTests(unittest.TestCase):
 
             def capture(self) -> dict[str, object]:
                 return {
-                    "timestamp_ns": time.time_ns(),
                     "images": {"front_rgb": demo_image()},
                     "state": {"qpos": [1.0] * 6, "gripper_pos": 0.5},
                     "task": {"prompt": "fold"},
@@ -460,7 +458,6 @@ class InterfaceTests(unittest.TestCase):
 
             def _observe_impl(self) -> dict[str, object]:
                 return {
-                    "timestamp_ns": time.time_ns(),
                     "images": {"front_rgb": demo_image()},
                     "state": {"arm": [0.0] * 6},
                 }
@@ -528,6 +525,8 @@ class InterfaceTests(unittest.TestCase):
     def test_coerce_frame_auto_fills_timestamp_ns(self) -> None:
         frame = em.coerce_frame(
             {
+                "timestamp_ns": 1,
+                "sequence_id": 99,
                 "images": {"front_rgb": demo_image()},
                 "state": {"arm": [0.0] * 6},
             }
@@ -535,6 +534,8 @@ class InterfaceTests(unittest.TestCase):
 
         self.assertIsInstance(frame.timestamp_ns, int)
         self.assertGreaterEqual(frame.timestamp_ns, 0)
+        self.assertNotEqual(frame.timestamp_ns, 1)
+        self.assertIsNone(frame.sequence_id)
 
     def test_run_step_result_keeps_public_shape_small(self) -> None:
         robot = DummyRobot()

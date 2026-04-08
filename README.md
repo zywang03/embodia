@@ -103,62 +103,16 @@ is the dictionary key on `Action.commands`.
 
 ### Method I/O
 
-Write your native methods against one standard observation shape and one
-standard action shape:
+Only these method boundaries need to align with the YAML schema:
 
-```python
-import numpy as np
+- `YOUR_OWN_get_obs()` / `observe()` -> output must align to the shared frame structure
+- `YOUR_OWN_reset()` / `reset()` -> output must align to the same frame structure as `observe()`
+- `YOUR_OWN_infer(frame)` / `infer(frame)` -> input `frame` is already YAML-aligned, and output must align to the shared action structure
+- `YOUR_OWN_send_action(action)` / `act(action)` -> input `action` is already YAML-aligned
 
-obs = {
-    # optional, embodia fills them when omitted
-    "timestamp_ns": 0,
-    "sequence_id": 0,
-    "images": {
-        "YOUR_OWN_front_rgb": np.zeros((224, 224, 3), dtype=np.uint8),
-    },
-    "state": {
-        "YOUR_OWN_left_arm": np.zeros(6, dtype=np.float32),
-        "YOUR_OWN_left_gripper": np.array([0.5], dtype=np.float32),
-        "YOUR_OWN_right_arm": np.zeros(6, dtype=np.float32),
-        "YOUR_OWN_right_gripper": np.array([0.5], dtype=np.float32),
-    },
-    # optional, policy-side context only
-    "task": {
-        "YOUR_OWN_prompt": "fold the cloth",
-    },
-}
-
-action = {
-    "YOUR_OWN_left_arm": {
-        "command": "cartesian_pose_delta",
-        "value": np.zeros(6, dtype=np.float32),
-    },
-    "YOUR_OWN_left_gripper": {
-        "command": "gripper_position",
-        "value": np.array([0.5], dtype=np.float32),
-    },
-    "YOUR_OWN_right_arm": {
-        "command": "cartesian_pose_delta",
-        "value": np.zeros(6, dtype=np.float32),
-    },
-    "YOUR_OWN_right_gripper": {
-        "command": "gripper_position",
-        "value": np.array([0.5], dtype=np.float32),
-    },
-}
-```
-
-The method contracts are:
-
-- `YOUR_OWN_get_obs()` / `observe()` -> return `em.Frame` or one `obs`-like `dict`
-- robot `YOUR_OWN_reset()` / `reset()` -> same return shape as `observe()`
-- `YOUR_OWN_infer(frame)` / `infer(frame)` -> receive one `em.Frame`, return `em.Action` or one
-  `action`-like `dict`
-- `YOUR_OWN_send_action(action)` / `act(action)` -> receive one `em.Action`
-- policy `YOUR_OWN_clear_state()` / `reset()` -> return value is ignored
-
-Numeric payloads should be numpy-backed. If your robot omits `timestamp_ns` or
-`sequence_id`, embodia fills them automatically.
+`YOUR_OWN_clear_state()` / `reset()` is optional policy state cleanup. Its
+return value is ignored. Numeric payloads are expected to be numpy-backed.
+embodia manages frame timestamps and step ids internally.
 
 If your existing project uses different native names, keep that remapping in
 Python with `MODALITY_MAPS`. embodia will translate at the boundary:

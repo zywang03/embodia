@@ -40,14 +40,17 @@ class YourRobot(em.RobotMixin):
 class YourPolicy(em.PolicyMixin):
     """Pretend this is your original outer policy class after one small edit."""
 
+    def __init__(self) -> None:
+        self.step_index = 0
+
     def YOUR_OWN_clear_state(self) -> None:
-        return None
+        self.step_index = 0
 
     def YOUR_OWN_infer(self, frame: em.Frame) -> dict[str, object]:
         qpos0 = float(frame.state["YOUR_OWN_arm"][0])
         gripper_pos = float(frame.state["YOUR_OWN_gripper"][0])
-        # embodia fills sequence_id automatically when the robot does not.
-        step = float(frame.sequence_id or 0)
+        step = float(self.step_index)
+        self.step_index += 1
         offset = step * 2.0
         return {
             "YOUR_OWN_arm": {

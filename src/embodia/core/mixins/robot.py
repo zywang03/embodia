@@ -14,7 +14,7 @@ from ...runtime.checks import (
     ensure_action_supported_by_robot as _ensure_action_supported_by_robot,
     validate_robot_spec as _validate_robot_spec,
 )
-from ...runtime.shared.sequence import ensure_frame_sequence_id
+from ...runtime.shared.sequence import attach_runtime_frame_metadata
 from ..errors import InterfaceValidationError
 from ..modalities import images, state
 from ..modalities._common import CONTROL_TARGETS
@@ -251,7 +251,7 @@ class RobotMixin(_CommonInterfaceMixin):
         """Return the normalized frame used internally by embodia."""
 
         raw_observe = self._resolve_impl("observe", "_observe_impl")
-        frame = ensure_frame_sequence_id(
+        frame = attach_runtime_frame_metadata(
             self.validate_frame(raw_observe()),
             owner=self,
         )
@@ -304,7 +304,7 @@ class RobotMixin(_CommonInterfaceMixin):
         """Return the normalized reset frame used internally by embodia."""
 
         raw_reset = self._resolve_impl("reset", "_reset_impl")
-        frame = ensure_frame_sequence_id(
+        frame = attach_runtime_frame_metadata(
             self.validate_frame(raw_reset()),
             owner=self,
             reset=True,

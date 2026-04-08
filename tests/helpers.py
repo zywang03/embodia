@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import numpy as np
 
 from embodia import Action, Frame, PolicyMixin, RobotMixin
@@ -41,7 +39,6 @@ class DummyRobot(RobotMixin):
 
     def _observe_impl(self) -> dict[str, object]:
         return {
-            "timestamp_ns": time.time_ns(),
             "images": {"front_rgb": demo_image()},
             "state": {"arm": np.zeros(6, dtype=np.float64)},
         }

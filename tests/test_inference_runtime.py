@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -44,7 +43,6 @@ class RuntimeRobot(em.RobotMixin):
 
     def _observe_impl(self) -> dict[str, object]:
         return {
-            "timestamp_ns": time.time_ns(),
             "images": {"front_rgb": demo_image()},
             "state": {"arm": np.zeros(6, dtype=np.float64)},
         }

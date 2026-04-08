@@ -96,7 +96,6 @@ class YamlConfigTests(unittest.TestCase):
 
             def capture(self):
                 return {
-                    "timestamp_ns": 1,
                     "images": {"front_rgb": demo_image()},
                     "state": {
                         "arm": [0.0] * 6,

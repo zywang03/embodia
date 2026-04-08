@@ -150,8 +150,8 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
     """Normalize a ``Frame`` or mapping into a standard :class:`Frame`.
 
     For frame-like mappings, ``images`` and ``state`` are the only required
-    payload fields. When ``timestamp_ns`` is omitted, embodia fills it with
-    ``time.time_ns()`` before validation.
+    payload fields. embodia ignores user-provided ``timestamp_ns`` and
+    ``sequence_id`` at the mapping boundary and manages them internally.
     """
 
     if isinstance(value, Frame):
@@ -175,15 +175,11 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
         raise InterfaceValidationError(
             f"frame mapping is missing required field {exc.args[0]!r}."
         ) from exc
-    timestamp_ns = value.get("timestamp_ns", time.time_ns())
-
     return Frame(
-        timestamp_ns=timestamp_ns,
         images=_copy_array_mapping(images, "frame.images", wrap_scalar=False),
         state=_copy_array_mapping(state, "frame.state", wrap_scalar=True),
         task=_copy_string_key_mapping(value.get("task"), "frame.task"),
         meta=_copy_string_key_mapping(value.get("meta"), "frame.meta"),
-        sequence_id=value.get("sequence_id"),
     )
 
 

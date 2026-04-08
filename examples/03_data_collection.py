@@ -43,6 +43,9 @@ class YourRobot(em.RobotMixin):
 class DemoTeleop:
     """Tiny stand-in for teleop input or an external data-collection source."""
 
+    def __init__(self) -> None:
+        self.cursor = 0
+
     script = [
         {
             "YOUR_OWN_arm": {
@@ -77,10 +80,12 @@ class DemoTeleop:
     ]
 
     def next_action(self, frame: em.Frame) -> dict[str, object]:
-        """Return the scripted action indexed by embodia-managed sequence_id."""
+        """Return one scripted action without exposing runtime metadata."""
 
-        sequence_id = int(frame.sequence_id or 0)
-        return self.script[min(sequence_id, len(self.script) - 1)]
+        del frame
+        index = min(self.cursor, len(self.script) - 1)
+        self.cursor += 1
+        return self.script[index]
 
 
 def main() -> None:

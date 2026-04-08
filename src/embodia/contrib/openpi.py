@@ -10,15 +10,24 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import Any
 
+from ..core.arraylike import optional_array_to_list
 from ..core.errors import InterfaceValidationError
-from ..core.schema import Action, Command, Frame
-from ..core.transform import coerce_action, coerce_frame, coerce_policy_spec
-from ..runtime.checks import validate_action, validate_frame
-from ..runtime.inference.protocols import ChunkRequest
-from .remote_transform import _coerce_action_rows, _coerce_embodia_action_plan
-from .remote_transport import RemotePolicyRunner
+from ..core.schema import Action, Command, Frame, PolicyOutputSpec, PolicySpec, RobotSpec
+from ..core.transform import (
+    coerce_frame,
+    coerce_policy_spec,
+    coerce_robot_spec,
+)
+from ..runtime.checks import (
+    validate_action,
+    validate_frame,
+    validate_robot_spec,
+)
+from ..runtime.shared.dispatch import ROBOT_GET_SPEC_METHODS, resolve_callable_method
+from .remote_transform import _coerce_action_rows
 
 
 ActionSelector = int | slice | tuple[int, int] | Sequence[int]
@@ -170,7 +179,7 @@ def frame_to_openpi_obs(
 
     This helper is intentionally small and only covers straightforward top-level
     key remapping. For nested OpenPI observation payloads, pass your own
-    ``obs_builder(frame)`` callable to :class:`OpenPIPolicySource`.
+    ``obs_builder(frame)`` callable to :class:`OpenPITransform`.
     """
 
     normalized_frame = coerce_frame(frame)
@@ -211,6 +220,216 @@ def frame_to_openpi_obs(
     if include_sequence_id and normalized_frame.sequence_id is not None:
         obs["sequence_id"] = normalized_frame.sequence_id
     return obs
+
+
+def _flatten_numeric_value(value: object, *, field_name: str) -> list[float]:
+    """Convert one scalar or vector-like numeric value into ``list[float]``."""
+
+    converted = optional_array_to_list(value, field_name=field_name)
+    if converted is not None:
+        value = converted
+
+    if isinstance(value, tuple):
+        value = list(value)
+
+    if isinstance(value, list):
+        flattened: list[float] = []
+        for index, item in enumerate(value):
+            flattened.extend(
+                _flatten_numeric_value(
+                    item,
+                    field_name=f"{field_name}[{index}]",
+                )
+            )
+        return flattened
+
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise InterfaceValidationError(
+            f"{field_name} must be a real number or a numeric list, got "
+            f"{type(value).__name__}."
+        )
+    return [float(value)]
+
+
+def _extract_prompt(task: Mapping[str, Any]) -> str | None:
+    """Extract one common language-conditioning field when present."""
+
+    for key in ("prompt", "language_instruction", "instruction", "text"):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _selector_width(selector: ActionSelector, *, field_name: str) -> int:
+    """Return the number of dimensions described by one selector."""
+
+    if isinstance(selector, bool):
+        raise InterfaceValidationError(
+            f"{field_name} must be an int, slice, (start, stop), or sequence of ints."
+        )
+    if isinstance(selector, int):
+        return 1
+    if isinstance(selector, slice):
+        if selector.start is None or selector.stop is None:
+            raise InterfaceValidationError(
+                f"{field_name} must use explicit start and stop values."
+            )
+        return max(0, selector.stop - selector.start)
+    if (
+        isinstance(selector, tuple)
+        and len(selector) == 2
+        and all(isinstance(item, int) and not isinstance(item, bool) for item in selector)
+    ):
+        start, stop = selector
+        return max(0, stop - start)
+    if isinstance(selector, (str, bytes)) or not isinstance(selector, Sequence):
+        raise InterfaceValidationError(
+            f"{field_name} must be an int, slice, (start, stop), or sequence of ints."
+        )
+    if not selector:
+        raise InterfaceValidationError(f"{field_name} must not be empty.")
+    return len(selector)
+
+
+def build_default_openpi_obs(
+    frame: Frame | Mapping[str, Any],
+    *,
+    robot_spec: RobotSpec | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one default nested OpenPI-style observation payload.
+
+    This default path is intentionally simple:
+
+    - ``observation.images`` keeps embodia image keys unchanged
+    - ``observation.state`` becomes one flat numeric state vector
+    - ``prompt`` is read from common task keys when present
+    """
+
+    normalized_frame = coerce_frame(frame)
+    validate_frame(normalized_frame)
+
+    spec: RobotSpec | None = None
+    if robot_spec is not None:
+        spec = coerce_robot_spec(robot_spec)
+        validate_robot_spec(spec)
+
+    if spec is not None:
+        images = {
+            key: normalized_frame.images[key]
+            for key in spec.image_keys
+            if key in normalized_frame.images
+        }
+        state_values: list[float] = []
+        for component in spec.components:
+            for state_key in component.state_keys:
+                if state_key not in normalized_frame.state:
+                    raise InterfaceValidationError(
+                        f"frame.state is missing required key {state_key!r} for "
+                        "default OpenPI adaptation."
+                    )
+                state_values.extend(
+                    _flatten_numeric_value(
+                        normalized_frame.state[state_key],
+                        field_name=f"frame.state[{state_key!r}]",
+                    )
+                )
+    else:
+        images = dict(normalized_frame.images)
+        preferred_keys = ("joint_positions", "position")
+        state_values = []
+        used_keys: set[str] = set()
+        for state_key in preferred_keys:
+            if state_key in normalized_frame.state:
+                used_keys.add(state_key)
+                state_values.extend(
+                    _flatten_numeric_value(
+                        normalized_frame.state[state_key],
+                        field_name=f"frame.state[{state_key!r}]",
+                    )
+                )
+        for state_key, value in normalized_frame.state.items():
+            if state_key in used_keys:
+                continue
+            state_values.extend(
+                _flatten_numeric_value(
+                    value,
+                    field_name=f"frame.state[{state_key!r}]",
+                )
+            )
+
+    obs: dict[str, Any] = {
+        "observation": {
+            "images": images,
+            "state": state_values,
+        }
+    }
+    prompt = _extract_prompt(normalized_frame.task)
+    if prompt is not None:
+        obs["prompt"] = prompt
+    return obs
+
+
+def build_default_openpi_action_groups(
+    robot_spec: RobotSpec | Mapping[str, Any],
+) -> list[OpenPIActionGroup]:
+    """Infer one default action split from a robot spec.
+
+    Each component must expose exactly one supported command kind so embodia can
+    decode one returned OpenPI action vector without extra user-provided schema.
+    """
+
+    spec = coerce_robot_spec(robot_spec)
+    validate_robot_spec(spec)
+
+    groups: list[OpenPIActionGroup] = []
+    offset = 0
+    for component in spec.components:
+        if len(component.supported_command_kinds) != 1:
+            raise InterfaceValidationError(
+                "default OpenPI adaptation requires each robot component to "
+                "declare exactly one supported command kind; component "
+                f"{component.name!r} exposes "
+                f"{len(component.supported_command_kinds)} kinds."
+            )
+        groups.append(
+            OpenPIActionGroup(
+                target=component.name,
+                kind=component.supported_command_kinds[0],
+                selector=(offset, offset + component.dof),
+            )
+        )
+        offset += component.dof
+    return groups
+
+
+def build_default_openpi_policy_spec(
+    robot_spec: RobotSpec | Mapping[str, Any],
+    *,
+    name: str = "openpi_remote_policy",
+) -> PolicySpec:
+    """Synthesize one embodia policy spec from a robot spec."""
+
+    spec = coerce_robot_spec(robot_spec)
+    validate_robot_spec(spec)
+    action_groups = build_default_openpi_action_groups(spec)
+    return PolicySpec(
+        name=name,
+        required_image_keys=list(spec.image_keys),
+        required_state_keys=spec.all_state_keys(),
+        required_task_keys=[],
+        outputs=[
+            PolicyOutputSpec(
+                target=group.target,
+                command_kind=group.kind,
+                dim=_selector_width(
+                    group.selector,
+                    field_name=f"{group.target}.selector",
+                ),
+            )
+            for group in action_groups
+        ],
+    )
 
 
 def openpi_action_plan_from_response(
@@ -259,70 +478,32 @@ def openpi_first_action_from_response(
     )[0]
 
 
-class OpenPIPolicySource:
-    """Embodia action source for a remote OpenPI policy server.
+class OpenPITransform:
+    """OpenPI request/response adapter for ``RemotePolicy(openpi=True)``.
 
-    The remote side only needs to speak OpenPI's websocket inference protocol.
-    It does not need to depend on embodia or inherit ``PolicyMixin``.
+    The default behavior is intentionally lightweight:
+
+    - infer OpenPI observation packing from the wrapped embodia robot spec
+    - infer action-vector splits from robot components
+    - synthesize one local policy spec for `check_policy` / `check_pair`
+
+    Advanced users can still override pieces by passing their own
+    ``robot_spec``, ``obs_builder``, ``action_groups``, or ``policy_spec``.
     """
 
     def __init__(
         self,
         *,
-        runner: object | None = None,
-        host: str = "localhost",
-        port: int | None = None,
-        api_key: str | None = None,
-        retry_interval_s: float = 5.0,
-        connect_timeout_s: float | None = None,
-        additional_headers: Mapping[str, str] | None = None,
-        connect_immediately: bool = False,
-        wait_for_server: bool = True,
-        obs_builder: Callable[[Frame], Mapping[str, Any]],
-        response_to_action: Callable[[object], Action | Mapping[str, Any]] | None = None,
-        response_to_action_plan: Callable[[object], object] | None = None,
+        robot_spec: RobotSpec | Mapping[str, Any] | None = None,
+        obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
         action_groups: Sequence[OpenPIActionGroup] | None = None,
-        policy_spec: object | None = None,
-        enabled: bool = True,
+        policy_spec: PolicySpec | Mapping[str, Any] | None = None,
     ) -> None:
-        if not callable(obs_builder):
-            raise InterfaceValidationError(
-                "OpenPIPolicySource requires obs_builder(frame) to be callable."
-            )
-        if action_groups is not None and (
-            response_to_action is not None or response_to_action_plan is not None
-        ):
-            raise InterfaceValidationError(
-                "OpenPIPolicySource accepts action_groups=... or "
-                "response_to_action=/response_to_action_plan=..., not both."
-            )
-        if response_to_action is not None and response_to_action_plan is not None:
-            raise InterfaceValidationError(
-                "OpenPIPolicySource accepts response_to_action=... or "
-                "response_to_action_plan=..., not both."
-            )
-
-        self._runner = (
-            runner
-            if runner is not None
-            else RemotePolicyRunner(
-                enabled=enabled,
-                host=host,
-                port=port,
-                api_key=api_key,
-                retry_interval_s=retry_interval_s,
-                connect_timeout_s=connect_timeout_s,
-                additional_headers=additional_headers,
-                connect_immediately=connect_immediately,
-                wait_for_server=wait_for_server,
-            )
+        self._robot_spec = (
+            None if robot_spec is None else coerce_robot_spec(robot_spec)
         )
-        infer = getattr(self._runner, "infer", None)
-        if not callable(infer):
-            raise InterfaceValidationError(
-                "OpenPIPolicySource runner must expose infer(obs)."
-            )
-
+        if self._robot_spec is not None:
+            validate_robot_spec(self._robot_spec)
         self._obs_builder = obs_builder
         self._policy_spec = (
             None if policy_spec is None else coerce_policy_spec(policy_spec)
@@ -330,131 +511,98 @@ class OpenPIPolicySource:
         self._action_groups = (
             None if action_groups is None else _validate_action_groups(action_groups)
         )
-        self._response_to_action = response_to_action
-        self._response_to_action_plan = response_to_action_plan
+        if self._action_groups is None and self._robot_spec is not None:
+            self._action_groups = build_default_openpi_action_groups(self._robot_spec)
+        if self._policy_spec is None and self._robot_spec is not None:
+            self._policy_spec = build_default_openpi_policy_spec(self._robot_spec)
 
-        if (
-            self._response_to_action is None
-            and self._response_to_action_plan is None
-            and self._action_groups is None
-        ):
+    def bind_robot(self, robot: object) -> None:
+        """Infer OpenPI adaptation rules from one embodia robot object."""
+
+        if self._robot_spec is not None:
+            if self._action_groups is None:
+                self._action_groups = build_default_openpi_action_groups(
+                    self._robot_spec
+                )
+            if self._policy_spec is None:
+                self._policy_spec = build_default_openpi_policy_spec(self._robot_spec)
+            return
+
+        get_spec, get_spec_name = resolve_callable_method(robot, ROBOT_GET_SPEC_METHODS)
+        if not callable(get_spec) or get_spec_name is None:
             raise InterfaceValidationError(
-                "OpenPIPolicySource requires action_groups=..., "
-                "response_to_action=..., or response_to_action_plan=...."
+                "RemotePolicy(openpi=True) requires the robot to expose "
+                "embodia_get_spec() or get_spec()."
             )
 
-    def _build_obs(self, frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
-        """Build one OpenPI observation payload."""
-
-        normalized_frame = coerce_frame(frame)
-        validate_frame(normalized_frame)
-        obs = self._obs_builder(normalized_frame)
-        if not isinstance(obs, Mapping):
+        try:
+            raw_spec = get_spec()
+        except Exception as exc:
             raise InterfaceValidationError(
-                "obs_builder(frame) must return a mapping, got "
-                f"{type(obs).__name__}."
-            )
-        return dict(obs)
+                f"{type(robot).__name__}.{get_spec_name}() raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
-    def _decode_plan(self, response: object) -> list[Action]:
-        """Decode one OpenPI response into a validated action plan."""
+        spec = coerce_robot_spec(raw_spec)
+        validate_robot_spec(spec)
+        self._robot_spec = spec
+        self._action_groups = build_default_openpi_action_groups(spec)
+        self._policy_spec = build_default_openpi_policy_spec(spec)
 
-        if self._response_to_action_plan is not None:
-            plan = _coerce_embodia_action_plan(self._response_to_action_plan(response))
-        elif self._response_to_action is not None:
-            plan = [coerce_action(self._response_to_action(response))]
-        else:
-            assert self._action_groups is not None
-            plan = openpi_action_plan_from_response(
-                response,
-                action_groups=self._action_groups,
-            )
+    def build_obs(self, frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
+        """Convert one embodia frame into the default OpenPI-style payload."""
 
-        for action in plan:
-            validate_action(action)
-        return plan
+        if self._obs_builder is not None:
+            normalized_frame = coerce_frame(frame)
+            validate_frame(normalized_frame)
+            obs = self._obs_builder(normalized_frame)
+            if not isinstance(obs, Mapping):
+                raise InterfaceValidationError(
+                    "OpenPITransform.obs_builder(frame) must return a mapping, "
+                    f"got {type(obs).__name__}."
+                )
+            return dict(obs)
 
-    def infer(self, frame: Frame | Mapping[str, Any]) -> Action:
-        """Run one remote OpenPI inference step and return the first action."""
+        return build_default_openpi_obs(frame, robot_spec=self._robot_spec)
 
-        response = getattr(self._runner, "infer")(self._build_obs(frame))
-        return self._decode_plan(response)[0]
-
-    def infer_chunk(
+    def action_plan_from_response(
         self,
-        frame: Frame | Mapping[str, Any],
-        request: ChunkRequest | object,
+        response_or_actions: object,
     ) -> list[Action]:
-        """Run one remote OpenPI inference step and return the full action chunk."""
+        """Convert one OpenPI action chunk into embodia actions."""
 
-        del request
-        response = getattr(self._runner, "infer")(self._build_obs(frame))
-        return self._decode_plan(response)
-
-    def reset(self) -> None:
-        """Forward reset to the underlying runner when supported."""
-
-        reset = getattr(self._runner, "reset", None)
-        if callable(reset):
-            reset()
-
-    def close(self) -> None:
-        """Close the underlying runner when supported."""
-
-        close = getattr(self._runner, "close", None)
-        if callable(close):
-            close()
-
-    def get_server_metadata(self) -> dict[str, Any]:
-        """Return remote server metadata when available."""
-
-        get_server_metadata = getattr(self._runner, "get_server_metadata", None)
-        if not callable(get_server_metadata):
-            return {}
-
-        metadata = get_server_metadata()
-        if not isinstance(metadata, Mapping):
+        if self._action_groups is None:
             raise InterfaceValidationError(
-                "OpenPIPolicySource runner get_server_metadata() must return a "
-                f"mapping, got {type(metadata).__name__}."
+                "RemotePolicy(openpi=True) must be bound to an embodia robot "
+                "before the first inference step."
             )
-        return dict(metadata)
-
-    def get_spec(self) -> Any:
-        """Return an optional local policy spec when one was configured.
-
-        OpenPI servers are not expected to publish embodia-native policy specs,
-        so this is optional and mainly useful when callers want to run
-        ``check_policy`` / ``check_pair`` locally.
-        """
-
-        if self._policy_spec is not None:
-            return self._policy_spec
-
-        metadata = self.get_server_metadata()
-        embodia_metadata = metadata.get("embodia")
-        if isinstance(embodia_metadata, Mapping):
-            raw_spec = embodia_metadata.get("policy_spec")
-            if raw_spec is not None:
-                self._policy_spec = coerce_policy_spec(raw_spec)
-                return self._policy_spec
-
-        raise InterfaceValidationError(
-            "OpenPIPolicySource has no local policy_spec and the remote server "
-            "does not publish embodia.policy_spec metadata."
+        return openpi_action_plan_from_response(
+            response_or_actions,
+            action_groups=self._action_groups,
         )
 
+    def first_action_from_response(
+        self,
+        response_or_actions: object,
+    ) -> Action:
+        """Convert one OpenPI response into the first embodia action."""
 
-def build_openpi_policy_source(**kwargs: Any) -> OpenPIPolicySource:
-    """Convenience wrapper around :class:`OpenPIPolicySource`."""
+        return self.action_plan_from_response(response_or_actions)[0]
 
-    return OpenPIPolicySource(**kwargs)
+    def get_policy_spec(self) -> PolicySpec:
+        """Return the synthesized local policy spec when available."""
+
+        if self._policy_spec is None:
+            raise InterfaceValidationError(
+                "RemotePolicy(openpi=True) does not have a synthesized policy "
+                "spec yet. Bind it to an embodia robot first."
+            )
+        return self._policy_spec
 
 
 __all__ = [
+    "OpenPITransform",
     "OpenPIActionGroup",
-    "OpenPIPolicySource",
-    "build_openpi_policy_source",
     "frame_to_openpi_obs",
     "openpi_action_plan_from_response",
     "openpi_first_action_from_response",

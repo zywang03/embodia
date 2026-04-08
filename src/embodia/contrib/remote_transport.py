@@ -568,8 +568,28 @@ class RemotePolicy:
         ref_frame: str | None = None,
         policy_spec: object | None = None,
         transform: RemoteTransform | None = None,
+        openpi: bool = False,
+        openpi_transform: object | None = None,
         enabled: bool = True,
     ) -> None:
+        if not openpi and openpi_transform is not None:
+            raise InterfaceValidationError(
+                "RemotePolicy(openpi_transform=...) requires openpi=True."
+            )
+        if openpi and (
+            transform is not None
+            or frame_to_obs is not None
+            or response_to_action is not None
+            or command_kind is not None
+            or ref_frame is not None
+            or action_target is not None
+        ):
+            raise InterfaceValidationError(
+                "RemotePolicy(openpi=True) only accepts connection parameters "
+                "and optional policy_spec=/openpi_transform=.... Do not combine it with "
+                "transform=..., frame_to_obs=..., response_to_action=..., "
+                "action_target=..., command_kind=..., or ref_frame=...."
+            )
         if transform is not None and (
             frame_to_obs is not None
             or response_to_action is not None
@@ -610,37 +630,84 @@ class RemotePolicy:
         self._action_target = action_target
         self._command_kind = command_kind
         self._ref_frame = ref_frame
+        self._openpi = openpi
+        self._openpi_adapter: object | None = None
 
-        if transform is not None:
+        if openpi:
+            from . import openpi as em_openpi
+
+            if openpi_transform is not None:
+                self._openpi_adapter = openpi_transform
+            else:
+                self._openpi_adapter = em_openpi.OpenPITransform()
+            build_obs = getattr(self._openpi_adapter, "build_obs", None)
+            action_plan_from_response = getattr(
+                self._openpi_adapter,
+                "action_plan_from_response",
+                None,
+            )
+            first_action_from_response = getattr(
+                self._openpi_adapter,
+                "first_action_from_response",
+                None,
+            )
+            if (
+                not callable(build_obs)
+                or not callable(action_plan_from_response)
+                or not callable(first_action_from_response)
+            ):
+                raise InterfaceValidationError(
+                    "RemotePolicy(openpi=True, openpi_transform=...) requires "
+                    "an object exposing build_obs(frame), "
+                    "action_plan_from_response(response), and "
+                    "first_action_from_response(response)."
+                )
+            self._frame_to_obs = self._openpi_adapter.build_obs
+            self._response_to_action_plan = self._openpi_adapter.action_plan_from_response
+            self._response_to_action = self._openpi_adapter.first_action_from_response
+        elif transform is not None:
             self._frame_to_obs = transform.build_obs
+            self._response_to_action_plan = transform.action_plan_from_response
             self._response_to_action = transform.first_action_from_response
         else:
             self._frame_to_obs = frame_to_obs or frame_to_dict
             if response_to_action is not None:
                 self._response_to_action = response_to_action
+                self._response_to_action_plan = (
+                    lambda response, _response_to_action=response_to_action: [
+                        coerce_action(_response_to_action(response))
+                    ]
+                )
             else:
+                self._response_to_action_plan = self._default_response_to_action_plan
                 self._response_to_action = self._default_response_to_action
 
     def _default_response_to_action(self, response: object) -> Action:
         """Convert one remote response into a validated embodia action."""
 
+        return self._default_response_to_action_plan(response)[0]
+
+    def _default_response_to_action_plan(self, response: object) -> list[Action]:
+        """Convert one remote response into a validated embodia action plan."""
+
         if isinstance(response, Mapping):
             try:
                 action = coerce_action(response)
                 validate_action(action)
-                return action
+                return [action]
             except InterfaceValidationError:
                 pass
 
         target, command_kind, ref_frame = self._resolve_action_shape(response)
-        action = first_action_from_response(
+        plan = actions_to_action_plan(
             response,
             target=target,
             kind=command_kind,
             ref_frame=ref_frame,
         )
-        validate_action(action)
-        return action
+        for action in plan:
+            validate_action(action)
+        return plan
 
     def _resolve_action_shape(
         self,
@@ -722,9 +789,58 @@ class RemotePolicy:
             )
 
         response = getattr(self._runner, "infer")(dict(obs))
-        action = coerce_action(self._response_to_action(response))
+        plan = self._response_to_action_plan(response)
+        if not isinstance(plan, list) or not plan:
+            raise InterfaceValidationError(
+                "RemotePolicy response decoder must return a non-empty list[Action]."
+            )
+        action = coerce_action(plan[0])
         validate_action(action)
         return action
+
+    def infer_chunk(
+        self,
+        frame: Frame | Mapping[str, Any],
+        request: object,
+    ) -> list[Action]:
+        """Run one remote inference step and return the full action chunk."""
+
+        del request
+        normalized_frame = coerce_frame(frame)
+        validate_frame(normalized_frame)
+
+        obs = self._frame_to_obs(normalized_frame)
+        if not isinstance(obs, Mapping):
+            raise InterfaceValidationError(
+                "RemotePolicy frame_to_obs must return a mapping, got "
+                f"{type(obs).__name__}."
+            )
+
+        response = getattr(self._runner, "infer")(dict(obs))
+        plan = self._response_to_action_plan(response)
+        if not isinstance(plan, list) or not plan:
+            raise InterfaceValidationError(
+                "RemotePolicy response decoder must return a non-empty list[Action]."
+            )
+        for index, action in enumerate(plan):
+            coerced = coerce_action(action)
+            validate_action(coerced)
+            plan[index] = coerced
+        return plan
+
+    def embodia_bind_robot(self, robot: object) -> None:
+        """Optional internal hook used to configure source-side adapters."""
+
+        if self._openpi_adapter is None:
+            return
+
+        bind_robot = getattr(self._openpi_adapter, "bind_robot", None)
+        if callable(bind_robot):
+            bind_robot(robot)
+        if self._policy_spec is None:
+            get_policy_spec = getattr(self._openpi_adapter, "get_policy_spec", None)
+            if callable(get_policy_spec):
+                self._policy_spec = coerce_policy_spec(get_policy_spec())
 
     def reset(self) -> None:
         """Forward reset to the underlying remote runner when supported."""
@@ -760,6 +876,15 @@ class RemotePolicy:
 
         if self._policy_spec is not None:
             return self._policy_spec
+
+        if self._openpi_adapter is not None:
+            get_policy_spec = getattr(self._openpi_adapter, "get_policy_spec", None)
+            if callable(get_policy_spec):
+                try:
+                    self._policy_spec = coerce_policy_spec(get_policy_spec())
+                    return self._policy_spec
+                except InterfaceValidationError:
+                    pass
 
         metadata = self.get_server_metadata()
         embodia_metadata = metadata.get("embodia")

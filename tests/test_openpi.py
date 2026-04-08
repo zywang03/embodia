@@ -6,6 +6,7 @@ import unittest
 
 import embodia as em
 from embodia.contrib import openpi as em_openpi
+from embodia.contrib import remote as em_remote
 
 
 class OpenPITests(unittest.TestCase):
@@ -65,7 +66,7 @@ class OpenPITests(unittest.TestCase):
         self.assertEqual(plan[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
         self.assertEqual(plan[1].get_command("gripper").value, [0.8])  # type: ignore[union-attr]
 
-    def test_openpi_policy_source_drives_run_step_and_chunk(self) -> None:
+    def test_remote_policy_openpi_mode_drives_run_step_and_chunk(self) -> None:
         class DemoRobot(em.RobotMixin):
             ROBOT_SPEC = {
                 "name": "demo_robot",
@@ -121,24 +122,9 @@ class OpenPITests(unittest.TestCase):
                 }
 
         runner = StubRunner()
-        source = em_openpi.OpenPIPolicySource(
+        source = em_remote.RemotePolicy(
             runner=runner,
-            obs_builder=lambda frame: {
-                "state": list(frame.state["joint_positions"]) + [frame.state["position"]],
-                "prompt": frame.task["prompt"],
-            },
-            action_groups=[
-                em_openpi.OpenPIActionGroup(
-                    target="arm",
-                    kind="joint_position",
-                    selector=(0, 3),
-                ),
-                em_openpi.OpenPIActionGroup(
-                    target="gripper",
-                    kind="gripper_position",
-                    selector=3,
-                ),
-            ],
+            openpi=True,
         )
 
         robot = DemoRobot()
@@ -146,7 +132,10 @@ class OpenPITests(unittest.TestCase):
         result = em.run_step(robot, source=source, frame=frame)
         chunk = source.infer_chunk(frame, object())
 
+        observation = runner.last_obs["observation"]  # type: ignore[index]
+        assert isinstance(observation, dict)
         self.assertEqual(runner.last_obs["prompt"], "stack blocks")  # type: ignore[index]
+        self.assertEqual(observation["state"], [0.0, 0.0, 0.0, 0.0])
         self.assertEqual(result.action.get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
         self.assertEqual(result.action.get_command("gripper").value, [0.9])  # type: ignore[union-attr]
         self.assertEqual(len(chunk), 2)

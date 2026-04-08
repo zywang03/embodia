@@ -107,6 +107,17 @@ def resolve_action_source(
             )
         return action_fn, False
 
+    if robot is not None:
+        bind_robot = getattr(source, "embodia_bind_robot", None)
+        if callable(bind_robot):
+            try:
+                bind_robot(robot)
+            except Exception as exc:
+                raise InterfaceValidationError(
+                    f"{type(source).__name__}.embodia_bind_robot(robot) raised "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
     reset_method, _ = resolve_callable_method(source, POLICY_RESET_METHODS)
     can_reset = callable(reset_method)
 

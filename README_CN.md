@@ -198,20 +198,20 @@ result = em.run_step(robot, source=policy, runtime=runtime)
 source 边界做请求/响应适配：
 
 ```python
-from embodia.contrib import openpi as em_openpi
+from embodia.contrib import remote as em_remote
 
-source = em_openpi.OpenPIPolicySource(
+source = em_remote.RemotePolicy(
     host="127.0.0.1",
     port=8000,
-    obs_builder=your_frame_to_openpi_obs,
-    action_groups=your_openpi_action_groups,
+    openpi=True,
 )
 
 result = em.run_step(robot, source=source)
 ```
 
-如果你更想直接复用 OpenPI 官方 client，也可以通过 `runner=...` 传进来，
-只要它暴露 `infer(obs)` 即可。
+默认的 OpenPI 路径里，embodia 会在后台根据包装后的 robot spec 自动推断
+请求/响应适配。如果你更想直接复用 OpenPI 官方 client，也可以通过
+`runner=...` 传进来，只要它暴露 `infer(obs)` 即可。
 
 对普通使用者来说，到这里就够了。`check_*`、`from_config(...)` 等低层工具仍然保留，但它们是可选集成工具，不是主路径。
 
@@ -228,7 +228,6 @@ result = em.run_step(robot, source=source)
 
 5. [`examples/remote/serve_embodia_policy.py`](./examples/remote/serve_embodia_policy.py)
 6. [`examples/remote/robot_with_embodia_remote_policy.py`](./examples/remote/robot_with_embodia_remote_policy.py)
-7. [`examples/remote/openpi_policy_source.py`](./examples/remote/openpi_policy_source.py)
 
 它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
 这个共享配置定义了 `arm` 和 `gripper` 两个组件，Python 示例里每一步也都会输出对应的 `Action.commands` 映射。

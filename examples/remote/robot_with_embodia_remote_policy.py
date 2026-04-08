@@ -1,6 +1,6 @@
-"""Optional remote example 2: local robot consuming an embodia remote policy.
+"""Optional remote example 2: local robot consuming a remote policy source.
 
-Start the server first:
+For embodia remote mode, start the server first:
 
     PYTHONPATH=src python examples/remote/serve_embodia_policy.py
 
@@ -55,6 +55,7 @@ def main() -> None:
     remote_policy = em_remote.RemotePolicy(
         host=HOST,
         port=PORT,
+        # openpi=True, # whether or not use a openpi policy
         retry_interval_s=0.05,
         connect_timeout_s=2.0,
         connect_immediately=False,
@@ -64,17 +65,16 @@ def main() -> None:
     reset_frame = robot.reset()
     em.check_pair(robot, remote_policy, sample_frame=reset_frame)
 
-    print("server_metadata:", remote_policy.get_server_metadata())
+    get_server_metadata = getattr(remote_policy, "get_server_metadata", None)
+    if callable(get_server_metadata):
+        print("server_metadata:", get_server_metadata())
     for step_index in range(3):
         result = em.run_step(robot, source=remote_policy)
         arm = result.action.get_command("arm")
         assert arm is not None
         print(f"step={step_index} action0={arm.value[0]:.2f}")
 
-    print("last_native_action:", robot.last_native_action)
-    remote_policy.close()
-    print("remote robot example passed.")
-
 
 if __name__ == "__main__":
     main()
+    # main(use_openpi=True)

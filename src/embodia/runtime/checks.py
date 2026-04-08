@@ -232,6 +232,16 @@ def check_pair(
 ) -> None:
     """Validate that a robot and a policy are individually valid and compatible."""
 
+    bind_robot = getattr(policy, "embodia_bind_robot", None)
+    if callable(bind_robot):
+        try:
+            bind_robot(robot)
+        except Exception as exc:
+            raise InterfaceValidationError(
+                f"{type(policy).__name__}.embodia_bind_robot(robot) raised "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
     check_robot(robot, call_observe=sample_frame is None)
     check_policy(policy, sample_frame=sample_frame)
 

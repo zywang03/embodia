@@ -214,20 +214,21 @@ If the remote side is an OpenPI policy server, keep the same outer flow and
 adapt only the wire payload at the source boundary:
 
 ```python
-from embodia.contrib import openpi as em_openpi
+from embodia.contrib import remote as em_remote
 
-source = em_openpi.OpenPIPolicySource(
+source = em_remote.RemotePolicy(
     host="127.0.0.1",
     port=8000,
-    obs_builder=your_frame_to_openpi_obs,
-    action_groups=your_openpi_action_groups,
+    openpi=True,
 )
 
 result = em.run_step(robot, source=source)
 ```
 
-That OpenPI source can also wrap the official OpenPI client object through
-`runner=...` as long as it exposes `infer(obs)`.
+For the default OpenPI path, embodia infers request/response adaptation from
+the wrapped robot spec in the background. If you want to reuse the official
+OpenPI client object directly, pass it through `runner=...` as long as it
+exposes `infer(obs)`.
 
 For normal usage, that is the whole story. `check_*`, `from_config(...)`, and
 other lower-level helpers are still available, but they are optional integration
@@ -246,7 +247,6 @@ There is also one optional remote folder:
 
 5. [`examples/remote/serve_embodia_policy.py`](./examples/remote/serve_embodia_policy.py)
 6. [`examples/remote/robot_with_embodia_remote_policy.py`](./examples/remote/robot_with_embodia_remote_policy.py)
-7. [`examples/remote/openpi_policy_source.py`](./examples/remote/openpi_policy_source.py)
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
 That shared config defines two components, `arm` and `gripper`, and the

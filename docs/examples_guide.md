@@ -11,7 +11,6 @@ There is also one optional deployment-oriented folder:
 
 5. [`examples/remote/serve_embodia_policy.py`](../examples/remote/serve_embodia_policy.py)
 6. [`examples/remote/robot_with_embodia_remote_policy.py`](../examples/remote/robot_with_embodia_remote_policy.py)
-7. [`examples/remote/openpi_policy_source.py`](../examples/remote/openpi_policy_source.py)
 
 They all share [`examples/basic_runtime.yml`](../examples/basic_runtime.yml), so
 the Python files stay focused on the main user-facing flow: mixin inheritance,
@@ -34,7 +33,8 @@ The action source itself can vary without changing the outer loop:
 
 For embodia's own remote example, `RemotePolicy(...)` only needs connection
 settings. Command target/kind are inferred from the remote response or the
-server's published policy metadata.
+server's published policy metadata. The same client example can also switch to
+an OpenPI-compatible remote source with `openpi=True`.
 
 If you need more configuration detail, read
 [`docs/yaml_config_example.yml`](./yaml_config_example.yml) and

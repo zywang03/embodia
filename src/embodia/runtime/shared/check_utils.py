@@ -6,7 +6,7 @@ import inspect
 from types import SimpleNamespace
 from typing import Any
 
-from ..core.errors import InterfaceValidationError
+from ...core.errors import InterfaceValidationError
 from .dispatch import format_method_options, resolve_callable_method
 
 

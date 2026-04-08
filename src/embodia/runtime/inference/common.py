@@ -7,7 +7,7 @@ import math
 from typing import Any
 
 from ...core.errors import InterfaceValidationError
-from ..coerce import as_action, as_frame
+from ..shared.coerce import as_action, as_frame
 
 
 def reset_if_possible(component: object) -> None:

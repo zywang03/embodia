@@ -40,7 +40,7 @@ from ..core.arraylike import (
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
 from ..core.transform import coerce_frame, policy_spec_to_dict
-from ..runtime.dispatch import (
+from ..runtime.shared.dispatch import (
     POLICY_GET_SPEC_METHODS,
     POLICY_INFER_METHODS,
     POLICY_RESET_METHODS,

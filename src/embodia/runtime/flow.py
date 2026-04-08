@@ -7,14 +7,14 @@ from dataclasses import dataclass
 
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
-from .action_source import (
+from .shared.action_source import (
     ActionSource,
     call_action_fn as _call_action_fn,
     resolve_action_source as _resolve_action_source,
 )
-from .coerce import as_action as _as_action
-from .coerce import as_frame as _as_frame
-from .dispatch import (
+from .shared.coerce import as_action as _as_action
+from .shared.coerce import as_frame as _as_frame
+from .shared.dispatch import (
     POLICY_INFER_CHUNK_METHODS,
     POLICY_INFER_METHODS,
     POLICY_RESET_METHODS,

@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from ..core.errors import InterfaceValidationError
-from ..core.schema import Action, Frame
+from ...core.errors import InterfaceValidationError
+from ...core.schema import Action, Frame
 from .coerce import as_action
 from .check_utils import single_step_chunk_request
 from .dispatch import (
@@ -18,7 +18,7 @@ from .dispatch import (
     format_method_options,
     resolve_callable_method,
 )
-from .checks import validate_action
+from ..checks import validate_action
 
 ActionSource = Callable[[Frame], Action | Mapping[str, Any] | None]
 

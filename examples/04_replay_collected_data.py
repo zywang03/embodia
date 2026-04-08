@@ -100,10 +100,15 @@ def main() -> None:
     with episode_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             record = json.loads(line)
+            frame = record.get("frame")
             action = record.get("action")
-            if action is None:
+            if frame is None or action is None:
                 continue
-            robot.act(action)
+            em.run_step(
+                robot,
+                frame=frame,
+                action_fn=lambda _frame, recorded_action=action: recorded_action,
+            )
             replayed += 1
 
     print("episode_path:", episode_path)

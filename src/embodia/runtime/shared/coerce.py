@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..core.schema import Action, Frame
-from ..core.transform import coerce_action, coerce_frame
+from ...core.schema import Action, Frame
+from ...core.transform import coerce_action, coerce_frame
 
 
 def as_frame(value: Frame | Mapping[str, Any]) -> Frame:

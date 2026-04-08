@@ -12,7 +12,8 @@ from ...runtime.checks import (
 from ..modalities._common import ModalityToken
 from ..schema import Action, Frame
 from ..transform import action_to_dict, frame_to_dict, remap_action, remap_frame
-from . import config_utils, resolution_utils
+from .shared import config as config_utils
+from .shared import resolution as resolution_utils
 
 
 class _CommonInterfaceMixin:

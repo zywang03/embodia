@@ -25,7 +25,7 @@ from ..core.schema import (
     validate_policy_spec,
     validate_robot_spec,
 )
-from .dispatch import (
+from .shared.dispatch import (
     POLICY_GET_SPEC_METHODS,
     POLICY_INFER_CHUNK_METHODS,
     POLICY_INFER_METHODS,
@@ -37,7 +37,7 @@ from .dispatch import (
     format_method_options,
     resolve_callable_method,
 )
-from .check_utils import (
+from .shared.check_utils import (
     call_method as _call_method,
     ensure_signature_accepts as _ensure_signature_accepts,
     object_label as _object_label,

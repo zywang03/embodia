@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..errors import InterfaceValidationError
-from ..modalities._common import (
+from ...errors import InterfaceValidationError
+from ...modalities._common import (
     COMMAND_KINDS,
     KNOWN_MODALITIES,
     ModalityToken,

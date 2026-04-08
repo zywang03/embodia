@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..modalities import images, meta, state, task
-from ..modalities._common import COMMAND_KINDS, CONTROL_TARGETS, ModalityToken
-from ..modalities._common import resolve_modality_mapping, resolve_string_mapping
-from .config_utils import normalize_modality_name
+from ...modalities import images, meta, state, task
+from ...modalities._common import COMMAND_KINDS, CONTROL_TARGETS, ModalityToken
+from ...modalities._common import resolve_modality_mapping, resolve_string_mapping
+from .config import normalize_modality_name
 
 
 def get_cached_class_value(owner: object, cache_name: str) -> Any | None:

@@ -52,11 +52,17 @@ class YourPolicy(em.PolicyMixin):
         return {
             "arm": {
                 "kind": "cartesian_pose_delta",
-                "value": [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "value": np.array(
+                    [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    dtype=np.float64,
+                ),
             },
             "gripper": {
                 "kind": "gripper_position",
-                "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
+                "value": np.array(
+                    [max(0.0, min(1.0, 1.0 - gripper_pos))],
+                    dtype=np.float64,
+                ),
             },
         }
 

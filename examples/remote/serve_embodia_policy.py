@@ -45,7 +45,7 @@ class ServedPolicy(em.PolicyMixin):
         return {
             "arm": {
                 "kind": "cartesian_pose_delta",
-                "value": [base] * 6,
+                "value": np.full(6, base, dtype=np.float64),
             }
         }
 

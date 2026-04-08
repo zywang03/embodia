@@ -47,31 +47,31 @@ class DemoTeleop:
         {
             "arm": {
                 "kind": "cartesian_pose_delta",
-                "value": [0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "value": np.array([0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
             "gripper": {
                 "kind": "gripper_position",
-                "value": [1.0],
+                "value": np.array([1.0], dtype=np.float64),
             },
         },
         {
             "arm": {
                 "kind": "cartesian_pose_delta",
-                "value": [0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "value": np.array([0.02, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
             "gripper": {
                 "kind": "gripper_position",
-                "value": [0.5],
+                "value": np.array([0.5], dtype=np.float64),
             },
         },
         {
             "arm": {
                 "kind": "cartesian_pose_delta",
-                "value": [-0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "value": np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
             "gripper": {
                 "kind": "gripper_position",
-                "value": [0.0],
+                "value": np.array([0.0], dtype=np.float64),
             },
         },
     ]
@@ -105,6 +105,7 @@ def ensure_demo_episode(path: Path, robot: YourRobot) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
+            # JSON serialization converts numpy arrays into plain lists on disk.
             handle.write(json.dumps(record, ensure_ascii=True))
             handle.write("\n")
 

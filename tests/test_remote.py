@@ -7,6 +7,8 @@ import unittest
 import embodia as em
 from embodia.contrib import remote as em_remote
 
+from helpers import assert_array_equal
+
 
 class RemoteTests(unittest.TestCase):
     """Coverage for lightweight remote conversion and remote-policy helpers."""
@@ -22,7 +24,7 @@ class RemoteTests(unittest.TestCase):
         first = plan[0].get_command("arm")
         assert first is not None
         self.assertEqual(first.kind, "joint_position")
-        self.assertEqual(first.value, [1.0, 2.0, 3.0])
+        assert_array_equal(self, first.value, [1.0, 2.0, 3.0])
         self.assertEqual(first.ref_frame, "tool")
 
     def test_response_from_action_plan_preserves_metadata(self) -> None:
@@ -64,9 +66,9 @@ class RemoteTests(unittest.TestCase):
         command = action.get_command("arm")
         assert command is not None
 
-        self.assertEqual(frame.state["joint_positions"], [0.0, 1.0, 2.0])
+        assert_array_equal(self, frame.state["joint_positions"], [0.0, 1.0, 2.0])
         self.assertEqual(command.kind, "joint_position")
-        self.assertEqual(command.value, [1.0, 2.0, 3.0])
+        assert_array_equal(self, command.value, [1.0, 2.0, 3.0])
 
     def test_build_policy_adapter_serves_grouped_action_policy(self) -> None:
         class DemoPolicy(em.PolicyMixin):
@@ -160,8 +162,8 @@ class RemoteTests(unittest.TestCase):
         command = action.get_command("arm")
         assert command is not None
 
-        self.assertEqual(command.value, [0.4, 0.5, 0.6])
-        self.assertEqual(robot.last_action.get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
+        assert_array_equal(self, command.value, [0.4, 0.5, 0.6])
+        assert_array_equal(self, robot.last_action.get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
 
     def test_remote_policy_can_infer_action_shape_from_policy_spec(self) -> None:
         class StubRunner:
@@ -199,7 +201,7 @@ class RemoteTests(unittest.TestCase):
         command = action.get_command("arm")
         assert command is not None
         self.assertEqual(command.kind, "joint_position")
-        self.assertEqual(command.value, [0.7, 0.8, 0.9])
+        assert_array_equal(self, command.value, [0.7, 0.8, 0.9])
 
     def test_remote_policy_runner_rejects_when_disabled(self) -> None:
         runner = em_remote.RemotePolicyRunner(enabled=False)

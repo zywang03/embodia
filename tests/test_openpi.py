@@ -5,8 +5,11 @@ from __future__ import annotations
 import unittest
 
 import embodia as em
+import numpy as np
 from embodia.contrib import openpi as em_openpi
 from embodia.contrib import remote as em_remote
+
+from helpers import assert_array_equal, demo_image
 
 
 class OpenPITests(unittest.TestCase):
@@ -15,7 +18,7 @@ class OpenPITests(unittest.TestCase):
     def test_frame_to_openpi_obs_remaps_frame_fields(self) -> None:
         frame = em.Frame(
             timestamp_ns=123,
-            images={"front_rgb": "rgb-bytes"},
+            images={"front_rgb": demo_image()},
             state={"joint_positions": [1.0, 2.0, 3.0], "position": 0.5},
             task={"prompt": "fold the cloth"},
             meta={"episode_id": "demo-1"},
@@ -35,9 +38,9 @@ class OpenPITests(unittest.TestCase):
             include_sequence_id=True,
         )
 
-        self.assertEqual(obs["observation/front_image"], "rgb-bytes")
-        self.assertEqual(obs["observation/joint_position"], [1.0, 2.0, 3.0])
-        self.assertEqual(obs["observation/gripper_position"], 0.5)
+        assert_array_equal(self, obs["observation/front_image"], demo_image())
+        assert_array_equal(self, obs["observation/joint_position"], [1.0, 2.0, 3.0])
+        assert_array_equal(self, obs["observation/gripper_position"], [0.5])
         self.assertEqual(obs["prompt"], "fold the cloth")
         self.assertEqual(obs["episode_id"], "demo-1")
         self.assertEqual(obs["timestamp_ns"], 123)
@@ -61,10 +64,10 @@ class OpenPITests(unittest.TestCase):
         )
 
         self.assertEqual(len(plan), 2)
-        self.assertEqual(plan[0].get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
-        self.assertEqual(plan[0].get_command("gripper").value, [0.9])  # type: ignore[union-attr]
-        self.assertEqual(plan[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
-        self.assertEqual(plan[1].get_command("gripper").value, [0.8])  # type: ignore[union-attr]
+        assert_array_equal(self, plan[0].get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
+        assert_array_equal(self, plan[0].get_command("gripper").value, [0.9])  # type: ignore[union-attr]
+        assert_array_equal(self, plan[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
+        assert_array_equal(self, plan[1].get_command("gripper").value, [0.8])  # type: ignore[union-attr]
 
     def test_remote_policy_openpi_mode_drives_run_step_and_chunk(self) -> None:
         class DemoRobot(em.RobotMixin):
@@ -94,7 +97,7 @@ class OpenPITests(unittest.TestCase):
 
             def _observe_impl(self) -> dict[str, object]:
                 return {
-                    "images": {"front_rgb": "rgb"},
+                    "images": {"front_rgb": demo_image()},
                     "state": {
                         "joint_positions": [0.0, 0.0, 0.0],
                         "position": 0.0,
@@ -136,10 +139,10 @@ class OpenPITests(unittest.TestCase):
         assert isinstance(observation, dict)
         self.assertEqual(runner.last_obs["prompt"], "stack blocks")  # type: ignore[index]
         self.assertEqual(observation["state"], [0.0, 0.0, 0.0, 0.0])
-        self.assertEqual(result.action.get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
-        self.assertEqual(result.action.get_command("gripper").value, [0.9])  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [0.1, 0.2, 0.3])  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("gripper").value, [0.9])  # type: ignore[union-attr]
         self.assertEqual(len(chunk), 2)
-        self.assertEqual(chunk[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
+        assert_array_equal(self, chunk[1].get_command("arm").value, [0.4, 0.5, 0.6])  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

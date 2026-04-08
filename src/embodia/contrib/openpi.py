@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from numbers import Real
 from typing import Any
 
-from ..core.arraylike import optional_array_to_list
+import numpy as np
+
+from ..core.arraylike import to_numpy_array
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Command, Frame, PolicyOutputSpec, PolicySpec, RobotSpec
 from ..core.transform import (
@@ -223,32 +224,18 @@ def frame_to_openpi_obs(
 
 
 def _flatten_numeric_value(value: object, *, field_name: str) -> list[float]:
-    """Convert one scalar or vector-like numeric value into ``list[float]``."""
+    """Convert one scalar or tensor-like numeric value into ``list[float]``."""
 
-    converted = optional_array_to_list(value, field_name=field_name)
-    if converted is not None:
-        value = converted
-
-    if isinstance(value, tuple):
-        value = list(value)
-
-    if isinstance(value, list):
-        flattened: list[float] = []
-        for index, item in enumerate(value):
-            flattened.extend(
-                _flatten_numeric_value(
-                    item,
-                    field_name=f"{field_name}[{index}]",
-                )
-            )
-        return flattened
-
-    if isinstance(value, bool) or not isinstance(value, Real):
-        raise InterfaceValidationError(
-            f"{field_name} must be a real number or a numeric list, got "
-            f"{type(value).__name__}."
-        )
-    return [float(value)]
+    array = to_numpy_array(
+        value,
+        field_name=field_name,
+        wrap_scalar=True,
+        numeric_only=True,
+        allow_bool=False,
+        copy=False,
+        dtype=np.float64,
+    )
+    return array.reshape(-1).tolist()
 
 
 def _extract_prompt(task: Mapping[str, Any]) -> str | None:
@@ -455,7 +442,7 @@ def openpi_action_plan_from_response(
             )
             commands[group.target] = Command(
                 kind=group.kind,
-                value=[row[item_index] for item_index in indices],
+                value=row[indices].copy(),
                 ref_frame=group.ref_frame,
                 meta=dict(group.meta),
             )

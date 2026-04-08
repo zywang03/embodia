@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
+
+import numpy as np
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Command, Frame
@@ -16,7 +17,7 @@ def _clone_command(command: Command) -> Command:
 
     return Command(
         kind=command.kind,
-        value=list(command.value),
+        value=command.value.copy(),
         ref_frame=command.ref_frame,
         meta=dict(command.meta),
     )
@@ -75,9 +76,11 @@ def _same_target(left: Action, right: Action) -> bool:
     for target in left_map:
         left_command = left_map[target]
         right_command = right_map[target]
-        if not all(
-            math.isclose(a, b, rel_tol=0.0, abs_tol=1e-12)
-            for a, b in zip(left_command.value, right_command.value)
+        if not np.allclose(
+            left_command.value,
+            right_command.value,
+            rtol=0.0,
+            atol=1e-12,
         ):
             return False
     return True
@@ -92,10 +95,7 @@ def _blend_action(left: Action, right: Action, ratio: float) -> Action:
         previous = left_map[target]
         blended_commands[target] = Command(
             kind=command.kind,
-            value=[
-                start + (target_value - start) * ratio
-                for start, target_value in zip(previous.value, command.value)
-            ],
+            value=previous.value + (command.value - previous.value) * ratio,
             ref_frame=command.ref_frame,
             meta=dict(command.meta),
         )

@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 
 import embodia as em
+import numpy as np
+
+from helpers import assert_array_equal, demo_image
 
 
 def arm_value(action: em.Action) -> float:
@@ -43,8 +46,8 @@ class RuntimeRobot(em.RobotMixin):
     def _observe_impl(self) -> dict[str, object]:
         return {
             "timestamp_ns": time.time_ns(),
-            "images": {"front_rgb": None},
-            "state": {"joint_positions": [0.0] * 6},
+            "images": {"front_rgb": demo_image()},
+            "state": {"joint_positions": np.zeros(6, dtype=np.float64)},
         }
 
     def _act_impl(self, action: em.Action) -> None:
@@ -147,8 +150,8 @@ class InferenceRuntimeTests(unittest.TestCase):
             frame,
         )
 
-        self.assertEqual(first.get_command("arm").value, [0.0, 2.0])  # type: ignore[union-attr]
-        self.assertEqual(second.get_command("arm").value, [1.0, 3.0])  # type: ignore[union-attr]
+        assert_array_equal(self, first.get_command("arm").value, [0.0, 2.0])  # type: ignore[union-attr]
+        assert_array_equal(self, second.get_command("arm").value, [1.0, 3.0])  # type: ignore[union-attr]
 
     def test_action_interpolator_blends_over_one_extra_step(self) -> None:
         frame = em.Frame(timestamp_ns=1, images={}, state={})
@@ -179,9 +182,9 @@ class InferenceRuntimeTests(unittest.TestCase):
             frame,
         )
 
-        self.assertEqual(first.get_command("arm").value, [0.0, 0.0])  # type: ignore[union-attr]
-        self.assertEqual(second.get_command("arm").value, [1.0, 2.0])  # type: ignore[union-attr]
-        self.assertEqual(third.get_command("arm").value, [2.0, 4.0])  # type: ignore[union-attr]
+        assert_array_equal(self, first.get_command("arm").value, [0.0, 0.0])  # type: ignore[union-attr]
+        assert_array_equal(self, second.get_command("arm").value, [1.0, 2.0])  # type: ignore[union-attr]
+        assert_array_equal(self, third.get_command("arm").value, [2.0, 4.0])  # type: ignore[union-attr]
 
     def test_sync_runtime_applies_action_optimizers_before_execution(self) -> None:
         robot = RuntimeRobot()

@@ -4,7 +4,21 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
+
 from embodia import Action, Frame, PolicyMixin, RobotMixin
+
+
+def demo_image() -> np.ndarray:
+    """Return one small deterministic image tensor for tests/examples."""
+
+    return np.zeros((2, 2, 3), dtype=np.uint8)
+
+
+def assert_array_equal(testcase: object, actual: object, expected: object) -> None:
+    """Assert one array-like payload matches the expected numeric values."""
+
+    np.testing.assert_allclose(np.asarray(actual), np.asarray(expected))
 
 
 class DummyRobot(RobotMixin):
@@ -29,8 +43,8 @@ class DummyRobot(RobotMixin):
     def _observe_impl(self) -> dict[str, object]:
         return {
             "timestamp_ns": time.time_ns(),
-            "images": {"front_rgb": None},
-            "state": {"joint_positions": [0.0] * 6},
+            "images": {"front_rgb": demo_image()},
+            "state": {"joint_positions": np.zeros(6, dtype=np.float64)},
         }
 
     def _act_impl(self, action: Action) -> None:

@@ -4,52 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from numbers import Real
 from typing import Any
 
-from ..core.arraylike import optional_array_to_list
+import numpy as np
+
+from ..core.arraylike import to_numpy_array
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame
 from ..core.transform import coerce_action, coerce_frame, frame_to_dict
 from ..runtime.checks import validate_action, validate_frame
-
-
-def _coerce_optional_python_list(value: object, *, field_name: str) -> object:
-    """Convert optional ndarray/tensor inputs into plain Python lists."""
-
-    converted = optional_array_to_list(value, field_name=field_name)
-    if converted is not None:
-        return converted
-
-    tolist = getattr(value, "tolist", None)
-    if callable(tolist):
-        return tolist()
-
-    return value
-
-
-def _ensure_float_list(value: object, *, field_name: str) -> list[float]:
-    """Validate and normalize one numeric action vector."""
-
-    value = _coerce_optional_python_list(value, field_name=field_name)
-    if isinstance(value, tuple):
-        value = list(value)
-
-    if not isinstance(value, list):
-        raise InterfaceValidationError(
-            f"{field_name} must be a list-like numeric vector, got "
-            f"{type(value).__name__}."
-        )
-
-    numbers: list[float] = []
-    for index, item in enumerate(value):
-        if isinstance(item, bool) or not isinstance(item, Real):
-            raise InterfaceValidationError(
-                f"{field_name}[{index}] must be a real number, got "
-                f"{type(item).__name__}."
-            )
-        numbers.append(float(item))
-    return numbers
 
 
 def _extract_actions_value(
@@ -68,38 +31,28 @@ def _extract_actions_value(
 
 def _coerce_action_rows(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
-) -> list[list[float]]:
-    """Normalize remote action payloads into ``list[list[float]]``."""
+) -> list[np.ndarray]:
+    """Normalize remote action payloads into ``list[numpy.ndarray]``."""
 
-    actions = _coerce_optional_python_list(
+    array = to_numpy_array(
         _extract_actions_value(response_or_actions),
         field_name="actions",
+        wrap_scalar=False,
+        numeric_only=True,
+        allow_bool=False,
+        copy=True,
+        dtype=np.float64,
     )
-    if isinstance(actions, tuple):
-        actions = list(actions)
-
-    if not isinstance(actions, list):
+    if array.ndim == 1:
+        array = array.reshape(1, -1)
+    if array.ndim != 2:
         raise InterfaceValidationError(
-            "remote actions must be a 1D or 2D list-like numeric payload, got "
-            f"{type(actions).__name__}."
+            "remote actions must be a 1D or 2D numeric array payload, got "
+            f"ndim={array.ndim}."
         )
-    if not actions:
+    if array.shape[0] == 0 or array.shape[1] == 0:
         raise InterfaceValidationError("remote inference returned an empty action chunk.")
-
-    first = actions[0]
-    if isinstance(first, bool):
-        raise InterfaceValidationError(
-            "remote actions must contain numeric values, not booleans."
-        )
-    if isinstance(first, Real):
-        return [_ensure_float_list(actions, field_name="actions")]
-
-    rows: list[list[float]] = []
-    for row_index, row in enumerate(actions):
-        rows.append(
-            _ensure_float_list(row, field_name=f"actions[{row_index}]")
-        )
-    return rows
+    return [row.copy() for row in array]
 
 
 def _read_action_shape_from_embodia_metadata(
@@ -245,7 +198,10 @@ def response_from_action_plan(
 
     first_target, first_command = next(iter(actions[0].commands.items()))
     response: dict[str, Any] = {
-        "actions": [list(next(iter(action.commands.values())).value) for action in actions],
+        "actions": [
+            next(iter(action.commands.values())).value.tolist()
+            for action in actions
+        ],
     }
 
     if include_embodia_metadata:

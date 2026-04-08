@@ -12,6 +12,7 @@ Run with:
 from __future__ import annotations
 
 import embodia as em
+import numpy as np
 from embodia.contrib import remote as em_remote
 
 
@@ -59,8 +60,8 @@ def main() -> None:
         policy,
         sample_frame=em.Frame(
             timestamp_ns=1,
-            images={"front_rgb": None},
-            state={"joint_positions": [0.0] * 6},
+            images={"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={"joint_positions": np.zeros(6, dtype=np.float64)},
         ),
     )
 

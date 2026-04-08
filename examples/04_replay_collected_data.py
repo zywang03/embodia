@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import embodia as em
+import numpy as np
 
 
 class YourRobot(em.RobotMixin):
@@ -21,10 +22,10 @@ class YourRobot(em.RobotMixin):
 
     def capture(self) -> dict[str, object]:
         return {
-            "images": {"front_rgb": None},
+            "images": {"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             "state": {
-                "joint_positions": [0.25] * 6,
-                "position": 0.5,
+                "joint_positions": np.full(6, 0.25, dtype=np.float64),
+                "position": np.array([0.5], dtype=np.float64),
             },
         }
 

@@ -16,11 +16,9 @@ protocol:
 - receive inference results as msgpack dictionaries
 - expose ``infer()``, ``reset()``, and ``get_server_metadata()``
 
-The remote server can send NumPy arrays in a custom msgpack encoding. When the user
-environment already has ``numpy`` installed, this module decodes that payload
-back into ``numpy.ndarray`` objects. Without ``numpy``, pure Python payloads
-still work, but ndarray payloads require installing numpy in the robot
-environment.
+The remote server can send NumPy arrays in a custom msgpack encoding. embodia's
+core runtime is numpy-based, so this module decodes that payload back into
+``numpy.ndarray`` objects before it re-enters the shared schema.
 """
 
 from __future__ import annotations
@@ -144,8 +142,8 @@ def _import_numpy() -> Any:
     except ImportError as exc:
         raise InterfaceValidationError(
             "This remote message contains NumPy array payloads encoded with the "
-            "expected msgpack format, but numpy is not installed in the current "
-            "environment. Install numpy in the runtime environment."
+            "expected msgpack format, but numpy is not available in the current "
+            "environment."
         ) from exc
 
 

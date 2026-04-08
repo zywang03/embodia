@@ -453,7 +453,7 @@ class ChunkScheduler:
             commands={
                 target: Command(
                     kind=command.kind,
-                    value=list(command.value),
+                    value=command.value.copy(),
                     ref_frame=command.ref_frame,
                     meta=dict(command.meta),
                 )

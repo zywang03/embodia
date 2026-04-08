@@ -139,7 +139,7 @@ def remap_command(
 
     return Command(
         kind=_remap_name(normalized.kind, kind_map or {}),
-        value=list(normalized.value),
+        value=normalized.value.copy(),
         ref_frame=mapped_ref_frame,
         meta=dict(normalized.meta),
     )

@@ -37,9 +37,10 @@ If you want the optional remote policy helpers:
 pip install ".[remote]"
 ```
 
-embodia does not require `numpy` or `torch`. If a user project already has
-them installed, embodia can accept their arrays at the runtime boundary and
-normalize them into embodia's core data structures.
+embodia depends on `numpy` and keeps image/state/action tensors as
+`numpy.ndarray` inside the core runtime. If a user project already uses
+`torch`, embodia can still accept tensors at the runtime boundary and convert
+them into numpy-backed core objects.
 
 ## Quickstart
 
@@ -96,8 +97,10 @@ The mapping is:
 That means the common method contracts are:
 
 - `capture()` / `observe()` returns `em.Frame` or a frame-like `dict` with
-  `images` and `state`. `images` must use the keys from `schema.images`.
-  `state` must use the union of all `schema.components[*].state` keys.
+  `images` and `state`. Numeric payloads should be numpy-backed:
+  `frame.images[*]` and `frame.state[*]` are expected to be `numpy.ndarray`.
+  `images` must use the keys from `schema.images`. `state` must use the union
+  of all `schema.components[*].state` keys.
   If `timestamp_ns` or `sequence_id` is omitted, embodia fills them
   automatically at runtime.
 - `home()` / `reset()` on the robot has the same return contract as
@@ -105,25 +108,27 @@ That means the common method contracts are:
 - `send_command(action)` / `act(action)` receives an `em.Action`. Its
   `action.commands` keys are the component names from YAML, and each
   `action.commands[component].kind` value is the command kind declared for
-  that component.
+  that component. Each `action.commands[component].value` is a numpy vector.
 - `clear_state()` / `reset()` on the policy returns `None`.
 - `infer(frame)` receives an `em.Frame`. `frame.images` and `frame.state`
   already follow the YAML schema. If `schema.task` was declared, policy-side
   context is available in `frame.task`. `infer(frame)` should return an
-  `em.Action` or an action-like `dict` whose commands target the YAML
-  components.
+  `em.Action` or an action-like `dict` whose numeric payloads are numpy-backed
+  and whose commands target the YAML components.
 
 For the example YAML in this repo, the expected runtime shapes are:
 
 ```python
+import numpy as np
+
 # robot.capture() / robot.home() return this shape
 {
     "images": {
-        "front_rgb": ...,
+        "front_rgb": np.zeros((224, 224, 3), dtype=np.uint8),
     },
     "state": {
-        "joint_positions": [...],
-        "position": 0.5,
+        "joint_positions": np.zeros(6, dtype=np.float32),
+        "position": np.array([0.5], dtype=np.float32),
     },
 }
 
@@ -131,11 +136,11 @@ For the example YAML in this repo, the expected runtime shapes are:
 {
     "arm": {
         "kind": "cartesian_pose_delta",
-        "value": [...],
+        "value": np.zeros(6, dtype=np.float32),
     },
     "gripper": {
         "kind": "gripper_position",
-        "value": [0.5],
+        "value": np.array([0.5], dtype=np.float32),
     },
 }
 ```
@@ -158,15 +163,17 @@ embodia how to translate.
 The default compact action shape is:
 
 ```python
+import numpy as np
+
 {
     "arm": {
         "kind": "cartesian_pose_delta",
-        "value": [...],
+        "value": np.zeros(6, dtype=np.float32),
         "ref_frame": "tool",
     },
     "gripper": {
         "kind": "gripper_position",
-        "value": [0.5],
+        "value": np.array([0.5], dtype=np.float32),
     },
 }
 ```

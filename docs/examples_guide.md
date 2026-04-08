@@ -16,13 +16,14 @@ They all share [`examples/basic_runtime.yml`](../examples/basic_runtime.yml), so
 the Python files stay focused on the main user-facing flow: mixin inheritance,
 `from_yaml(...)`, `run_step(...)`, and `InferenceRuntime(...)`.
 For inference examples, `run_step(robot, source=policy)` is the preferred style.
+Numeric runtime payloads in those examples are numpy arrays, not Python lists.
 
-The examples follow one grouped-command schema throughout:
+The examples follow one grouped-command, numpy-based schema throughout:
 
-- robot state is standardized into semantic keys such as `joint_positions` and `position`
+- robot image/state payloads are standardized into semantic keys such as `joint_positions` and `position`
 - robot embodiment is declared through components such as `arm` and `gripper`
 - every action step is an `Action` with one or more `commands`
-- each command addresses one component through `target + kind + value`
+- each command addresses one component through `target + kind + value`, with `value` stored as a numpy vector
 
 The action source itself can vary without changing the outer loop:
 

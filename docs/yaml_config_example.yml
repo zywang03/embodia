@@ -3,6 +3,8 @@
 # `PolicyMixin.from_yaml(...)` automatically reads the top-level `policy:` block.
 # This file only describes the shared runtime schema plus method aliases.
 # `schema.task` is optional policy-side context. Robot specs do not declare it.
+# Numeric runtime payloads that match this schema are numpy arrays:
+# `frame.images[*]`, `frame.state[*]`, and `action.commands[*].value`.
 
 schema:
   images:

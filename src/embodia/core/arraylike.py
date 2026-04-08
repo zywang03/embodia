@@ -1,35 +1,29 @@
-"""Optional array/tensor helpers without hard dependencies.
+"""Numpy-first helpers for embodia numeric payloads.
 
-embodia's public core intentionally stays free of heavy numeric dependencies.
-These helpers let boundary coercion recognize ``numpy.ndarray`` or
-``torch.Tensor`` values when those packages already exist in the user's
-environment, without making them required install-time dependencies.
+embodia's core stores observation and action tensors as ``numpy.ndarray``.
+These helpers keep that boundary handling explicit while still accepting
+optional torch tensors or simple Python sequences at adapter edges.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import importlib
+from numbers import Real
 from typing import Any
+
+import numpy as np
 
 from .errors import InterfaceValidationError
 
 _UNSET = object()
-_NUMPY_NDARRAY_TYPE: object = _UNSET
 _TORCH_TENSOR_TYPE: object = _UNSET
 
 
-def numpy_ndarray_type() -> type[Any] | None:
-    """Return ``numpy.ndarray`` when numpy is importable, else ``None``."""
+def numpy_ndarray_type() -> type[Any]:
+    """Return embodia's canonical ndarray type."""
 
-    global _NUMPY_NDARRAY_TYPE
-    if _NUMPY_NDARRAY_TYPE is _UNSET:
-        try:
-            module = importlib.import_module("numpy")
-        except ImportError:
-            _NUMPY_NDARRAY_TYPE = None
-        else:
-            _NUMPY_NDARRAY_TYPE = module.ndarray
-    return _NUMPY_NDARRAY_TYPE if isinstance(_NUMPY_NDARRAY_TYPE, type) else None
+    return np.ndarray
 
 
 def torch_tensor_type() -> type[Any] | None:
@@ -46,59 +40,132 @@ def torch_tensor_type() -> type[Any] | None:
     return _TORCH_TENSOR_TYPE if isinstance(_TORCH_TENSOR_TYPE, type) else None
 
 
-def _ensure_list_result(
-    result: object,
+def optional_array_to_numpy(
+    value: object,
     *,
     field_name: str,
-    source_name: str,
-) -> list[Any]:
-    """Ensure ``tolist()`` produced a list-like action value."""
+    copy: bool = True,
+) -> np.ndarray | None:
+    """Convert optional ndarray/tensor inputs into ``numpy.ndarray``.
 
-    if not isinstance(result, list):
+    Returns ``None`` when ``value`` is not a recognized optional array type.
+    Torch tensors are detached and moved to CPU exactly once.
+    """
+
+    if isinstance(value, np.ndarray):
+        return np.array(value, copy=copy)
+
+    if isinstance(value, np.generic):
+        return np.array(value, copy=copy)
+
+    torch_type = torch_tensor_type()
+    if torch_type is None or not isinstance(value, torch_type):
+        return None
+
+    tensor = value.detach() if callable(getattr(value, "detach", None)) else value
+    device = getattr(getattr(tensor, "device", None), "type", None)
+    if device not in (None, "cpu"):
+        cpu = getattr(tensor, "cpu", None)
+        if not callable(cpu):
+            raise InterfaceValidationError(
+                f"{field_name} torch tensor is on device {device!r}, but does not "
+                "expose cpu()."
+            )
+        tensor = cpu()
+
+    to_numpy = getattr(tensor, "numpy", None)
+    if not callable(to_numpy):
         raise InterfaceValidationError(
-            f"{field_name} converted from {source_name} must produce a list, "
-            f"got {type(result).__name__}."
+            f"{field_name} torch tensor does not expose numpy()."
         )
-    return result
+    return np.array(to_numpy(), copy=copy)
+
+
+def to_numpy_array(
+    value: object,
+    *,
+    field_name: str,
+    wrap_scalar: bool = False,
+    numeric_only: bool = False,
+    allow_bool: bool = True,
+    copy: bool = True,
+    dtype: Any | None = None,
+) -> np.ndarray:
+    """Convert one value into ``numpy.ndarray`` with lightweight validation."""
+
+    converted = optional_array_to_numpy(value, field_name=field_name, copy=copy)
+    if converted is not None:
+        array = converted
+    elif wrap_scalar and isinstance(value, Real) and not isinstance(value, bool):
+        array = np.array([value], copy=copy, dtype=dtype)
+    elif isinstance(value, (str, bytes)) or isinstance(value, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name} must be array-like, got {type(value).__name__}."
+        )
+    elif isinstance(value, Sequence):
+        array = np.array(value, copy=copy, dtype=dtype)
+    else:
+        raise InterfaceValidationError(
+            f"{field_name} must be array-like, got {type(value).__name__}."
+        )
+
+    if dtype is not None and array.dtype != np.dtype(dtype):
+        array = array.astype(dtype, copy=False)
+    if wrap_scalar and array.ndim == 0:
+        array = array.reshape(1)
+
+    if numeric_only:
+        if np.issubdtype(array.dtype, np.bool_) and not allow_bool:
+            raise InterfaceValidationError(
+                f"{field_name} must use a real numeric dtype, got bool."
+            )
+        if not (
+            np.issubdtype(array.dtype, np.integer)
+            or np.issubdtype(array.dtype, np.floating)
+            or (allow_bool and np.issubdtype(array.dtype, np.bool_))
+        ):
+            raise InterfaceValidationError(
+                f"{field_name} must use a numeric dtype, got {array.dtype}."
+            )
+
+    if array.dtype == np.dtype("O"):
+        raise InterfaceValidationError(
+            f"{field_name} must not use object dtype."
+        )
+    return np.array(array, copy=copy) if copy else array
 
 
 def optional_array_to_list(value: object, *, field_name: str) -> list[Any] | None:
-    """Convert optional numpy/torch values into plain Python lists.
+    """Convert optional ndarray/tensor inputs into plain Python lists."""
 
-    Returns ``None`` when ``value`` is not a recognized optional array/tensor
-    type. Torch tensors are detached first; non-CPU tensors are moved to CPU
-    exactly once before conversion into embodia's small Python-side action
-    structure.
-    """
-
-    numpy_type = numpy_ndarray_type()
-    if numpy_type is not None and isinstance(value, numpy_type):
-        return _ensure_list_result(
-            value.tolist(),
-            field_name=field_name,
-            source_name="numpy.ndarray",
-        )
-
-    torch_type = torch_tensor_type()
-    if torch_type is not None and isinstance(value, torch_type):
-        tensor = value.detach() if callable(getattr(value, "detach", None)) else value
-        device = getattr(getattr(tensor, "device", None), "type", None)
-        if device not in (None, "cpu"):
-            cpu = getattr(tensor, "cpu", None)
-            if not callable(cpu):
-                raise InterfaceValidationError(
-                    f"{field_name} torch tensor is on device {device!r}, but does "
-                    "not expose cpu()."
-                )
-            tensor = cpu()
-
-        return _ensure_list_result(
-            tensor.tolist(),
-            field_name=field_name,
-            source_name="torch.Tensor",
-        )
-
-    return None
+    converted = optional_array_to_numpy(value, field_name=field_name, copy=False)
+    if converted is None:
+        return None
+    return converted.tolist()
 
 
-__all__ = ["numpy_ndarray_type", "optional_array_to_list", "torch_tensor_type"]
+def to_python_value(value: object) -> object:
+    """Recursively convert numpy values into plain Python containers."""
+
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {
+            key: to_python_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [to_python_value(item) for item in value]
+    return value
+
+
+__all__ = [
+    "numpy_ndarray_type",
+    "optional_array_to_list",
+    "optional_array_to_numpy",
+    "to_numpy_array",
+    "to_python_value",
+    "torch_tensor_type",
+]

@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import embodia as em
+import numpy as np
 
 
 class YourRobot(em.RobotMixin):
@@ -18,10 +19,10 @@ class YourRobot(em.RobotMixin):
 
     def capture(self) -> dict[str, object]:
         return {
-            "images": {"front_rgb": None},
+            "images": {"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             "state": {
-                "joint_positions": [0.25] * 6,
-                "position": 0.5,
+                "joint_positions": np.full(6, 0.25, dtype=np.float64),
+                "position": np.array([0.5], dtype=np.float64),
             },
         }
 
@@ -46,7 +47,7 @@ class YourPolicy(em.PolicyMixin):
         targets = [0.0, 3.0, 6.0, 9.0, 12.0]
         # embodia fills sequence_id automatically when the robot does not.
         base = targets[int(frame.sequence_id or 0) % len(targets)]
-        gripper_pos = float(frame.state["position"])
+        gripper_pos = float(frame.state["position"][0])
         return {
             "arm": {
                 "kind": "cartesian_pose_delta",

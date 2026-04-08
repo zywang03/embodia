@@ -16,6 +16,7 @@ The preferred direction is now:
 - your Python class keeps its own constructor and native methods
 - if your native names already match the schema, you do not need any remapping
 - policy inputs and outputs are inferred from that shared schema
+- numeric payloads inside `Frame` / `Action` are numpy arrays in the runtime
 
 embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
 That means your native methods can stay named `infer`, `capture`, `home`, and so
@@ -98,20 +99,27 @@ inference.
 The normalized runtime action is grouped by control target:
 
 ```python
+import numpy as np
+
 {
     "arm": {
         "kind": "cartesian_pose_delta",
-        "value": [...],
+        "value": np.zeros(6, dtype=np.float32),
     },
     "gripper": {
         "kind": "gripper_position",
-        "value": [0.5],
+        "value": np.array([0.5], dtype=np.float32),
     },
 }
 ```
 
 If you later add action-level metadata, embodia will automatically switch to
 the wrapped form `{"commands": ..., "meta": ...}`.
+
+The same numpy-first rule applies to observations: `frame.images[*]` and
+`frame.state[*]` should be `numpy.ndarray` in your native methods, and embodia
+keeps them numpy-backed through validation, runtime execution, remote
+adaptation, and export.
 
 ## Optional Python-side remapping
 

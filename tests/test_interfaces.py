@@ -7,7 +7,7 @@ import unittest
 
 import embodia as em
 
-from helpers import DummyPolicy, DummyRobot
+from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
 
 
 class InterfaceTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class InterfaceTests(unittest.TestCase):
             action.get_command("arm").kind,  # type: ignore[union-attr]
             "cartesian_pose_delta",
         )
-        self.assertEqual(action.get_command("gripper").value, [0.8])  # type: ignore[union-attr]
+        assert_array_equal(self, action.get_command("gripper").value, [0.8])  # type: ignore[union-attr]
         self.assertEqual(
             em.action_to_dict(action),
             {
@@ -110,7 +110,7 @@ class InterfaceTests(unittest.TestCase):
             },
         )
 
-    def test_coerce_action_rejects_duplicate_targets_in_legacy_list(self) -> None:
+    def test_coerce_action_rejects_legacy_command_list(self) -> None:
         action = {
             "commands": [
                 {
@@ -129,7 +129,7 @@ class InterfaceTests(unittest.TestCase):
         with self.assertRaises(em.InterfaceValidationError) as ctx:
             em.coerce_action(action)
 
-        self.assertIn("duplicate target", str(ctx.exception))
+        self.assertIn("must be a mapping", str(ctx.exception))
 
     def test_command_kind_registry_exposes_builtins(self) -> None:
         spec = em.get_command_kind_spec("joint_position")
@@ -229,7 +229,7 @@ class InterfaceTests(unittest.TestCase):
             def capture(self) -> dict[str, object]:
                 return {
                     "timestamp_ns": time.time_ns(),
-                    "images": {"front_rgb": None},
+                    "images": {"front_rgb": demo_image()},
                     "state": {"qpos": [1.0] * 6, "gripper_pos": 0.5},
                     "task": {"prompt": "fold"},
                 }
@@ -343,12 +343,12 @@ class InterfaceTests(unittest.TestCase):
             result.action.get_command("arm").kind,  # type: ignore[union-attr]
             "cartesian_pose_delta",
         )
-        self.assertEqual(result.action.get_command("gripper").value, [0.2])  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("gripper").value, [0.2])  # type: ignore[union-attr]
         self.assertEqual(
             robot.last_action.get_command("vendor_arm").kind,  # type: ignore[union-attr]
             "cartesian_delta",
         )
-        self.assertEqual(policy.seen.state["qpos"], [1.0] * 6)
+        assert_array_equal(self, policy.seen.state["qpos"], [1.0] * 6)
         self.assertEqual(policy.seen.task["prompt"], "fold")
 
     def test_run_step_accepts_action_function(self) -> None:
@@ -363,8 +363,8 @@ class InterfaceTests(unittest.TestCase):
             )
 
         result = em.run_step(robot, action_fn=scripted)
-        self.assertEqual(result.action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
-        self.assertEqual(robot.last_action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, robot.last_action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
 
     def test_run_step_accepts_source_keyword(self) -> None:
         robot = DummyRobot()
@@ -388,7 +388,7 @@ class InterfaceTests(unittest.TestCase):
                 }
 
         result = em.run_step(robot, source=TeleopSource())
-        self.assertEqual(result.action.get_command("arm").value, [0.3] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [0.3] * 6)  # type: ignore[union-attr]
 
     def test_run_step_accepts_robot_as_its_own_source(self) -> None:
         class TeleopRobot(em.RobotMixin):
@@ -412,7 +412,7 @@ class InterfaceTests(unittest.TestCase):
 
             def _observe_impl(self) -> dict[str, object]:
                 return {
-                    "images": {"front_rgb": None},
+                    "images": {"front_rgb": demo_image()},
                     "state": {"joint_positions": [0.0] * 6},
                 }
 
@@ -433,7 +433,7 @@ class InterfaceTests(unittest.TestCase):
 
         robot = TeleopRobot()
         result = em.run_step(robot, source=robot)
-        self.assertEqual(result.action.get_command("arm").value, [0.7] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [0.7] * 6)  # type: ignore[union-attr]
 
     def test_run_step_rejects_source_and_policy_together(self) -> None:
         robot = DummyRobot()
@@ -465,7 +465,7 @@ class InterfaceTests(unittest.TestCase):
             def _observe_impl(self) -> dict[str, object]:
                 return {
                     "timestamp_ns": time.time_ns(),
-                    "images": {"front_rgb": None},
+                    "images": {"front_rgb": demo_image()},
                     "state": {"joint_positions": [0.0] * 6},
                 }
 
@@ -492,15 +492,18 @@ class InterfaceTests(unittest.TestCase):
             )
 
         result = em.run_step(robot, action_fn=scripted)
-        self.assertEqual(result.action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
-        self.assertEqual(robot.last_action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, robot.last_action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
 
     def test_run_step_result_can_be_exported(self) -> None:
         robot = DummyRobot()
         policy = DummyPolicy()
         result = em.run_step(robot, policy)
 
-        self.assertEqual(em.frame_to_dict(result.frame)["state"]["joint_positions"], [0.0] * 6)
+        self.assertEqual(
+            em.frame_to_dict(result.frame)["state"]["joint_positions"],
+            [0.0] * 6,
+        )
         self.assertEqual(
             em.action_to_dict(result.action)["arm"]["kind"],
             "cartesian_pose_delta",
@@ -529,7 +532,7 @@ class InterfaceTests(unittest.TestCase):
     def test_coerce_frame_auto_fills_timestamp_ns(self) -> None:
         frame = em.coerce_frame(
             {
-                "images": {"front_rgb": None},
+                "images": {"front_rgb": demo_image()},
                 "state": {"joint_positions": [0.0] * 6},
             }
         )

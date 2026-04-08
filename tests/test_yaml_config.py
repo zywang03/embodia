@@ -11,6 +11,8 @@ from unittest import mock
 import embodia as em
 from embodia.core import config_io
 
+from helpers import assert_array_equal, demo_image
+
 
 class _JsonYamlModule:
     """Small stand-in parser so tests do not depend on real PyYAML."""
@@ -97,7 +99,7 @@ class YamlConfigTests(unittest.TestCase):
             def capture(self):
                 return {
                     "timestamp_ns": 1,
-                    "images": {"front_rgb": None},
+                    "images": {"front_rgb": demo_image()},
                     "state": {
                         "joint_positions": [0.0] * 6,
                         "position": 0.5,
@@ -142,8 +144,8 @@ class YamlConfigTests(unittest.TestCase):
 
         self.assertEqual(robot.label, "from_yaml")
         self.assertEqual(policy.gain, 0.5)
-        self.assertEqual(result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
-        self.assertEqual(robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
+        assert_array_equal(self, result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
+        assert_array_equal(self, robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
         self.assertIn("joint_positions", policy.seen_frame.state)
         self.assertEqual(policy.seen_frame.task["prompt"], "fold the cloth")
         self.assertEqual(policy.get_spec().required_image_keys, ["front_rgb"])

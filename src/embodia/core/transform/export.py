@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..arraylike import to_python_value
 from ..schema import (
     Action,
     ComponentSpec,
@@ -31,10 +32,16 @@ def frame_to_dict(frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
     normalized = coerce_frame(frame)
     return {
         "timestamp_ns": normalized.timestamp_ns,
-        "images": dict(normalized.images),
-        "state": dict(normalized.state),
-        "task": dict(normalized.task),
-        "meta": dict(normalized.meta),
+        "images": {
+            key: to_python_value(value)
+            for key, value in normalized.images.items()
+        },
+        "state": {
+            key: to_python_value(value)
+            for key, value in normalized.state.items()
+        },
+        "task": to_python_value(normalized.task),
+        "meta": to_python_value(normalized.meta),
         "sequence_id": normalized.sequence_id,
     }
 
@@ -59,12 +66,12 @@ def command_to_dict(
     normalized = coerce_command(command)
     exported: dict[str, Any] = {
         "kind": normalized.kind,
-        "value": list(normalized.value),
+        "value": normalized.value.tolist(),
     }
     if not compact or normalized.ref_frame is not None:
         exported["ref_frame"] = normalized.ref_frame
     if not compact or normalized.meta:
-        exported["meta"] = dict(normalized.meta)
+        exported["meta"] = to_python_value(normalized.meta)
     return exported
 
 
@@ -120,7 +127,7 @@ def action_to_dict(
 
     exported = {"commands": commands_export}
     if not compact or normalized.meta:
-        exported["meta"] = dict(normalized.meta)
+        exported["meta"] = to_python_value(normalized.meta)
     return exported
 
 

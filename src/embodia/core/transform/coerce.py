@@ -6,7 +6,9 @@ from collections.abc import Mapping, Sequence
 import time
 from typing import Any
 
-from ..arraylike import optional_array_to_list
+import numpy as np
+
+from ..arraylike import to_numpy_array
 from ..errors import InterfaceValidationError
 from ..schema import (
     Action,
@@ -53,11 +55,33 @@ def _copy_sequence(value: object, field_name: str) -> list[Any]:
     return list(value)
 
 
+def _copy_array_mapping(
+    value: Mapping[str, Any] | None,
+    field_name: str,
+    *,
+    wrap_scalar: bool,
+) -> dict[str, np.ndarray]:
+    """Convert a mapping into ``dict[str, numpy.ndarray]``."""
+
+    mapping = _copy_string_key_mapping(value, field_name)
+    return {
+        key: to_numpy_array(
+            item,
+            field_name=f"{field_name}[{key!r}]",
+            wrap_scalar=wrap_scalar,
+            numeric_only=True,
+            allow_bool=True,
+            copy=True,
+        )
+        for key, item in mapping.items()
+    }
+
+
 def _coerce_action_commands(
     value: object,
     field_name: str,
 ) -> dict[str, Command]:
-    """Normalize command payloads from either a sequence or a mapping.
+    """Normalize command payloads from a compact or wrapped mapping.
 
     Supported mapping form:
 
@@ -67,68 +91,31 @@ def _coerce_action_commands(
     ``target``, it must match the outer key.
     """
 
-    if isinstance(value, Mapping):
-        commands: dict[str, Command] = {}
-        for target, item in value.items():
-            if not isinstance(target, str):
-                raise InterfaceValidationError(
-                    f"{field_name} mapping keys must be strings, got {target!r}."
-                )
-            if isinstance(item, Command):
-                commands[target] = coerce_command(item)
-                continue
-            if not isinstance(item, Mapping):
-                raise InterfaceValidationError(
-                    f"{field_name}[{target!r}] must be a command mapping, got "
-                    f"{type(item).__name__}."
-                )
+    if not isinstance(value, Mapping):
+        raise InterfaceValidationError(
+            f"{field_name} must be a mapping from target name to command payload, "
+            f"got {type(value).__name__}."
+        )
 
-            nested_target = item.get("target", target)
-            if nested_target != target:
-                raise InterfaceValidationError(
-                    f"{field_name}[{target!r}] target mismatch: outer key is "
-                    f"{target!r} but nested target is {nested_target!r}."
-                )
-
-            commands[target] = coerce_command(
-                {
-                    "kind": item.get("kind"),
-                    "value": item.get("value"),
-                    "ref_frame": item.get("ref_frame"),
-                    "meta": item.get("meta"),
-                }
-            )
-        return commands
-
-    commands = {}
-    for index, item in enumerate(_copy_sequence(value, field_name)):
-        if isinstance(item, Command):
-            raise InterfaceValidationError(
-                f"{field_name}[{index}] must be a mapping with a 'target' field; "
-                "bare Command items are not supported in sequence form."
-            )
-        if not isinstance(item, Mapping):
-            raise InterfaceValidationError(
-                f"{field_name}[{index}] must be a command mapping, got "
-                f"{type(item).__name__}."
-            )
-
-        try:
-            target = item["target"]
-        except KeyError as exc:
-            raise InterfaceValidationError(
-                f"{field_name}[{index}] is missing required field {exc.args[0]!r}."
-            ) from exc
+    commands: dict[str, Command] = {}
+    for target, item in value.items():
         if not isinstance(target, str):
             raise InterfaceValidationError(
-                f"{field_name}[{index}].target must be a string, got "
-                f"{type(target).__name__}."
+                f"{field_name} mapping keys must be strings, got {target!r}."
             )
-        if target in commands:
+        if isinstance(item, Command):
+            commands[target] = coerce_command(item)
+            continue
+        if not isinstance(item, Mapping):
             raise InterfaceValidationError(
-                f"{field_name} contains duplicate target {target!r}."
+                f"{field_name}[{target!r}] must be a command mapping, got "
+                f"{type(item).__name__}."
             )
-
+        if "target" in item and item["target"] != target:
+            raise InterfaceValidationError(
+                f"{field_name}[{target!r}] target mismatch: outer key is "
+                f"{target!r} but nested target is {item['target']!r}."
+            )
         commands[target] = coerce_command(
             {
                 "kind": item.get("kind"),
@@ -140,19 +127,23 @@ def _coerce_action_commands(
     return commands
 
 
-def _copy_float_vector(value: object, field_name: str) -> list[Any]:
-    """Convert list-like action payloads into plain Python lists."""
+def _coerce_command_value(value: object, field_name: str) -> np.ndarray:
+    """Convert one command payload into a 1D float64 ndarray."""
 
-    if isinstance(value, list):
-        return list(value)
-    if isinstance(value, tuple):
-        return list(value)
-
-    converted = optional_array_to_list(value, field_name=field_name)
-    if converted is not None:
-        return converted
-
-    return _copy_sequence(value, field_name)
+    array = to_numpy_array(
+        value,
+        field_name=field_name,
+        wrap_scalar=True,
+        numeric_only=True,
+        allow_bool=False,
+        copy=True,
+        dtype=np.float64,
+    )
+    if array.ndim != 1:
+        raise InterfaceValidationError(
+            f"{field_name} must be a 1D numeric vector, got ndim={array.ndim}."
+        )
+    return array
 
 
 def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
@@ -166,8 +157,8 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
     if isinstance(value, Frame):
         return Frame(
             timestamp_ns=value.timestamp_ns,
-            images=dict(value.images),
-            state=dict(value.state),
+            images={key: item.copy() for key, item in value.images.items()},
+            state={key: item.copy() for key, item in value.state.items()},
             task=dict(value.task),
             meta=dict(value.meta),
             sequence_id=value.sequence_id,
@@ -188,8 +179,8 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
 
     return Frame(
         timestamp_ns=timestamp_ns,
-        images=_copy_string_key_mapping(images, "frame.images"),
-        state=_copy_string_key_mapping(state, "frame.state"),
+        images=_copy_array_mapping(images, "frame.images", wrap_scalar=False),
+        state=_copy_array_mapping(state, "frame.state", wrap_scalar=True),
         task=_copy_string_key_mapping(value.get("task"), "frame.task"),
         meta=_copy_string_key_mapping(value.get("meta"), "frame.meta"),
         sequence_id=value.get("sequence_id"),
@@ -206,7 +197,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
     if isinstance(value, Command):
         return Command(
             kind=value.kind,
-            value=list(value.value),
+            value=value.value.copy(),
             ref_frame=value.ref_frame,
             meta=dict(value.meta),
         )
@@ -230,7 +221,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
     return Command(
         kind=kind,
-        value=_copy_float_vector(command_value, "command.value"),
+        value=_coerce_command_value(command_value, "command.value"),
         ref_frame=value.get("ref_frame"),
         meta=_copy_string_key_mapping(value.get("meta"), "command.meta"),
     )
@@ -245,8 +236,6 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
        ``{"commands": {"arm": {"kind": "...", "value": [...]}}}``
     2. compact:
        ``{"arm": {"kind": "...", "value": [...]}}``
-    3. legacy list:
-       ``{"commands": [{"target": "arm", "kind": "...", "value": [...]}]}``
 
     The compact form keeps JSON smaller for the common case where action-level
     metadata is empty.

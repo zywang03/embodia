@@ -12,6 +12,9 @@ import math
 from numbers import Real
 from typing import Any
 
+import numpy as np
+
+from .arraylike import to_numpy_array
 from .errors import InterfaceValidationError
 
 KNOWN_COMPONENT_KINDS: tuple[str, ...] = (
@@ -95,6 +98,45 @@ def _ensure_real_number(value: object, field_name: str) -> float:
     return number
 
 
+def _ensure_ndarray(
+    value: object,
+    field_name: str,
+    *,
+    allow_bool: bool,
+    require_1d: bool,
+    finite: bool,
+) -> np.ndarray:
+    """Validate one ndarray payload."""
+
+    if not isinstance(value, np.ndarray):
+        raise InterfaceValidationError(
+            f"{field_name} must be a numpy.ndarray, got {type(value).__name__}."
+        )
+    if value.dtype == np.dtype("O"):
+        raise InterfaceValidationError(
+            f"{field_name} must not use object dtype."
+        )
+    if require_1d and value.ndim != 1:
+        raise InterfaceValidationError(
+            f"{field_name} must be 1D, got ndim={value.ndim}."
+        )
+    if np.issubdtype(value.dtype, np.bool_) and not allow_bool:
+        raise InterfaceValidationError(
+            f"{field_name} must use a real numeric dtype, got bool."
+        )
+    if not (
+        np.issubdtype(value.dtype, np.integer)
+        or np.issubdtype(value.dtype, np.floating)
+        or (allow_bool and np.issubdtype(value.dtype, np.bool_))
+    ):
+        raise InterfaceValidationError(
+            f"{field_name} must use a numeric dtype, got {value.dtype}."
+        )
+    if finite and np.issubdtype(value.dtype, np.floating) and not np.isfinite(value).all():
+        raise InterfaceValidationError(f"{field_name} must be finite.")
+    return value
+
+
 def _ensure_positive_int(value: object, field_name: str) -> int:
     """Validate one positive integer."""
 
@@ -105,6 +147,28 @@ def _ensure_positive_int(value: object, field_name: str) -> int:
     if value <= 0:
         raise InterfaceValidationError(f"{field_name} must be > 0, got {value!r}.")
     return value
+
+
+def _coerce_numpy_mapping(
+    value: object,
+    field_name: str,
+    *,
+    wrap_scalar: bool,
+) -> dict[str, np.ndarray]:
+    """Normalize one string-keyed mapping into ndarray values."""
+
+    mapping = _ensure_string_key_dict(value, field_name)
+    return {
+        key: to_numpy_array(
+            item,
+            field_name=f"{field_name}[{key!r}]",
+            wrap_scalar=wrap_scalar,
+            numeric_only=True,
+            allow_bool=True,
+            copy=True,
+        )
+        for key, item in mapping.items()
+    }
 
 
 def is_custom_command_kind_name(name: str) -> bool:
@@ -145,11 +209,27 @@ class Frame:
     """One standardized observation frame."""
 
     timestamp_ns: int
-    images: dict[str, Any]
-    state: dict[str, Any]
+    images: dict[str, np.ndarray]
+    state: dict[str, np.ndarray]
     task: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     sequence_id: int | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize frame arrays at construction time."""
+
+        self.images = _coerce_numpy_mapping(
+            self.images,
+            "frame.images",
+            wrap_scalar=False,
+        )
+        self.state = _coerce_numpy_mapping(
+            self.state,
+            "frame.state",
+            wrap_scalar=True,
+        )
+        self.task = _ensure_string_key_dict(self.task, "frame.task")
+        self.meta = _ensure_string_key_dict(self.meta, "frame.meta")
 
 
 @dataclass(slots=True)
@@ -161,9 +241,27 @@ class Command:
     """
 
     kind: str
-    value: list[float]
+    value: np.ndarray
     ref_frame: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Normalize command vectors at construction time."""
+
+        self.value = to_numpy_array(
+            self.value,
+            field_name="command.value",
+            wrap_scalar=True,
+            numeric_only=True,
+            allow_bool=False,
+            copy=True,
+            dtype=np.float64,
+        )
+        if self.value.ndim != 1:
+            raise InterfaceValidationError(
+                f"command.value must be a 1D numeric vector, got ndim={self.value.ndim}."
+            )
+        self.meta = _ensure_string_key_dict(self.meta, "command.meta")
 
 
 @dataclass(slots=True)
@@ -179,7 +277,7 @@ class Action:
         *,
         target: str,
         kind: str,
-        value: list[float],
+        value: object,
         ref_frame: str | None = None,
         command_meta: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
@@ -190,7 +288,15 @@ class Action:
             commands={
                 target: Command(
                     kind=kind,
-                    value=list(value),
+                    value=to_numpy_array(
+                        value,
+                        field_name="action.value",
+                        wrap_scalar=True,
+                        numeric_only=True,
+                        allow_bool=False,
+                        copy=True,
+                        dtype=np.float64,
+                    ).reshape(-1),
                     ref_frame=ref_frame,
                     meta={} if command_meta is None else dict(command_meta),
                 )
@@ -369,6 +475,22 @@ def validate_frame(frame: Frame) -> None:
     _ensure_string_key_dict(frame.state, "frame.state")
     _ensure_string_key_dict(frame.task, "frame.task")
     _ensure_string_key_dict(frame.meta, "frame.meta")
+    for key, value in frame.images.items():
+        _ensure_ndarray(
+            value,
+            f"frame.images[{key!r}]",
+            allow_bool=True,
+            require_1d=False,
+            finite=False,
+        )
+    for key, value in frame.state.items():
+        _ensure_ndarray(
+            value,
+            f"frame.state[{key!r}]",
+            allow_bool=True,
+            require_1d=False,
+            finite=False,
+        )
     if frame.sequence_id is not None:
         if isinstance(frame.sequence_id, bool) or not isinstance(frame.sequence_id, int):
             raise InterfaceValidationError(
@@ -389,12 +511,13 @@ def validate_command(cmd: Command) -> None:
         "command.kind",
         allow_unregistered_custom=True,
     )
-    if not isinstance(cmd.value, list):
-        raise InterfaceValidationError(
-            f"command.value must be a list[float], got {type(cmd.value).__name__}."
-        )
-    for index, number in enumerate(cmd.value):
-        _ensure_real_number(number, f"command.value[{index}]")
+    _ensure_ndarray(
+        cmd.value,
+        "command.value",
+        allow_bool=False,
+        require_1d=True,
+        finite=True,
+    )
     if cmd.ref_frame is not None:
         _ensure_non_empty_string(cmd.ref_frame, "command.ref_frame")
     _ensure_string_key_dict(cmd.meta, "command.meta")

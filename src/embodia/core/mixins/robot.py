@@ -132,11 +132,7 @@ class RobotMixin(_CommonInterfaceMixin):
                 CONTROL_TARGETS,
                 modality_maps=modality_maps,
             ),
-            state_key_map=cls._effective_modality_map(
-                state.STATE_KEYS,
-                modality_maps=modality_maps,
-            ),
-            command_kind_map=cls._effective_command_kind_map(
+            command_map=cls._effective_command_kind_map(
                 modality_maps=modality_maps
             ),
         )
@@ -150,8 +146,7 @@ class RobotMixin(_CommonInterfaceMixin):
             spec,
             image_key_map=self.get_image_key_map(),
             target_map=self.get_control_target_map(),
-            state_key_map=self.get_state_key_map(),
-            command_kind_map=self.get_command_kind_map(),
+            command_map=self.get_command_kind_map(),
         )
 
     def transform_spec(self, spec: RobotSpec | Mapping[str, Any]) -> RobotSpec:
@@ -218,7 +213,7 @@ class RobotMixin(_CommonInterfaceMixin):
         action: Action | Mapping[str, Any],
         spec: RobotSpec | Mapping[str, Any] | None = None,
     ) -> Action:
-        """Ensure command kinds and dims are supported by the robot spec."""
+        """Ensure commands and dims are supported by the robot spec."""
 
         normalized_action = self.validate_action(action)
         normalized_spec = (
@@ -236,9 +231,9 @@ class RobotMixin(_CommonInterfaceMixin):
                 self.get_control_target_map(),
                 "RobotMixin control target mapping",
             ),
-            kind_map=invert_mapping(
+            command_map=invert_mapping(
                 self.get_command_kind_map(),
-                "RobotMixin command kind mapping",
+                "RobotMixin command mapping",
             ),
         )
 

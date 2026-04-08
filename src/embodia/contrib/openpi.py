@@ -39,7 +39,7 @@ class OpenPIActionGroup:
     """Describe how one OpenPI action vector maps into one embodia command."""
 
     target: str
-    kind: str
+    command: str
     selector: ActionSelector
     ref_frame: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
@@ -145,9 +145,9 @@ def _validate_action_groups(
             raise InterfaceValidationError(
                 f"action_groups[{index}].target must be a non-empty string."
             )
-        if not isinstance(group.kind, str) or not group.kind.strip():
+        if not isinstance(group.command, str) or not group.command.strip():
             raise InterfaceValidationError(
-                f"action_groups[{index}].kind must be a non-empty string."
+                f"action_groups[{index}].command must be a non-empty string."
             )
         if group.target in seen_targets:
             raise InterfaceValidationError(
@@ -157,7 +157,7 @@ def _validate_action_groups(
         normalized.append(
             OpenPIActionGroup(
                 target=group.target,
-                kind=group.kind,
+                command=group.command,
                 selector=group.selector,
                 ref_frame=group.ref_frame,
                 meta=dict(group.meta),
@@ -309,35 +309,22 @@ def build_default_openpi_obs(
         }
         state_values: list[float] = []
         for component in spec.components:
-            for state_key in component.state_keys:
-                if state_key not in normalized_frame.state:
-                    raise InterfaceValidationError(
-                        f"frame.state is missing required key {state_key!r} for "
-                        "default OpenPI adaptation."
-                    )
-                state_values.extend(
-                    _flatten_numeric_value(
-                        normalized_frame.state[state_key],
-                        field_name=f"frame.state[{state_key!r}]",
-                    )
+            state_key = component.name
+            if state_key not in normalized_frame.state:
+                raise InterfaceValidationError(
+                    f"frame.state is missing required key {state_key!r} for "
+                    "default OpenPI adaptation."
                 )
+            state_values.extend(
+                _flatten_numeric_value(
+                    normalized_frame.state[state_key],
+                    field_name=f"frame.state[{state_key!r}]",
+                )
+            )
     else:
         images = dict(normalized_frame.images)
-        preferred_keys = ("joint_positions", "position")
         state_values = []
-        used_keys: set[str] = set()
-        for state_key in preferred_keys:
-            if state_key in normalized_frame.state:
-                used_keys.add(state_key)
-                state_values.extend(
-                    _flatten_numeric_value(
-                        normalized_frame.state[state_key],
-                        field_name=f"frame.state[{state_key!r}]",
-                    )
-                )
         for state_key, value in normalized_frame.state.items():
-            if state_key in used_keys:
-                continue
             state_values.extend(
                 _flatten_numeric_value(
                     value,
@@ -362,7 +349,7 @@ def build_default_openpi_action_groups(
 ) -> list[OpenPIActionGroup]:
     """Infer one default action split from a robot spec.
 
-    Each component must expose exactly one supported command kind so embodia can
+    Each component must expose exactly one supported command so embodia can
     decode one returned OpenPI action vector without extra user-provided schema.
     """
 
@@ -372,17 +359,16 @@ def build_default_openpi_action_groups(
     groups: list[OpenPIActionGroup] = []
     offset = 0
     for component in spec.components:
-        if len(component.supported_command_kinds) != 1:
+        if len(component.command) != 1:
             raise InterfaceValidationError(
                 "default OpenPI adaptation requires each robot component to "
-                "declare exactly one supported command kind; component "
-                f"{component.name!r} exposes "
-                f"{len(component.supported_command_kinds)} kinds."
+                "declare exactly one supported command; component "
+                f"{component.name!r} exposes {len(component.command)} commands."
             )
         groups.append(
             OpenPIActionGroup(
                 target=component.name,
-                kind=component.supported_command_kinds[0],
+                command=component.command[0],
                 selector=(offset, offset + component.dof),
             )
         )
@@ -408,7 +394,7 @@ def build_default_openpi_policy_spec(
         outputs=[
             PolicyOutputSpec(
                 target=group.target,
-                command_kind=group.kind,
+                command=group.command,
                 dim=_selector_width(
                     group.selector,
                     field_name=f"{group.target}.selector",
@@ -441,7 +427,7 @@ def openpi_action_plan_from_response(
                 ),
             )
             commands[group.target] = Command(
-                kind=group.kind,
+                command=group.command,
                 value=row[indices].copy(),
                 ref_frame=group.ref_frame,
                 meta=dict(group.meta),

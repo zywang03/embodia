@@ -216,11 +216,11 @@ def _expand_shared_schema(
         _validate_keys(
             raw_component,
             field_name=f"{field_name}.components[{component_name!r}]",
-            allowed_keys={"kind", "dof", "state", "command_kinds", "meta"},
+            allowed_keys={"type", "dof", "command", "meta"},
         )
-        kind = _ensure_non_empty_string(
-            raw_component.get("kind"),
-            field_name=f"{field_name}.components[{component_name!r}].kind",
+        component_type = _ensure_non_empty_string(
+            raw_component.get("type"),
+            field_name=f"{field_name}.components[{component_name!r}].type",
         )
         dof = raw_component.get("dof")
         if isinstance(dof, bool) or not isinstance(dof, int) or dof <= 0:
@@ -228,14 +228,9 @@ def _expand_shared_schema(
                 f"{field_name}.components[{component_name!r}].dof must be a "
                 "positive int."
             )
-        state_keys = _copy_string_list(
-            raw_component.get("state", []),
-            field_name=f"{field_name}.components[{component_name!r}].state",
-            allow_empty=True,
-        )
-        command_kinds = _copy_string_list(
-            raw_component.get("command_kinds"),
-            field_name=f"{field_name}.components[{component_name!r}].command_kinds",
+        command = _copy_string_list(
+            raw_component.get("command"),
+            field_name=f"{field_name}.components[{component_name!r}].command",
             allow_empty=False,
         )
         component_meta = _copy_mapping(
@@ -245,10 +240,9 @@ def _expand_shared_schema(
 
         expanded = {
             "name": component_name,
-            "kind": kind,
+            "type": component_type,
             "dof": dof,
-            "supported_command_kinds": command_kinds,
-            "state_keys": state_keys,
+            "command": command,
             "meta": component_meta,
         }
         expanded_components.append(expanded)
@@ -313,25 +307,21 @@ def _expand_policy_config(
         field_name=f"{field_name}.name",
     )
 
-    all_state_keys: list[str] = []
-    for component in shared["components"]:
-        for state_key in component["state_keys"]:
-            if state_key not in all_state_keys:
-                all_state_keys.append(state_key)
+    all_state_keys = [component["name"] for component in shared["components"]]
 
     expanded_outputs: list[dict[str, Any]] = []
     for component in shared["components"]:
-        supported_command_kinds = list(component["supported_command_kinds"])
-        if len(supported_command_kinds) != 1:
+        supported_commands = list(component["command"])
+        if len(supported_commands) != 1:
             raise InterfaceValidationError(
                 f"{field_name}.schema.components[{component['name']!r}] must declare "
-                "exactly one command kind when policy spec is inferred from the "
-                f"shared schema, got {supported_command_kinds!r}."
+                "exactly one command when policy spec is inferred from the "
+                f"shared schema, got {supported_commands!r}."
             )
         expanded_outputs.append(
             {
                 "target": component["name"],
-                "command_kind": supported_command_kinds[0],
+                "command": supported_commands[0],
                 "dim": component["dof"],
                 "meta": {},
             }

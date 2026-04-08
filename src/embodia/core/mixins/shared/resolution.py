@@ -198,7 +198,7 @@ def get_control_target_map(owner: object) -> Mapping[str, str]:
 
 
 def get_command_kind_map(owner: object) -> Mapping[str, str]:
-    """Map native command kinds to embodia-standard command kinds."""
+    """Map native command names to embodia-standard command names."""
 
     return get_modality_map(owner, COMMAND_KINDS)
 

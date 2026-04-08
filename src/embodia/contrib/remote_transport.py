@@ -562,7 +562,7 @@ class RemotePolicy:
         frame_to_obs: Callable[[Frame], Mapping[str, Any]] | None = None,
         response_to_action: Callable[[object], Action | Mapping[str, Any]] | None = None,
         action_target: str | None = None,
-        command_kind: str | None = None,
+        command: str | None = None,
         ref_frame: str | None = None,
         policy_spec: object | None = None,
         transform: RemoteTransform | None = None,
@@ -578,7 +578,7 @@ class RemotePolicy:
             transform is not None
             or frame_to_obs is not None
             or response_to_action is not None
-            or command_kind is not None
+            or command is not None
             or ref_frame is not None
             or action_target is not None
         ):
@@ -586,18 +586,18 @@ class RemotePolicy:
                 "RemotePolicy(openpi=True) only accepts connection parameters "
                 "and optional policy_spec=/openpi_transform=.... Do not combine it with "
                 "transform=..., frame_to_obs=..., response_to_action=..., "
-                "action_target=..., command_kind=..., or ref_frame=...."
+                "action_target=..., command=..., or ref_frame=...."
             )
         if transform is not None and (
             frame_to_obs is not None
             or response_to_action is not None
-            or command_kind is not None
+            or command is not None
             or ref_frame is not None
             or action_target is not None
         ):
             raise InterfaceValidationError(
                 "RemotePolicy accepts either transform=... or "
-                "frame_to_obs=/response_to_action=/action_target=/command_kind=/ref_frame, "
+                "frame_to_obs=/response_to_action=/action_target=/command=/ref_frame, "
                 "not both."
             )
 
@@ -626,7 +626,7 @@ class RemotePolicy:
             None if policy_spec is None else coerce_policy_spec(policy_spec)
         )
         self._action_target = action_target
-        self._command_kind = command_kind
+        self._command = command
         self._ref_frame = ref_frame
         self._openpi = openpi
         self._openpi_adapter: object | None = None
@@ -696,11 +696,11 @@ class RemotePolicy:
             except InterfaceValidationError:
                 pass
 
-        target, command_kind, ref_frame = self._resolve_action_shape(response)
+        target, command_name, ref_frame = self._resolve_action_shape(response)
         plan = actions_to_action_plan(
             response,
             target=target,
-            kind=command_kind,
+            command=command_name,
             ref_frame=ref_frame,
         )
         for action in plan:
@@ -711,10 +711,10 @@ class RemotePolicy:
         self,
         response: object,
     ) -> tuple[str, str, str | None]:
-        """Resolve target/kind hints for one remote action response."""
+        """Resolve target/command hints for one remote action response."""
 
         target = self._action_target
-        command_kind = self._command_kind
+        command = self._command
         ref_frame = self._ref_frame
 
         if isinstance(response, Mapping):
@@ -724,10 +724,10 @@ class RemotePolicy:
                     raw_target = embodia_meta.get("action_target")
                     if isinstance(raw_target, str) and raw_target.strip():
                         target = raw_target
-                if command_kind is None:
-                    raw_kind = embodia_meta.get("action_kind")
-                    if isinstance(raw_kind, str) and raw_kind.strip():
-                        command_kind = raw_kind
+                if command is None:
+                    raw_command = embodia_meta.get("action_command")
+                    if isinstance(raw_command, str) and raw_command.strip():
+                        command = raw_command
                 if ref_frame is None:
                     raw_ref_frame = embodia_meta.get("action_ref_frame")
                     if raw_ref_frame is not None:
@@ -741,7 +741,7 @@ class RemotePolicy:
                             )
                         ref_frame = raw_ref_frame
 
-        if target is None or command_kind is None:
+        if target is None or command is None:
             try:
                 spec = self.get_spec()
             except InterfaceValidationError:
@@ -752,8 +752,8 @@ class RemotePolicy:
                     output = outputs[0]
                     if target is None:
                         target = output.target
-                    if command_kind is None:
-                        command_kind = output.command_kind
+                    if command is None:
+                        command = output.command
                     if ref_frame is None:
                         output_meta = getattr(output, "meta", None)
                         if isinstance(output_meta, Mapping):
@@ -761,17 +761,17 @@ class RemotePolicy:
                             if isinstance(raw_ref_frame, str) and raw_ref_frame.strip():
                                 ref_frame = raw_ref_frame
 
-        if target is None and command_kind is not None:
+        if target is None and command is not None:
             target = "arm"
 
-        if target is None or command_kind is None:
+        if target is None or command is None:
             raise InterfaceValidationError(
                 "RemotePolicy could not infer how to decode the remote action "
                 "payload. Return embodia action metadata from the server, "
                 "expose a single-output policy_spec through remote metadata, "
                 "or pass response_to_action=... for a custom wire format."
             )
-        return target, command_kind, ref_frame
+        return target, command, ref_frame
 
     def infer(self, frame: Frame | Mapping[str, Any]) -> Action:
         """Run one remote inference step and return a normalized action."""

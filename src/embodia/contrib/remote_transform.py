@@ -58,7 +58,7 @@ def _coerce_action_rows(
 def _read_action_shape_from_embodia_metadata(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
 ) -> tuple[str | None, str | None, str | None]:
-    """Read action target/kind/ref-frame hints from one remote response."""
+    """Read action target/command/ref-frame hints from one remote response."""
 
     if not isinstance(response_or_actions, Mapping):
         return None, None, None
@@ -71,9 +71,9 @@ def _read_action_shape_from_embodia_metadata(
     if not isinstance(target, str) or not target.strip():
         target = None
 
-    kind = embodia_meta.get("action_kind")
-    if not isinstance(kind, str) or not kind.strip():
-        kind = None
+    command = embodia_meta.get("action_command")
+    if not isinstance(command, str) or not command.strip():
+        command = None
 
     ref_frame = embodia_meta.get("action_ref_frame")
     if ref_frame is not None:
@@ -83,7 +83,7 @@ def _read_action_shape_from_embodia_metadata(
                 "string when provided."
             )
 
-    return target, kind, ref_frame
+    return target, command, ref_frame
 
 
 def _coerce_embodia_action_plan(
@@ -122,16 +122,16 @@ def actions_to_action_plan(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
     target: str | None = None,
-    kind: str | None = None,
+    command: str | None = None,
     ref_frame: str | None = None,
 ) -> list[Action]:
     """Convert one remote action chunk into embodia-standard actions."""
 
-    metadata_target, metadata_kind, metadata_ref_frame = (
+    metadata_target, metadata_command, metadata_ref_frame = (
         _read_action_shape_from_embodia_metadata(response_or_actions)
     )
     resolved_target = target if target is not None else metadata_target
-    resolved_kind = kind if kind is not None else metadata_kind
+    resolved_command = command if command is not None else metadata_command
     resolved_ref_frame = (
         ref_frame if ref_frame is not None else metadata_ref_frame
     )
@@ -142,17 +142,17 @@ def actions_to_action_plan(
             "target=..., include embodia.action_target in the response, or "
             "use a custom response_to_action callback."
         )
-    if resolved_kind is None:
+    if resolved_command is None:
         raise InterfaceValidationError(
-            "remote action payload does not define a command kind. Provide "
-            "kind=..., include embodia.action_kind in the response, or use "
+            "remote action payload does not define a command. Provide "
+            "command=..., include embodia.action_command in the response, or use "
             "a custom response_to_action callback."
         )
 
     plan = [
         Action.single(
             target=resolved_target,
-            kind=resolved_kind,
+            command=resolved_command,
             value=row,
             ref_frame=resolved_ref_frame,
         )
@@ -167,7 +167,7 @@ def first_action_from_response(
     response_or_actions: Mapping[str, Any] | Sequence[Any] | object,
     *,
     target: str | None = None,
-    kind: str | None = None,
+    command: str | None = None,
     ref_frame: str | None = None,
 ) -> Action:
     """Convert one remote action chunk and return its first action."""
@@ -175,7 +175,7 @@ def first_action_from_response(
     return actions_to_action_plan(
         response_or_actions,
         target=target,
-        kind=kind,
+        command=command,
         ref_frame=ref_frame,
     )[0]
 
@@ -207,7 +207,7 @@ def response_from_action_plan(
     if include_embodia_metadata:
         response["embodia"] = {
             "action_target": first_target,
-            "action_kind": first_command.kind,
+            "action_command": first_command.command,
             "action_ref_frame": first_command.ref_frame,
             "chunk_size": len(actions),
         }
@@ -223,7 +223,7 @@ class RemoteTransform:
     scattering transport-specific conversion details across multiple callbacks.
     """
 
-    command_kind: str
+    command: str
     action_target: str = "arm"
     ref_frame: str | None = None
     frame_to_obs_fn: Callable[[Frame], Mapping[str, Any]] | None = None
@@ -238,9 +238,9 @@ class RemoteTransform:
             raise InterfaceValidationError(
                 "RemoteTransform.action_target must be a non-empty string."
             )
-        if not isinstance(self.command_kind, str) or not self.command_kind.strip():
+        if not isinstance(self.command, str) or not self.command.strip():
             raise InterfaceValidationError(
-                "RemoteTransform.command_kind must be a non-empty string."
+                "RemoteTransform.command must be a non-empty string."
             )
         if self.ref_frame is not None and (
             not isinstance(self.ref_frame, str) or not self.ref_frame.strip()
@@ -305,7 +305,7 @@ class RemoteTransform:
         return actions_to_action_plan(
             response_or_actions,
             target=self.action_target,
-            kind=self.command_kind,
+            command=self.command,
             ref_frame=self.ref_frame,
         )
 

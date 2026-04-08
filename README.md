@@ -45,21 +45,22 @@ them into numpy-backed core objects.
 ## Quickstart
 
 Keep embodia on the outermost layer of your existing classes and keep your
-native methods as they are:
+native methods as they are. Any example name prefixed with `YOUR_OWN_` below is
+just a placeholder you replace with your real method or field name:
 
 ```python
 import embodia as em
 
 
 class YourRobot(em.RobotMixin):
-    def capture(self): ...
-    def send_command(self, action): ...
-    def home(self): ...
+    def YOUR_OWN_get_obs(self): ...
+    def YOUR_OWN_send_action(self, action): ...
+    def YOUR_OWN_reset(self): ...
 
 
 class YourPolicy(em.PolicyMixin):
-    def clear_state(self): ...
-    def infer(self, frame): ...
+    def YOUR_OWN_clear_state(self): ...
+    def YOUR_OWN_infer(self, frame): ...
 ```
 
 Then load the runtime alignment from YAML:
@@ -72,8 +73,8 @@ policy = YourPolicy.from_yaml("docs/yaml_config_example.yml")
 That YAML only describes the shared schema plus method aliases. Constructor
 arguments stay in Python code. On the policy side, embodia derives required
 inputs and output targets directly from the shared `schema:` block. If a policy
-needs extra conditioning such as a prompt, put it in `Frame.task`. Robot specs
-do not declare task-related capabilities.
+needs extra conditioning such as `YOUR_OWN_prompt`, put it in `Frame.task`.
+Robot specs do not declare task-related capabilities.
 
 ### How YAML and your methods relate
 
@@ -89,64 +90,75 @@ embodia validates your runtime inputs and outputs against that contract.
 The mapping is:
 
 - `schema.images` -> keys that should appear in `frame.images`
-- `schema.components.<name>.state` -> keys that should appear in `frame.state`
-- `schema.components.<name>` -> `Command.target`
-- `schema.components.<name>.command_kinds` -> `Command.kind`
+- `schema.components.<name>` -> one shared component key that should appear in
+  both `frame.state[<name>]` and `action.commands[<name>]`
+- `schema.components.<name>.command` -> allowed values of `Command.command` for
+  that component
 - `schema.task` -> optional policy-side keys inside `frame.task`
 
-That means the common method contracts are:
+Any schema key that you are expected to rename in your own project should be
+written as `YOUR_OWN_*` in embodia's examples and docs.
+There is no separate `Command.target` field in the current schema. The target
+is the dictionary key on `Action.commands`.
 
-- `capture()` / `observe()` returns `em.Frame` or a frame-like `dict` with
-  `images` and `state`. Numeric payloads should be numpy-backed:
-  `frame.images[*]` and `frame.state[*]` are expected to be `numpy.ndarray`.
-  `images` must use the keys from `schema.images`. `state` must use the union
-  of all `schema.components[*].state` keys.
-  If `timestamp_ns` or `sequence_id` is omitted, embodia fills them
-  automatically at runtime.
-- `home()` / `reset()` on the robot has the same return contract as
-  `capture()`.
-- `send_command(action)` / `act(action)` receives an `em.Action`. Its
-  `action.commands` keys are the component names from YAML, and each
-  `action.commands[component].kind` value is the command kind declared for
-  that component. Each `action.commands[component].value` is a numpy vector.
-- `clear_state()` / `reset()` on the policy returns `None`.
-- `infer(frame)` receives an `em.Frame`. `frame.images` and `frame.state`
-  already follow the YAML schema. If `schema.task` was declared, policy-side
-  context is available in `frame.task`. `infer(frame)` should return an
-  `em.Action` or an action-like `dict` whose numeric payloads are numpy-backed
-  and whose commands target the YAML components.
+### Method I/O
 
-For the example YAML in this repo, the expected runtime shapes are:
+Write your native methods against one standard observation shape and one
+standard action shape:
 
 ```python
 import numpy as np
 
-# robot.capture() / robot.home() return this shape
-{
+obs = {
+    # optional, embodia fills them when omitted
+    "timestamp_ns": 0,
+    "sequence_id": 0,
     "images": {
-        "front_rgb": np.zeros((224, 224, 3), dtype=np.uint8),
+        "YOUR_OWN_front_rgb": np.zeros((224, 224, 3), dtype=np.uint8),
     },
     "state": {
-        "joint_positions": np.zeros(6, dtype=np.float32),
-        "position": np.array([0.5], dtype=np.float32),
+        "YOUR_OWN_left_arm": np.zeros(6, dtype=np.float32),
+        "YOUR_OWN_left_gripper": np.array([0.5], dtype=np.float32),
+        "YOUR_OWN_right_arm": np.zeros(6, dtype=np.float32),
+        "YOUR_OWN_right_gripper": np.array([0.5], dtype=np.float32),
+    },
+    # optional, policy-side context only
+    "task": {
+        "YOUR_OWN_prompt": "fold the cloth",
     },
 }
 
-# policy.infer(frame) returns this shape
-{
-    "arm": {
-        "kind": "cartesian_pose_delta",
+action = {
+    "YOUR_OWN_left_arm": {
+        "command": "cartesian_pose_delta",
         "value": np.zeros(6, dtype=np.float32),
     },
-    "gripper": {
-        "kind": "gripper_position",
+    "YOUR_OWN_left_gripper": {
+        "command": "gripper_position",
+        "value": np.array([0.5], dtype=np.float32),
+    },
+    "YOUR_OWN_right_arm": {
+        "command": "cartesian_pose_delta",
+        "value": np.zeros(6, dtype=np.float32),
+    },
+    "YOUR_OWN_right_gripper": {
+        "command": "gripper_position",
         "value": np.array([0.5], dtype=np.float32),
     },
 }
 ```
 
-embodia will normalize that into a full `Frame`, including framework-managed
-`timestamp_ns` and `sequence_id` when your native class does not provide them.
+The method contracts are:
+
+- `YOUR_OWN_get_obs()` / `observe()` -> return `em.Frame` or one `obs`-like `dict`
+- robot `YOUR_OWN_reset()` / `reset()` -> same return shape as `observe()`
+- `YOUR_OWN_infer(frame)` / `infer(frame)` -> receive one `em.Frame`, return `em.Action` or one
+  `action`-like `dict`
+- `YOUR_OWN_send_action(action)` / `act(action)` -> receive one `em.Action`
+- policy `YOUR_OWN_clear_state()` / `reset()` -> return value is ignored
+
+Numeric payloads should be numpy-backed. If your robot omits `timestamp_ns` or
+`sequence_id`, embodia fills them automatically.
 
 If your existing project uses different native names, keep that remapping in
 Python with `MODALITY_MAPS`. embodia will translate at the boundary:
@@ -159,24 +171,6 @@ Python with `MODALITY_MAPS`. embodia will translate at the boundary:
 So the recommended rule is simple: YAML defines the standardized structure,
 your methods either speak that structure directly, or `MODALITY_MAPS` tells
 embodia how to translate.
-
-The default compact action shape is:
-
-```python
-import numpy as np
-
-{
-    "arm": {
-        "kind": "cartesian_pose_delta",
-        "value": np.zeros(6, dtype=np.float32),
-        "ref_frame": "tool",
-    },
-    "gripper": {
-        "kind": "gripper_position",
-        "value": np.array([0.5], dtype=np.float32),
-    },
-}
-```
 
 `Action` is a small container of grouped commands. End-effectors such as
 grippers, hands, suction tools, or custom actuators are first-class robot
@@ -256,8 +250,9 @@ There is also one optional remote folder:
 6. [`examples/remote/robot_with_embodia_remote_policy.py`](./examples/remote/robot_with_embodia_remote_policy.py)
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
-That shared config defines two components, `arm` and `gripper`, and the
-Python examples emit one grouped `Action.commands` mapping per control step.
+That shared config defines two placeholder components,
+`YOUR_OWN_arm` and `YOUR_OWN_gripper`, and the Python examples emit one grouped
+`Action.commands` mapping per control step.
 
 ## Design
 

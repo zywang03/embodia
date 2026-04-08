@@ -17,44 +17,44 @@ class YourRobot(em.RobotMixin):
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def capture(self) -> dict[str, object]:
+    def YOUR_OWN_get_obs(self) -> dict[str, object]:
         return {
-            "images": {"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             "state": {
-                "joint_positions": np.full(6, 0.25, dtype=np.float64),
-                "position": np.array([0.5], dtype=np.float64),
+                "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
+                "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
         }
 
-    def send_command(self, action: object) -> object:
+    def YOUR_OWN_send_action(self, action: object) -> object:
         """Pretend the robot controller returns the final accepted action."""
 
         accepted = em.coerce_action(action)
         self.last_native_action = accepted
         return accepted
 
-    def home(self) -> dict[str, object]:
-        return self.capture()
+    def YOUR_OWN_reset(self) -> dict[str, object]:
+        return self.YOUR_OWN_get_obs()
 
 
 class YourPolicy(em.PolicyMixin):
     """Pretend this is your original outer policy class after one small edit."""
 
-    def clear_state(self) -> None:
+    def YOUR_OWN_clear_state(self) -> None:
         return None
 
-    def infer(self, frame: em.Frame) -> dict[str, object]:
+    def YOUR_OWN_infer(self, frame: em.Frame) -> dict[str, object]:
         targets = [0.0, 3.0, 6.0, 9.0, 12.0]
         # embodia fills sequence_id automatically when the robot does not.
         base = targets[int(frame.sequence_id or 0) % len(targets)]
-        gripper_pos = float(frame.state["position"][0])
+        gripper_pos = float(frame.state["YOUR_OWN_gripper"][0])
         return {
-            "arm": {
-                "kind": "cartesian_pose_delta",
+            "YOUR_OWN_arm": {
+                "command": "cartesian_pose_delta",
                 "value": np.full(6, base, dtype=np.float64),
             },
-            "gripper": {
-                "kind": "gripper_position",
+            "YOUR_OWN_gripper": {
+                "command": "gripper_position",
                 "value": np.array(
                     [max(0.0, min(1.0, 1.0 - gripper_pos))],
                     dtype=np.float64,
@@ -66,7 +66,7 @@ class YourPolicy(em.PolicyMixin):
 def arm_value0(action: em.Action) -> float:
     """Return the first arm dimension for compact demo printing."""
 
-    arm = action.get_command("arm")
+    arm = action.get_command("YOUR_OWN_arm")
     assert arm is not None
     return float(arm.value[0])
 

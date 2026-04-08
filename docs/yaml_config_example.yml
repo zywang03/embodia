@@ -3,40 +3,36 @@
 # `PolicyMixin.from_yaml(...)` automatically reads the top-level `policy:` block.
 # This file only describes the shared runtime schema plus method aliases.
 # `schema.task` is optional policy-side context. Robot specs do not declare it.
+# Any value prefixed with `YOUR_OWN_` is a placeholder you are expected to replace.
 # Numeric runtime payloads that match this schema are numpy arrays:
 # `frame.images[*]`, `frame.state[*]`, and `action.commands[*].value`.
 
 schema:
   images:
-    - front_rgb
+    - YOUR_OWN_front_rgb
   task:
-    - prompt
+    - YOUR_OWN_prompt
   components:
-    arm:
-      kind: arm
+    YOUR_OWN_arm:
+      type: arm
       dof: 6
-      state:
-        - joint_positions
-        - ee_pose
-      command_kinds:
+      command:
         - cartesian_pose_delta
-    gripper:
-      kind: gripper
+    YOUR_OWN_gripper:
+      type: gripper
       dof: 1
-      state:
-        - position
-      command_kinds:
+      command:
         - gripper_position
 
 robot:
-  name: your_robot
+  name: YOUR_OWN_robot
   method_aliases:
-    observe: capture
-    act: send_command
-    reset: home
+    observe: YOUR_OWN_get_obs
+    act: YOUR_OWN_send_action
+    reset: YOUR_OWN_reset
 
 policy:
-  name: your_model
+  name: YOUR_OWN_policy
   method_aliases:
-    reset: clear_state
-    infer: predict_action
+    reset: YOUR_OWN_clear_state
+    infer: YOUR_OWN_infer

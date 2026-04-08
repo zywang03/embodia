@@ -85,7 +85,7 @@ def _coerce_action_commands(
 
     Supported mapping form:
 
-    ``{"arm": {"kind": "...", "value": [...]}, "gripper": {...}}``
+    ``{"arm": {"command": "...", "value": [...]}, "gripper": {...}}``
 
     The mapping key is the command target. If a nested mapping also provides
     ``target``, it must match the outer key.
@@ -118,7 +118,7 @@ def _coerce_action_commands(
             )
         commands[target] = coerce_command(
             {
-                "kind": item.get("kind"),
+                "command": item.get("command"),
                 "value": item.get("value"),
                 "ref_frame": item.get("ref_frame"),
                 "meta": item.get("meta"),
@@ -196,7 +196,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
     if isinstance(value, Command):
         return Command(
-            kind=value.kind,
+            command=value.command,
             value=value.value.copy(),
             ref_frame=value.ref_frame,
             meta=dict(value.meta),
@@ -213,14 +213,14 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
             f"command mapping is missing required field {exc.args[0]!r}."
         ) from exc
 
-    kind = value.get("kind")
-    if kind is None:
+    command = value.get("command")
+    if command is None:
         raise InterfaceValidationError(
-            "command mapping is missing required field 'kind'."
+            "command mapping is missing required field 'command'."
         )
 
     return Command(
-        kind=kind,
+        command=command,
         value=_coerce_command_value(command_value, "command.value"),
         ref_frame=value.get("ref_frame"),
         meta=_copy_string_key_mapping(value.get("meta"), "command.meta"),
@@ -233,9 +233,9 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
     Supported mapping forms are:
 
     1. wrapped:
-       ``{"commands": {"arm": {"kind": "...", "value": [...]}}}``
+       ``{"commands": {"arm": {"command": "...", "value": [...]}}}``
     2. compact:
-       ``{"arm": {"kind": "...", "value": [...]}}``
+       ``{"arm": {"command": "...", "value": [...]}}``
 
     The compact form keeps JSON smaller for the common case where action-level
     metadata is empty.
@@ -285,10 +285,9 @@ def coerce_component_spec(
     if isinstance(value, ComponentSpec):
         return ComponentSpec(
             name=value.name,
-            kind=value.kind,
+            type=value.type,
             dof=value.dof,
-            supported_command_kinds=list(value.supported_command_kinds),
-            state_keys=list(value.state_keys),
+            command=list(value.command),
             meta=dict(value.meta),
         )
     if not isinstance(value, Mapping):
@@ -299,30 +298,25 @@ def coerce_component_spec(
 
     try:
         name = value["name"]
-        kind = value["kind"]
+        component_type = value["type"]
         dof = value["dof"]
-        supported_command_kinds = value.get("supported_command_kinds")
+        command = value.get("command")
     except KeyError as exc:
         raise InterfaceValidationError(
             f"component spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
-    if supported_command_kinds is None:
+    if command is None:
         raise InterfaceValidationError(
-            "component spec mapping is missing required field "
-            "'supported_command_kinds'."
+            "component spec mapping is missing required field 'command'."
         )
 
     return ComponentSpec(
         name=name,
-        kind=kind,
+        type=component_type,
         dof=dof,
-        supported_command_kinds=_copy_sequence(
-            supported_command_kinds,
-            "component_spec.supported_command_kinds",
-        ),
-        state_keys=_copy_sequence(
-            value.get("state_keys", []),
-            "component_spec.state_keys",
+        command=_copy_sequence(
+            command,
+            "component_spec.command",
         ),
         meta=_copy_string_key_mapping(value.get("meta"), "component_spec.meta"),
     )
@@ -373,7 +367,7 @@ def coerce_policy_output_spec(
     if isinstance(value, PolicyOutputSpec):
         return PolicyOutputSpec(
             target=value.target,
-            command_kind=value.command_kind,
+            command=value.command,
             dim=value.dim,
             meta=dict(value.meta),
         )
@@ -390,15 +384,15 @@ def coerce_policy_output_spec(
         raise InterfaceValidationError(
             f"policy output spec mapping is missing required field {exc.args[0]!r}."
         ) from exc
-    command_kind = value.get("command_kind")
-    if command_kind is None:
+    command = value.get("command")
+    if command is None:
         raise InterfaceValidationError(
-            "policy output spec mapping is missing required field 'command_kind'."
+            "policy output spec mapping is missing required field 'command'."
         )
 
     return PolicyOutputSpec(
         target=target,
-        command_kind=command_kind,
+        command=command,
         dim=dim,
         meta=_copy_string_key_mapping(value.get("meta"), "policy_output_spec.meta"),
     )

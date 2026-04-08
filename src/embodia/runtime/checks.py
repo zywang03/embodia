@@ -72,11 +72,11 @@ def _pair_problems(robot_spec: RobotSpec, policy_spec: PolicySpec) -> list[str]:
                 f"robot is missing required component {output.target!r}."
             )
             continue
-        if output.command_kind not in component.supported_command_kinds:
+        if output.command not in component.command:
             problems.append(
                 f"component {output.target!r} does not support policy output "
-                f"command kind {output.command_kind!r}; supported command kinds: "
-                f"{component.supported_command_kinds!r}."
+                f"command {output.command!r}; supported commands: "
+                f"{component.command!r}."
             )
         if output.dim != component.dof:
             problems.append(
@@ -154,12 +154,7 @@ def check_policy(policy: object, *, sample_frame: Frame | None = None) -> None:
         )
     validate_policy_spec(spec)
 
-    reset_result = _call_method(reset, policy, reset_name)
-    if reset_result is not None:
-        raise InterfaceValidationError(
-            f"{_object_label(policy)} {reset_name}() must return None, "
-            f"got {type(reset_result).__name__}."
-        )
+    _call_method(reset, policy, reset_name)
 
     if sample_frame is None:
         return

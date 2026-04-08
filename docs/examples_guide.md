@@ -17,13 +17,18 @@ the Python files stay focused on the main user-facing flow: mixin inheritance,
 `from_yaml(...)`, `run_step(...)`, and `InferenceRuntime(...)`.
 For inference examples, `run_step(robot, source=policy)` is the preferred style.
 Numeric runtime payloads in those examples are numpy arrays, not Python lists.
+Any example field prefixed with `YOUR_OWN_` is a placeholder you are expected to
+rename inside your own project.
 
 The examples follow one grouped-command, numpy-based schema throughout:
 
-- robot image/state payloads are standardized into semantic keys such as `joint_positions` and `position`
-- robot embodiment is declared through components such as `arm` and `gripper`
+- robot image/state payloads use the same component keys on both observation
+  and action paths, such as `YOUR_OWN_arm` and `YOUR_OWN_gripper`
+- robot embodiment is declared through components such as `YOUR_OWN_arm` and
+  `YOUR_OWN_gripper`
 - every action step is an `Action` with one or more `commands`
-- each command addresses one component through `target + kind + value`, with `value` stored as a numpy vector
+- each command lives under one component key and stores `command` plus a
+  numpy-backed `value`
 
 The action source itself can vary without changing the outer loop:
 
@@ -33,7 +38,7 @@ The action source itself can vary without changing the outer loop:
 - remote deployment uses `source=RemotePolicy(...)`
 
 For embodia's own remote example, `RemotePolicy(...)` only needs connection
-settings. Command target/kind are inferred from the remote response or the
+settings. Command target/command are inferred from the remote response or the
 server's published policy metadata. The same client example can also switch to
 an OpenPI-compatible remote source with `openpi=True`.
 

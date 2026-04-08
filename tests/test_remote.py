@@ -17,13 +17,13 @@ class RemoteTests(unittest.TestCase):
         plan = em_remote.actions_to_action_plan(
             {"actions": [[1, 2, 3], [4, 5, 6]]},
             target="arm",
-            kind="joint_position",
+            command="joint_position",
             ref_frame="tool",
         )
 
         first = plan[0].get_command("arm")
         assert first is not None
-        self.assertEqual(first.kind, "joint_position")
+        self.assertEqual(first.command, "joint_position")
         assert_array_equal(self, first.value, [1.0, 2.0, 3.0])
         self.assertEqual(first.ref_frame, "tool")
 
@@ -32,13 +32,13 @@ class RemoteTests(unittest.TestCase):
             [
                 em.Action.single(
                     target="arm",
-                    kind="joint_position",
+                    command="joint_position",
                     value=[0.1, 0.2, 0.3],
                     ref_frame="tool",
                 ),
                 em.Action.single(
                     target="arm",
-                    kind="joint_position",
+                    command="joint_position",
                     value=[0.4, 0.5, 0.6],
                     ref_frame="tool",
                 ),
@@ -47,11 +47,11 @@ class RemoteTests(unittest.TestCase):
 
         self.assertEqual(response["actions"][0], [0.1, 0.2, 0.3])
         self.assertEqual(response["embodia"]["action_target"], "arm")
-        self.assertEqual(response["embodia"]["action_kind"], "joint_position")
+        self.assertEqual(response["embodia"]["action_command"], "joint_position")
 
     def test_remote_transform_converts_obs_and_actions(self) -> None:
         transform = em_remote.RemoteTransform(
-            command_kind="joint_position",
+            command="joint_position",
             action_target="arm",
         )
 
@@ -59,15 +59,15 @@ class RemoteTests(unittest.TestCase):
             {
                 "timestamp_ns": 1,
                 "images": {},
-                "state": {"joint_positions": [0.0, 1.0, 2.0]},
+                "state": {"arm": [0.0, 1.0, 2.0]},
             }
         )
         action = transform.first_action_from_response({"actions": [[1, 2, 3]]})
         command = action.get_command("arm")
         assert command is not None
 
-        assert_array_equal(self, frame.state["joint_positions"], [0.0, 1.0, 2.0])
-        self.assertEqual(command.kind, "joint_position")
+        assert_array_equal(self, frame.state["arm"], [0.0, 1.0, 2.0])
+        self.assertEqual(command.command, "joint_position")
         assert_array_equal(self, command.value, [1.0, 2.0, 3.0])
 
     def test_build_policy_adapter_serves_grouped_action_policy(self) -> None:
@@ -76,12 +76,12 @@ class RemoteTests(unittest.TestCase):
                 return {
                     "name": "demo_model",
                     "required_image_keys": [],
-                    "required_state_keys": ["joint_positions"],
+                    "required_state_keys": ["arm"],
                     "required_task_keys": [],
                     "outputs": [
                         {
                             "target": "arm",
-                            "command_kind": "joint_position",
+                            "command": "joint_position",
                             "dim": 3,
                         }
                     ],
@@ -94,7 +94,7 @@ class RemoteTests(unittest.TestCase):
                 del frame
                 return em.Action.single(
                     target="arm",
-                    kind="joint_position",
+                    command="joint_position",
                     value=[1.0, 2.0, 3.0],
                 )
 
@@ -103,7 +103,7 @@ class RemoteTests(unittest.TestCase):
             {
                 "timestamp_ns": 1,
                 "images": {},
-                "state": {"joint_positions": [0.0, 0.0, 0.0]},
+                "state": {"arm": [0.0, 0.0, 0.0]},
             }
         )
 
@@ -118,10 +118,9 @@ class RemoteTests(unittest.TestCase):
                 "components": [
                     {
                         "name": "arm",
-                        "kind": "arm",
+                        "type": "arm",
                         "dof": 3,
-                        "supported_command_kinds": ["joint_position"],
-                        "state_keys": ["joint_positions"],
+                        "command": ["joint_position"],
                     }
                 ],
             }
@@ -133,7 +132,7 @@ class RemoteTests(unittest.TestCase):
                 return {
                     "timestamp_ns": 1,
                     "images": {},
-                    "state": {"joint_positions": [0.0, 0.0, 0.0]},
+                    "state": {"arm": [0.0, 0.0, 0.0]},
                 }
 
             def _act_impl(self, action: em.Action) -> None:
@@ -149,7 +148,7 @@ class RemoteTests(unittest.TestCase):
                     "actions": [[0.4, 0.5, 0.6]],
                     "embodia": {
                         "action_target": "arm",
-                        "action_kind": "joint_position",
+                        "action_command": "joint_position",
                     },
                 }
 
@@ -177,12 +176,12 @@ class RemoteTests(unittest.TestCase):
                         "policy_spec": {
                             "name": "remote_policy",
                             "required_image_keys": [],
-                            "required_state_keys": ["joint_positions"],
+                            "required_state_keys": ["arm"],
                             "required_task_keys": [],
                             "outputs": [
                                 {
                                     "target": "arm",
-                                    "command_kind": "joint_position",
+                                    "command": "joint_position",
                                     "dim": 3,
                                 }
                             ],
@@ -195,12 +194,12 @@ class RemoteTests(unittest.TestCase):
             {
                 "timestamp_ns": 1,
                 "images": {},
-                "state": {"joint_positions": [0.0, 0.0, 0.0]},
+                "state": {"arm": [0.0, 0.0, 0.0]},
             }
         )
         command = action.get_command("arm")
         assert command is not None
-        self.assertEqual(command.kind, "joint_position")
+        self.assertEqual(command.command, "joint_position")
         assert_array_equal(self, command.value, [0.7, 0.8, 0.9])
 
     def test_remote_policy_runner_rejects_when_disabled(self) -> None:

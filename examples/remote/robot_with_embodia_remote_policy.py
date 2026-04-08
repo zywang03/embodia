@@ -22,22 +22,22 @@ class YourRobot(em.RobotMixin):
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def capture(self) -> dict[str, object]:
+    def YOUR_OWN_get_obs(self) -> dict[str, object]:
         return {
-            "images": {"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             "state": {
-                "joint_positions": np.full(6, 0.25, dtype=np.float64),
-                "position": np.array([0.5], dtype=np.float64),
+                "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
+                "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
         }
 
-    def send_command(self, action: object) -> object:
+    def YOUR_OWN_send_action(self, action: object) -> object:
         accepted = em.coerce_action(action)
         self.last_native_action = accepted
         return accepted
 
-    def home(self) -> dict[str, object]:
-        return self.capture()
+    def YOUR_OWN_reset(self) -> dict[str, object]:
+        return self.YOUR_OWN_get_obs()
 
 
 def main() -> None:
@@ -67,7 +67,7 @@ def main() -> None:
         print("server_metadata:", get_server_metadata())
     for step_index in range(3):
         result = em.run_step(robot, source=remote_policy)
-        arm = result.action.get_command("arm")
+        arm = result.action.get_command("YOUR_OWN_arm")
         assert arm is not None
         print(f"step={step_index} action0={arm.value[0]:.2f}")
 

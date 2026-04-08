@@ -142,7 +142,7 @@ class PolicyMixin(_CommonInterfaceMixin):
                 task.TASK_KEYS,
                 modality_maps=modality_maps,
             ),
-            command_kind_map=cls._effective_command_kind_map(
+            command_map=cls._effective_command_kind_map(
                 modality_maps=modality_maps
             ),
         )
@@ -158,7 +158,7 @@ class PolicyMixin(_CommonInterfaceMixin):
             target_map=self.get_control_target_map(),
             state_key_map=self.get_state_key_map(),
             task_key_map=self.get_task_key_map(),
-            command_kind_map=self.get_command_kind_map(),
+            command_map=self.get_command_kind_map(),
         )
 
     def transform_spec(self, spec: PolicySpec | Mapping[str, Any]) -> PolicySpec:
@@ -230,7 +230,7 @@ class PolicyMixin(_CommonInterfaceMixin):
         action: Action | Mapping[str, Any],
         spec: PolicySpec | Mapping[str, Any] | None = None,
     ) -> Action:
-        """Ensure emitted command kinds and dims match the policy spec."""
+        """Ensure emitted commands and dims match the policy spec."""
 
         normalized_action = self.validate_action(action)
         normalized_spec = (
@@ -273,14 +273,10 @@ class PolicyMixin(_CommonInterfaceMixin):
         return self.embodia_get_spec()
 
     def embodia_reset(self) -> None:
-        """Forward reset and enforce embodia's normalized reset contract."""
+        """Forward reset and ignore the wrapped policy's return value."""
 
         raw_reset = self._resolve_impl("reset", "_reset_impl")
-        result = raw_reset()
-        if result is not None:
-            raise InterfaceValidationError(
-                f"policy reset() must return None, got {type(result).__name__}."
-            )
+        raw_reset()
 
     def reset(self) -> None:
         """Backward-compatible alias for :meth:`embodia_reset`."""

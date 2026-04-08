@@ -19,8 +19,9 @@ The preferred direction is now:
 - numeric payloads inside `Frame` / `Action` are numpy arrays in the runtime
 
 embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
-That means your native methods can stay named `infer`, `capture`, `home`, and so
-on, while embodia still has one collision-free internal dispatch path.
+That means your native methods can stay named `YOUR_OWN_infer`,
+`YOUR_OWN_get_obs`, `YOUR_OWN_reset`, and so on, while embodia still has one
+collision-free internal dispatch path.
 `task` is policy-side context, not robot capability, so robot specs no longer
 declare task-related fields. `robot` stays local-only; if you need remote
 deployment, put it on the policy/source side.
@@ -31,16 +32,15 @@ deployment, put it on the policy/source side.
 
 ```python
 METHOD_ALIASES = {
-    "observe": "capture",
-    "act": "send_command",
-    "reset": "home",
+    "observe": "YOUR_OWN_get_obs",
+    "act": "YOUR_OWN_send_action",
+    "reset": "YOUR_OWN_reset",
 }
 ```
 
 The same keys can also live in YAML under `robot.method_aliases` or
-`policy.method_aliases`. On the policy side, `infer` is the default native method
-name, so you only need `policy.method_aliases.infer` when your class uses a
-different name.
+`policy.method_aliases`. Any value prefixed with `YOUR_OWN_` in these examples
+is just a placeholder for your real method name.
 
 ## Shared schema
 
@@ -48,37 +48,39 @@ Robot embodiment is described through components:
 
 ```python
 ROBOT_SPEC = {
-    "name": "your_robot",
-    "image_keys": ["front_rgb"],
+    "name": "YOUR_OWN_robot",
+    "image_keys": ["YOUR_OWN_front_rgb"],
     "components": [
         {
-            "name": "arm",
-            "kind": "arm",
+            "name": "YOUR_OWN_arm",
+            "type": "arm",
             "dof": 6,
-            "supported_command_kinds": ["cartesian_pose_delta"],
-            "state_keys": ["joint_positions"],
+            "command": ["cartesian_pose_delta"],
         },
         {
-            "name": "gripper",
-            "kind": "gripper",
+            "name": "YOUR_OWN_gripper",
+            "type": "gripper",
             "dof": 1,
-            "supported_command_kinds": ["gripper_position"],
-            "state_keys": ["position"],
+            "command": ["gripper_position"],
         },
     ],
 }
 ```
 
-Policy outputs should align with the same shared targets and command kinds:
+Policy outputs should align with the same shared targets and commands:
 
 ```python
 POLICY_SPEC = {
-    "name": "your_model",
-    "required_image_keys": ["front_rgb"],
-    "required_state_keys": ["joint_positions", "position"],
+    "name": "YOUR_OWN_policy",
+    "required_image_keys": ["YOUR_OWN_front_rgb"],
+    "required_state_keys": ["YOUR_OWN_arm", "YOUR_OWN_gripper"],
     "outputs": [
-        {"target": "arm", "command_kind": "cartesian_pose_delta", "dim": 6},
-        {"target": "gripper", "command_kind": "gripper_position", "dim": 1},
+        {"target": "YOUR_OWN_arm", "command": "cartesian_pose_delta", "dim": 6},
+        {
+            "target": "YOUR_OWN_gripper",
+            "command": "gripper_position",
+            "dim": 1,
+        },
     ],
 }
 ```
@@ -87,12 +89,17 @@ When you use `from_yaml(...)`, you do not repeat that information inside the
 `policy:` block. embodia derives:
 
 - `required_image_keys` from `schema.images`
-- `required_state_keys` from the union of `schema.components[*].state`
+- `required_state_keys` from the component names in `schema.components`
 - `required_task_keys` from `schema.task`
-- `outputs` from `schema.components[*].command_kinds`
+- `outputs` from `schema.components[*].command`
+
+In the current schema, component names are reused directly across observation
+and action: `frame.state[component_name]` and
+`action.commands[component_name]`. There is no separate `Command.target`
+field anymore.
 
 That YAML auto-derivation expects each component to declare exactly one
-command kind. If a component supports multiple command kinds and your policy needs a
+command. If a component supports multiple commands and your policy needs a
 more specific spec, declare `POLICY_SPEC` in Python instead of relying on YAML
 inference.
 
@@ -102,12 +109,12 @@ The normalized runtime action is grouped by control target:
 import numpy as np
 
 {
-    "arm": {
-        "kind": "cartesian_pose_delta",
+    "YOUR_OWN_arm": {
+        "command": "cartesian_pose_delta",
         "value": np.zeros(6, dtype=np.float32),
     },
-    "gripper": {
-        "kind": "gripper_position",
+    "YOUR_OWN_gripper": {
+        "command": "gripper_position",
         "value": np.array([0.5], dtype=np.float32),
     },
 }
@@ -130,9 +137,9 @@ If your native names differ, keep remapping in Python code with `MODALITY_MAPS`:
 
 ```python
 MODALITY_MAPS = {
-    em.IMAGE_KEYS: {"rgb_front": "front_rgb"},
-    em.STATE_KEYS: {"qpos": "joint_positions"},
-    em.CONTROL_TARGETS: {"vendor_arm": "arm"},
+    em.IMAGE_KEYS: {"rgb_front": "YOUR_OWN_front_rgb"},
+    em.STATE_KEYS: {"qpos": "YOUR_OWN_arm", "gripper_pos": "YOUR_OWN_gripper"},
+    em.CONTROL_TARGETS: {"vendor_arm": "YOUR_OWN_arm"},
     em.COMMAND_KINDS: {"cartesian_delta": "cartesian_pose_delta"},
 }
 ```
@@ -148,35 +155,31 @@ existing projects into the shared schema.
 ```yaml
 schema:
   images:
-    - front_rgb
+    - YOUR_OWN_front_rgb
   components:
-    arm:
-      kind: arm
+    YOUR_OWN_arm:
+      type: arm
       dof: 6
-      state:
-        - joint_positions
-      command_kinds:
+      command:
         - cartesian_pose_delta
-    gripper:
-      kind: gripper
+    YOUR_OWN_gripper:
+      type: gripper
       dof: 1
-      state:
-        - position
-      command_kinds:
+      command:
         - gripper_position
 
 robot:
-  name: your_robot
+  name: YOUR_OWN_robot
   method_aliases:
-    observe: capture
-    act: send_command
-    reset: home
+    observe: YOUR_OWN_get_obs
+    act: YOUR_OWN_send_action
+    reset: YOUR_OWN_reset
 
 policy:
-  name: your_model
+  name: YOUR_OWN_policy
   method_aliases:
-    reset: clear_state
-    infer: predict_action
+    reset: YOUR_OWN_clear_state
+    infer: YOUR_OWN_infer
 ```
 
 The full example lives in [`docs/yaml_config_example.yml`](./yaml_config_example.yml).

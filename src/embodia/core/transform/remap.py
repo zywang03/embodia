@@ -127,10 +127,10 @@ def remap_frame(
 def remap_command(
     command: Command | Mapping[str, Any],
     *,
-    kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
 ) -> Command:
-    """Rename one command's kind/reference frame."""
+    """Rename one command's command/reference frame."""
 
     normalized = coerce_command(command)
     mapped_ref_frame = normalized.ref_frame
@@ -138,7 +138,7 @@ def remap_command(
         mapped_ref_frame = _remap_name(mapped_ref_frame, ref_frame_map or {})
 
     return Command(
-        kind=_remap_name(normalized.kind, kind_map or {}),
+        command=_remap_name(normalized.command, command_map or {}),
         value=normalized.value.copy(),
         ref_frame=mapped_ref_frame,
         meta=dict(normalized.meta),
@@ -149,7 +149,7 @@ def remap_action(
     action: Action | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
-    kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
 ) -> Action:
     """Rename action commands according to mapping tables."""
@@ -165,7 +165,7 @@ def remap_action(
             )
         remapped_commands[mapped_target] = remap_command(
             command,
-            kind_map=kind_map,
+            command_map=command_map,
             ref_frame_map=ref_frame_map,
         )
     return Action(
@@ -178,25 +178,19 @@ def remap_component_spec(
     spec: ComponentSpec | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
-    state_key_map: Mapping[str, str] | None = None,
-    command_kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
 ) -> ComponentSpec:
     """Rename a component spec."""
 
     normalized = coerce_component_spec(spec)
     return ComponentSpec(
         name=_remap_name(normalized.name, target_map or {}),
-        kind=normalized.kind,
+        type=normalized.type,
         dof=normalized.dof,
-        supported_command_kinds=_remap_name_list(
-            normalized.supported_command_kinds,
-            command_kind_map or {},
-            "component_spec.supported_command_kinds",
-        ),
-        state_keys=_remap_name_list(
-            normalized.state_keys,
-            state_key_map or {},
-            "component_spec.state_keys",
+        command=_remap_name_list(
+            normalized.command,
+            command_map or {},
+            "component_spec.command",
         ),
         meta=dict(normalized.meta),
     )
@@ -206,8 +200,7 @@ def remap_robot_spec(
     spec: RobotSpec | Mapping[str, Any],
     *,
     image_key_map: Mapping[str, str] | None = None,
-    state_key_map: Mapping[str, str] | None = None,
-    command_kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> RobotSpec:
     """Rename robot spec keys and component names according to mappings."""
@@ -224,8 +217,7 @@ def remap_robot_spec(
             remap_component_spec(
                 component,
                 target_map=target_map,
-                state_key_map=state_key_map,
-                command_kind_map=command_kind_map,
+                command_map=command_map,
             )
             for component in normalized.components
         ],
@@ -237,14 +229,14 @@ def remap_policy_output_spec(
     spec: PolicyOutputSpec | Mapping[str, Any],
     *,
     target_map: Mapping[str, str] | None = None,
-    command_kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
 ) -> PolicyOutputSpec:
     """Rename a policy-output spec."""
 
     normalized = coerce_policy_output_spec(spec)
     return PolicyOutputSpec(
         target=_remap_name(normalized.target, target_map or {}),
-        command_kind=_remap_name(normalized.command_kind, command_kind_map or {}),
+        command=_remap_name(normalized.command, command_map or {}),
         dim=normalized.dim,
         meta=dict(normalized.meta),
     )
@@ -256,7 +248,7 @@ def remap_policy_spec(
     image_key_map: Mapping[str, str] | None = None,
     state_key_map: Mapping[str, str] | None = None,
     task_key_map: Mapping[str, str] | None = None,
-    command_kind_map: Mapping[str, str] | None = None,
+    command_map: Mapping[str, str] | None = None,
     target_map: Mapping[str, str] | None = None,
 ) -> PolicySpec:
     """Rename policy spec keys and output definitions according to mappings."""
@@ -283,7 +275,7 @@ def remap_policy_spec(
             remap_policy_output_spec(
                 output,
                 target_map=target_map,
-                command_kind_map=command_kind_map,
+                command_map=command_map,
             )
             for output in normalized.outputs
         ],

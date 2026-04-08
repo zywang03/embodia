@@ -20,24 +20,24 @@ class YourRobot(em.RobotMixin):
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def capture(self) -> dict[str, object]:
+    def YOUR_OWN_get_obs(self) -> dict[str, object]:
         return {
-            "images": {"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
             "state": {
-                "joint_positions": np.full(6, 0.25, dtype=np.float64),
-                "position": np.array([0.5], dtype=np.float64),
+                "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
+                "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
         }
 
-    def send_command(self, action: object) -> object:
+    def YOUR_OWN_send_action(self, action: object) -> object:
         """Pretend the robot controller returns the final accepted action."""
 
         accepted = em.coerce_action(action)
         self.last_native_action = accepted
         return accepted
 
-    def home(self) -> dict[str, object]:
-        return self.capture()
+    def YOUR_OWN_reset(self) -> dict[str, object]:
+        return self.YOUR_OWN_get_obs()
 
 
 class DemoTeleop:
@@ -45,32 +45,32 @@ class DemoTeleop:
 
     script = [
         {
-            "arm": {
-                "kind": "cartesian_pose_delta",
+            "YOUR_OWN_arm": {
+                "command": "cartesian_pose_delta",
                 "value": np.array([0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
-            "gripper": {
-                "kind": "gripper_position",
+            "YOUR_OWN_gripper": {
+                "command": "gripper_position",
                 "value": np.array([1.0], dtype=np.float64),
             },
         },
         {
-            "arm": {
-                "kind": "cartesian_pose_delta",
+            "YOUR_OWN_arm": {
+                "command": "cartesian_pose_delta",
                 "value": np.array([0.02, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
-            "gripper": {
-                "kind": "gripper_position",
+            "YOUR_OWN_gripper": {
+                "command": "gripper_position",
                 "value": np.array([0.5], dtype=np.float64),
             },
         },
         {
-            "arm": {
-                "kind": "cartesian_pose_delta",
+            "YOUR_OWN_arm": {
+                "command": "cartesian_pose_delta",
                 "value": np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
             },
-            "gripper": {
-                "kind": "gripper_position",
+            "YOUR_OWN_gripper": {
+                "command": "gripper_position",
                 "value": np.array([0.0], dtype=np.float64),
             },
         },

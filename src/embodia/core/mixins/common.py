@@ -238,7 +238,7 @@ class _CommonInterfaceMixin:
         return resolution_utils.get_control_target_map(self)
 
     def get_command_kind_map(self) -> Mapping[str, str]:
-        """Map native command kinds to embodia-standard command kinds."""
+        """Map native command names to embodia-standard command names."""
 
         return resolution_utils.get_command_kind_map(self)
 
@@ -286,7 +286,7 @@ class _CommonInterfaceMixin:
         return remap_action(
             action,
             target_map=self.get_control_target_map(),
-            kind_map=self.get_command_kind_map(),
+            command_map=self.get_command_kind_map(),
         )
 
     def transform_action(self, action: Action | Mapping[str, Any]) -> Action:

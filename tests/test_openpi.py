@@ -19,7 +19,7 @@ class OpenPITests(unittest.TestCase):
         frame = em.Frame(
             timestamp_ns=123,
             images={"front_rgb": demo_image()},
-            state={"joint_positions": [1.0, 2.0, 3.0], "position": 0.5},
+            state={"arm": [1.0, 2.0, 3.0], "gripper": 0.5},
             task={"prompt": "fold the cloth"},
             meta={"episode_id": "demo-1"},
             sequence_id=7,
@@ -29,8 +29,8 @@ class OpenPITests(unittest.TestCase):
             frame,
             image_map={"observation/front_image": "front_rgb"},
             state_map={
-                "observation/joint_position": "joint_positions",
-                "observation/gripper_position": "position",
+                "observation/joint_position": "arm",
+                "observation/gripper_position": "gripper",
             },
             task_map={"prompt": "prompt"},
             meta_map={"episode_id": "episode_id"},
@@ -52,12 +52,12 @@ class OpenPITests(unittest.TestCase):
             action_groups=[
                 em_openpi.OpenPIActionGroup(
                     target="arm",
-                    kind="joint_position",
+                    command="joint_position",
                     selector=(0, 3),
                 ),
                 em_openpi.OpenPIActionGroup(
                     target="gripper",
-                    kind="gripper_position",
+                    command="gripper_position",
                     selector=3,
                 ),
             ],
@@ -77,17 +77,15 @@ class OpenPITests(unittest.TestCase):
                 "components": [
                     {
                         "name": "arm",
-                        "kind": "arm",
+                        "type": "arm",
                         "dof": 3,
-                        "supported_command_kinds": ["joint_position"],
-                        "state_keys": ["joint_positions"],
+                        "command": ["joint_position"],
                     },
                     {
                         "name": "gripper",
-                        "kind": "gripper",
+                        "type": "gripper",
                         "dof": 1,
-                        "supported_command_kinds": ["gripper_position"],
-                        "state_keys": ["position"],
+                        "command": ["gripper_position"],
                     },
                 ],
             }
@@ -99,8 +97,8 @@ class OpenPITests(unittest.TestCase):
                 return {
                     "images": {"front_rgb": demo_image()},
                     "state": {
-                        "joint_positions": [0.0, 0.0, 0.0],
-                        "position": 0.0,
+                        "arm": [0.0, 0.0, 0.0],
+                        "gripper": 0.0,
                     },
                     "task": {"prompt": "stack blocks"},
                 }

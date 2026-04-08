@@ -32,10 +32,9 @@ class DummyRobot(RobotMixin):
             "components": [
                 {
                     "name": "arm",
-                    "kind": "arm",
+                    "type": "arm",
                     "dof": 6,
-                    "supported_command_kinds": ["cartesian_pose_delta"],
-                    "state_keys": ["joint_positions"],
+                    "command": ["cartesian_pose_delta"],
                 }
             ],
         }
@@ -44,7 +43,7 @@ class DummyRobot(RobotMixin):
         return {
             "timestamp_ns": time.time_ns(),
             "images": {"front_rgb": demo_image()},
-            "state": {"joint_positions": np.zeros(6, dtype=np.float64)},
+            "state": {"arm": np.zeros(6, dtype=np.float64)},
         }
 
     def _act_impl(self, action: Action) -> None:
@@ -59,12 +58,12 @@ class DummyPolicy(PolicyMixin):
         return {
             "name": "dummy_model",
             "required_image_keys": ["front_rgb"],
-            "required_state_keys": ["joint_positions"],
+            "required_state_keys": ["arm"],
             "required_task_keys": [],
             "outputs": [
                 {
                     "target": "arm",
-                    "command_kind": "cartesian_pose_delta",
+                    "command": "cartesian_pose_delta",
                     "dim": 6,
                 }
             ],
@@ -76,7 +75,7 @@ class DummyPolicy(PolicyMixin):
     def _step_impl(self, frame: Frame) -> dict[str, object]:
         return {
             "arm": {
-                "kind": "cartesian_pose_delta",
+                "command": "cartesian_pose_delta",
                 "value": [0.0] * 6,
             }
         }

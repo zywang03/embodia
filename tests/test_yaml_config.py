@@ -60,16 +60,14 @@ class YamlConfigTests(unittest.TestCase):
                     "images": ["front_rgb"],
                     "components": {
                         "arm": {
-                            "kind": "arm",
+                            "type": "arm",
                             "dof": 6,
-                            "state": ["joint_positions"],
-                            "command_kinds": ["cartesian_pose_delta"],
+                            "command": ["cartesian_pose_delta"],
                         },
                         "gripper": {
-                            "kind": "gripper",
+                            "type": "gripper",
                             "dof": 1,
-                            "state": ["position"],
-                            "command_kinds": ["gripper_position"],
+                            "command": ["gripper_position"],
                         },
                     },
                     "task": ["prompt"],
@@ -101,8 +99,8 @@ class YamlConfigTests(unittest.TestCase):
                     "timestamp_ns": 1,
                     "images": {"front_rgb": demo_image()},
                     "state": {
-                        "joint_positions": [0.0] * 6,
-                        "position": 0.5,
+                        "arm": [0.0] * 6,
+                        "gripper": 0.5,
                     },
                     "task": {"prompt": "fold the cloth"},
                 }
@@ -125,11 +123,11 @@ class YamlConfigTests(unittest.TestCase):
                 self.seen_frame = frame
                 return {
                     "arm": {
-                        "kind": "cartesian_pose_delta",
+                        "command": "cartesian_pose_delta",
                         "value": [self.gain] * 6,
                     },
                     "gripper": {
-                        "kind": "gripper_position",
+                        "command": "gripper_position",
                         "value": [0.3],
                     },
                 }
@@ -146,29 +144,28 @@ class YamlConfigTests(unittest.TestCase):
         self.assertEqual(policy.gain, 0.5)
         assert_array_equal(self, result.action.get_command("arm").value, [0.5] * 6)  # type: ignore[union-attr]
         assert_array_equal(self, robot.last_action.get_command("gripper").value, [0.3])  # type: ignore[union-attr]
-        self.assertIn("joint_positions", policy.seen_frame.state)
+        self.assertIn("arm", policy.seen_frame.state)
         self.assertEqual(policy.seen_frame.task["prompt"], "fold the cloth")
         self.assertEqual(policy.get_spec().required_image_keys, ["front_rgb"])
         self.assertEqual(
             policy.get_spec().required_state_keys,
-            ["joint_positions", "position"],
+            ["arm", "gripper"],
         )
         self.assertEqual(policy.get_spec().required_task_keys, ["prompt"])
         self.assertEqual(
-            [(output.target, output.command_kind) for output in policy.get_spec().outputs],
+            [(output.target, output.command) for output in policy.get_spec().outputs],
             [("arm", "cartesian_pose_delta"), ("gripper", "gripper_position")],
         )
 
-    def test_from_yaml_rejects_ambiguous_group_command_kinds(self) -> None:
+    def test_from_yaml_rejects_ambiguous_group_commands(self) -> None:
         path = self._write_config(
             {
                 "schema": {
                     "components": {
                         "arm": {
-                            "kind": "arm",
+                            "type": "arm",
                             "dof": 6,
-                            "state": ["joint_positions"],
-                            "command_kinds": [
+                            "command": [
                                 "cartesian_pose_delta",
                                 "joint_position",
                             ],
@@ -188,7 +185,7 @@ class YamlConfigTests(unittest.TestCase):
             with self.assertRaises(em.InterfaceValidationError) as ctx:
                 YourPolicy.from_yaml(path)
 
-        self.assertIn("exactly one command kind", str(ctx.exception))
+        self.assertIn("exactly one command", str(ctx.exception))
 
     def test_from_yaml_rejects_unknown_runtime_field_before_init(self) -> None:
         path = self._write_config(
@@ -196,10 +193,9 @@ class YamlConfigTests(unittest.TestCase):
                 "schema": {
                     "components": {
                         "arm": {
-                            "kind": "arm",
+                            "type": "arm",
                             "dof": 6,
-                            "state": ["joint_positions"],
-                            "command_kinds": ["cartesian_pose_delta"],
+                            "command": ["cartesian_pose_delta"],
                         }
                     }
                 },

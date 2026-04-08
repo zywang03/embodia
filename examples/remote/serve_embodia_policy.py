@@ -23,28 +23,32 @@ PORT = 8000
 class ServedPolicy(em.PolicyMixin):
     """Small embodia policy exposed through embodia's remote transport."""
 
+    METHOD_ALIASES = {
+        "reset": "YOUR_OWN_clear_state",
+        "infer": "YOUR_OWN_infer",
+    }
     POLICY_SPEC = {
-        "name": "remote_demo_policy",
-        "required_image_keys": ["front_rgb"],
-        "required_state_keys": ["joint_positions"],
+        "name": "YOUR_OWN_remote_policy",
+        "required_image_keys": ["YOUR_OWN_front_rgb"],
+        "required_state_keys": ["YOUR_OWN_arm"],
         "required_task_keys": [],
         "outputs": [
             {
-                "target": "arm",
-                "command_kind": "cartesian_pose_delta",
+                "target": "YOUR_OWN_arm",
+                "command": "cartesian_pose_delta",
                 "dim": 6,
             }
         ],
     }
 
-    def clear_state(self) -> None:
+    def YOUR_OWN_clear_state(self) -> None:
         return None
 
-    def infer(self, frame: em.Frame) -> dict[str, object]:
-        base = float(frame.state["joint_positions"][0] + (frame.sequence_id or 0))
+    def YOUR_OWN_infer(self, frame: em.Frame) -> dict[str, object]:
+        base = float(frame.state["YOUR_OWN_arm"][0] + (frame.sequence_id or 0))
         return {
-            "arm": {
-                "kind": "cartesian_pose_delta",
+            "YOUR_OWN_arm": {
+                "command": "cartesian_pose_delta",
                 "value": np.full(6, base, dtype=np.float64),
             }
         }
@@ -60,8 +64,8 @@ def main() -> None:
         policy,
         sample_frame=em.Frame(
             timestamp_ns=1,
-            images={"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
-            state={"joint_positions": np.zeros(6, dtype=np.float64)},
+            images={"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={"YOUR_OWN_arm": np.zeros(6, dtype=np.float64)},
         ),
     )
 

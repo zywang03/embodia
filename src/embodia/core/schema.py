@@ -17,7 +17,7 @@ import numpy as np
 from .arraylike import to_numpy_array
 from .errors import InterfaceValidationError
 
-KNOWN_COMPONENT_KINDS: tuple[str, ...] = (
+KNOWN_COMPONENT_TYPES: tuple[str, ...] = (
     "arm",
     "gripper",
     "hand",
@@ -240,7 +240,7 @@ class Command:
     key, for example ``"left_arm"`` or ``"right_hand"``.
     """
 
-    kind: str
+    command: str
     value: np.ndarray
     ref_frame: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
@@ -276,7 +276,7 @@ class Action:
         cls,
         *,
         target: str,
-        kind: str,
+        command: str,
         value: object,
         ref_frame: str | None = None,
         command_meta: dict[str, Any] | None = None,
@@ -287,7 +287,7 @@ class Action:
         return cls(
             commands={
                 target: Command(
-                    kind=kind,
+                    command=command,
                     value=to_numpy_array(
                         value,
                         field_name="action.value",
@@ -315,16 +315,15 @@ class ComponentSpec:
     """Description of one controllable robot component."""
 
     name: str
-    kind: str
+    type: str
     dof: int
-    supported_command_kinds: list[str]
-    state_keys: list[str] = field(default_factory=list)
+    command: list[str]
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def supports_command_kind(self, command_kind: str) -> bool:
-        """Return whether the component accepts ``command_kind``."""
+    def supports_command(self, command: str) -> bool:
+        """Return whether the component accepts ``command``."""
 
-        return command_kind in self.supported_command_kinds
+        return command in self.command
 
 
 @dataclass(slots=True)
@@ -344,29 +343,26 @@ class RobotSpec:
                 return component
         return None
 
-    def all_supported_command_kinds(self) -> list[str]:
-        """Return unique command kinds supported across all components."""
+    def all_supported_commands(self) -> list[str]:
+        """Return unique commands supported across all components."""
 
         seen: set[str] = set()
         result: list[str] = []
         for component in self.components:
-            for command_kind in component.supported_command_kinds:
-                if command_kind not in seen:
-                    seen.add(command_kind)
-                    result.append(command_kind)
+            for command in component.command:
+                if command not in seen:
+                    seen.add(command)
+                    result.append(command)
         return result
 
     def all_state_keys(self) -> list[str]:
-        """Return the unique state keys exposed across all components."""
+        """Return the standardized state keys exposed across all components.
 
-        seen: set[str] = set()
-        result: list[str] = []
-        for component in self.components:
-            for key in component.state_keys:
-                if key not in seen:
-                    seen.add(key)
-                    result.append(key)
-        return result
+        embodia keeps the main observation and action flows aligned by using
+        the component name itself as the canonical state key.
+        """
+
+        return [component.name for component in self.components]
 
 
 @dataclass(slots=True)
@@ -374,7 +370,7 @@ class PolicyOutputSpec:
     """Description of one policy output command slot."""
 
     target: str
-    command_kind: str
+    command: str
     dim: int
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -407,7 +403,7 @@ class CommandKindSpec:
     description: str = ""
     requires_ref_frame: bool = False
     default_dim: int | None = None
-    allowed_component_kinds: list[str] = field(default_factory=list)
+    allowed_component_types: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -429,9 +425,9 @@ def register_command_kind(spec: CommandKindSpec) -> None:
 
     if spec.default_dim is not None:
         _ensure_positive_int(spec.default_dim, "command_kind_spec.default_dim")
-    spec.allowed_component_kinds = _ensure_string_list(
-        spec.allowed_component_kinds,
-        "command_kind_spec.allowed_component_kinds",
+    spec.allowed_component_types = _ensure_string_list(
+        spec.allowed_component_types,
+        "command_kind_spec.allowed_component_types",
         allow_empty=True,
     )
     _ensure_string_key_dict(spec.meta, "command_kind_spec.meta")
@@ -506,9 +502,9 @@ def validate_command(cmd: Command) -> None:
             f"command must be a Command instance, got {type(cmd).__name__}."
         )
 
-    kind = _validate_command_kind_name(
-        cmd.kind,
-        "command.kind",
+    command = _validate_command_kind_name(
+        cmd.command,
+        "command.command",
         allow_unregistered_custom=True,
     )
     _ensure_ndarray(
@@ -522,17 +518,17 @@ def validate_command(cmd: Command) -> None:
         _ensure_non_empty_string(cmd.ref_frame, "command.ref_frame")
     _ensure_string_key_dict(cmd.meta, "command.meta")
 
-    if not is_known_command_kind(kind):
+    if not is_known_command_kind(command):
         return
 
-    spec = get_command_kind_spec(kind)
+    spec = get_command_kind_spec(command)
     if spec.requires_ref_frame and cmd.ref_frame is None:
         raise InterfaceValidationError(
-            f"command.kind {kind!r} requires command.ref_frame."
+            f"command.command {command!r} requires command.ref_frame."
         )
     if spec.default_dim is not None and len(cmd.value) != spec.default_dim:
         raise InterfaceValidationError(
-            f"command.kind {kind!r} expects dim={spec.default_dim}, got "
+            f"command.command {command!r} expects dim={spec.default_dim}, got "
             f"{len(cmd.value)}."
         )
 
@@ -578,37 +574,32 @@ def validate_component_spec(spec: ComponentSpec) -> None:
         )
 
     _ensure_non_empty_string(spec.name, "component_spec.name")
-    _ensure_non_empty_string(spec.kind, "component_spec.kind")
+    _ensure_non_empty_string(spec.type, "component_spec.type")
     _ensure_positive_int(spec.dof, "component_spec.dof")
     supported = _ensure_string_list(
-        spec.supported_command_kinds,
-        "component_spec.supported_command_kinds",
+        spec.command,
+        "component_spec.command",
         allow_empty=False,
-    )
-    _ensure_string_list(
-        spec.state_keys,
-        "component_spec.state_keys",
-        allow_empty=True,
     )
     _ensure_string_key_dict(spec.meta, "component_spec.meta")
 
-    for index, command_kind in enumerate(supported):
-        kind_name = _validate_command_kind_name(
-            command_kind,
-            f"component_spec.supported_command_kinds[{index}]",
+    for index, command in enumerate(supported):
+        command_name = _validate_command_kind_name(
+            command,
+            f"component_spec.command[{index}]",
             allow_unregistered_custom=True,
         )
-        if not is_known_command_kind(kind_name):
+        if not is_known_command_kind(command_name):
             continue
-        kind_spec = get_command_kind_spec(kind_name)
+        command_spec = get_command_kind_spec(command_name)
         if (
-            kind_spec.allowed_component_kinds
-            and spec.kind not in kind_spec.allowed_component_kinds
+            command_spec.allowed_component_types
+            and spec.type not in command_spec.allowed_component_types
         ):
             raise InterfaceValidationError(
-                f"component_spec {spec.name!r} has kind {spec.kind!r}, which "
-                f"is incompatible with command kind {kind_name!r}; allowed component "
-                f"kinds: {kind_spec.allowed_component_kinds!r}."
+                f"component_spec {spec.name!r} has type {spec.type!r}, which "
+                f"is incompatible with command {command_name!r}; allowed component "
+                f"types: {command_spec.allowed_component_types!r}."
             )
 
 
@@ -657,22 +648,22 @@ def validate_policy_output_spec(spec: PolicyOutputSpec) -> None:
         )
 
     _ensure_non_empty_string(spec.target, "policy_output_spec.target")
-    command_kind = _validate_command_kind_name(
-        spec.command_kind,
-        "policy_output_spec.command_kind",
+    command = _validate_command_kind_name(
+        spec.command,
+        "policy_output_spec.command",
         allow_unregistered_custom=True,
     )
     _ensure_positive_int(spec.dim, "policy_output_spec.dim")
     _ensure_string_key_dict(spec.meta, "policy_output_spec.meta")
 
-    if not is_known_command_kind(command_kind):
+    if not is_known_command_kind(command):
         return
 
-    kind_spec = get_command_kind_spec(command_kind)
-    if kind_spec.default_dim is not None and spec.dim != kind_spec.default_dim:
+    command_spec = get_command_kind_spec(command)
+    if command_spec.default_dim is not None and spec.dim != command_spec.default_dim:
         raise InterfaceValidationError(
-            f"policy_output_spec.command_kind {command_kind!r} expects dim="
-            f"{kind_spec.default_dim}, got {spec.dim}."
+            f"policy_output_spec.command {command!r} expects dim="
+            f"{command_spec.default_dim}, got {spec.dim}."
         )
 
 
@@ -736,27 +727,27 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
                 f"robot {spec.name!r} does not define component "
                 f"{target!r}."
             )
-        if command.kind not in component.supported_command_kinds:
+        if command.command not in component.command:
             raise InterfaceValidationError(
                 f"robot {spec.name!r} component {component.name!r} does not support "
-                f"command kind {command.kind!r}; supported kinds: "
-                f"{component.supported_command_kinds!r}."
+                f"command {command.command!r}; supported commands: "
+                f"{component.command!r}."
             )
-        if not is_known_command_kind(command.kind):
+        if not is_known_command_kind(command.command):
             continue
-        kind_spec = get_command_kind_spec(command.kind)
+        command_spec = get_command_kind_spec(command.command)
         if (
-            kind_spec.allowed_component_kinds
-            and component.kind not in kind_spec.allowed_component_kinds
+            command_spec.allowed_component_types
+            and component.type not in command_spec.allowed_component_types
         ):
             raise InterfaceValidationError(
-                f"command kind {command.kind!r} is not allowed for robot component "
-                f"{component.name!r} of kind {component.kind!r}; allowed component "
-                f"kinds: {kind_spec.allowed_component_kinds!r}."
+                f"command {command.command!r} is not allowed for robot component "
+                f"{component.name!r} of type {component.type!r}; allowed component "
+                f"types: {command_spec.allowed_component_types!r}."
             )
-        if _kind_uses_component_dof(kind_spec) and len(command.value) != component.dof:
+        if _kind_uses_component_dof(command_spec) and len(command.value) != component.dof:
             raise InterfaceValidationError(
-                f"command kind {command.kind!r} for robot component "
+                f"command {command.command!r} for robot component "
                 f"{component.name!r} must match component dof={component.dof}, got "
                 f"dim={len(command.value)}."
             )
@@ -786,10 +777,10 @@ def ensure_action_matches_policy_spec(action: Action, spec: PolicySpec) -> None:
 
     for output in spec.outputs:
         command = action.commands[output.target]
-        if command.kind != output.command_kind:
+        if command.command != output.command:
             raise InterfaceValidationError(
                 f"policy {spec.name!r} output {output.target!r} declared command "
-                f"kind {output.command_kind!r}, but produced {command.kind!r}."
+                f"{output.command!r}, but produced {command.command!r}."
             )
         if len(command.value) != output.dim:
             raise InterfaceValidationError(
@@ -805,78 +796,78 @@ def _builtin_command_kind_specs() -> tuple[CommandKindSpec, ...]:
         CommandKindSpec(
             name="joint_position",
             description="Absolute joint position command.",
-            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="joint_position_delta",
             description="Joint position delta command.",
-            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="joint_velocity",
             description="Joint velocity command.",
-            allowed_component_kinds=["arm", "hand", "base", "custom"],
+            allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="cartesian_pose",
             description="End-effector cartesian pose command.",
-            allowed_component_kinds=["arm", "custom"],
+            allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
             name="cartesian_pose_delta",
             description="End-effector cartesian pose delta command.",
-            allowed_component_kinds=["arm", "custom"],
+            allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
             name="cartesian_twist",
             description="End-effector cartesian twist command.",
             default_dim=6,
-            allowed_component_kinds=["arm", "custom"],
+            allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
             name="gripper_position",
             description="Absolute gripper position command.",
             default_dim=1,
-            allowed_component_kinds=["gripper", "custom"],
+            allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_position_delta",
             description="Gripper position delta command.",
             default_dim=1,
-            allowed_component_kinds=["gripper", "custom"],
+            allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_velocity",
             description="Gripper velocity command.",
             default_dim=1,
-            allowed_component_kinds=["gripper", "custom"],
+            allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="gripper_open_close",
             description="Binary or scalar open/close gripper command.",
             default_dim=1,
-            allowed_component_kinds=["gripper", "custom"],
+            allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
             name="hand_joint_position",
             description="Absolute dexterous-hand joint position command.",
-            allowed_component_kinds=["hand", "custom"],
+            allowed_component_types=["hand", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="hand_joint_position_delta",
             description="Dexterous-hand joint position delta command.",
-            allowed_component_kinds=["hand", "custom"],
+            allowed_component_types=["hand", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
             name="eef_activation",
             description="Generic end-effector activation command.",
             default_dim=1,
-            allowed_component_kinds=["gripper", "hand", "suction", "custom"],
+            allowed_component_types=["gripper", "hand", "suction", "custom"],
         ),
     )
 
@@ -899,7 +890,7 @@ __all__ = [
     "Command",
     "CommandKindSpec",
     "Frame",
-    "KNOWN_COMPONENT_KINDS",
+    "KNOWN_COMPONENT_TYPES",
     "PolicyOutputSpec",
     "PolicySpec",
     "RobotSpec",

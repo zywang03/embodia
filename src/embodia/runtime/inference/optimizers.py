@@ -16,7 +16,7 @@ def _clone_command(command: Command) -> Command:
     """Return a detached copy of one command."""
 
     return Command(
-        kind=command.kind,
+        command=command.command,
         value=command.value.copy(),
         ref_frame=command.ref_frame,
         meta=dict(command.meta),
@@ -45,7 +45,7 @@ def _compatible_command(left: Command, right: Command) -> bool:
     """Return whether two commands can be blended safely."""
 
     return (
-        left.kind == right.kind
+        left.command == right.command
         and left.ref_frame == right.ref_frame
         and len(left.value) == len(right.value)
     )
@@ -94,7 +94,7 @@ def _blend_action(left: Action, right: Action, ratio: float) -> Action:
     for target, command in right.commands.items():
         previous = left_map[target]
         blended_commands[target] = Command(
-            kind=command.kind,
+            command=command.command,
             value=previous.value + (command.value - previous.value) * ratio,
             ref_frame=command.ref_frame,
             meta=dict(command.meta),

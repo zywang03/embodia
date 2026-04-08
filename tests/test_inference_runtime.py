@@ -35,10 +35,9 @@ class RuntimeRobot(em.RobotMixin):
             "components": [
                 {
                     "name": "arm",
-                    "kind": "arm",
+                    "type": "arm",
                     "dof": 6,
-                    "supported_command_kinds": ["cartesian_pose_delta"],
-                    "state_keys": ["joint_positions"],
+                    "command": ["cartesian_pose_delta"],
                 }
             ],
         }
@@ -47,7 +46,7 @@ class RuntimeRobot(em.RobotMixin):
         return {
             "timestamp_ns": time.time_ns(),
             "images": {"front_rgb": demo_image()},
-            "state": {"joint_positions": np.zeros(6, dtype=np.float64)},
+            "state": {"arm": np.zeros(6, dtype=np.float64)},
         }
 
     def _act_impl(self, action: em.Action) -> None:
@@ -68,12 +67,12 @@ class RuntimePolicy(em.PolicyMixin):
         return {
             "name": "runtime_model",
             "required_image_keys": ["front_rgb"],
-            "required_state_keys": ["joint_positions"],
+            "required_state_keys": ["arm"],
             "required_task_keys": [],
             "outputs": [
                 {
                     "target": "arm",
-                    "command_kind": "cartesian_pose_delta",
+                    "command": "cartesian_pose_delta",
                     "dim": 6,
                 }
             ],
@@ -89,7 +88,7 @@ class RuntimePolicy(em.PolicyMixin):
         self.step_index += 1
         return em.Action.single(
             target="arm",
-            kind="cartesian_pose_delta",
+            command="cartesian_pose_delta",
             value=[value] * 6,
         )
 
@@ -105,12 +104,12 @@ class RuntimePolicy(em.PolicyMixin):
             return [
                 em.Action.single(
                     target="arm",
-                    kind="cartesian_pose_delta",
+                    command="cartesian_pose_delta",
                     value=[start] * 6,
                 ),
                 em.Action.single(
                     target="arm",
-                    kind="cartesian_pose_delta",
+                    command="cartesian_pose_delta",
                     value=[start + 1.0] * 6,
                 ),
             ]
@@ -120,7 +119,7 @@ class RuntimePolicy(em.PolicyMixin):
             *request.history_actions,
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[last + 1.0] * 6,
             ),
         ]
@@ -136,7 +135,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         first = ensembler(
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[0.0, 2.0],
             ),
             frame,
@@ -144,7 +143,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         second = ensembler(
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[2.0, 4.0],
             ),
             frame,
@@ -160,7 +159,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         first = interpolator(
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[0.0, 0.0],
             ),
             frame,
@@ -168,7 +167,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         second = interpolator(
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[2.0, 4.0],
             ),
             frame,
@@ -176,7 +175,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         third = interpolator(
             em.Action.single(
                 target="arm",
-                kind="cartesian_pose_delta",
+                command="cartesian_pose_delta",
                 value=[2.0, 4.0],
             ),
             frame,
@@ -209,7 +208,7 @@ class InferenceRuntimeTests(unittest.TestCase):
                 del action
                 self.last_action = em.Action.single(
                     target="arm",
-                    kind="cartesian_pose_delta",
+                    command="cartesian_pose_delta",
                     value=[9.0] * 6,
                 )
                 return self.last_action

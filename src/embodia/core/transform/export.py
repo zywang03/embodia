@@ -65,7 +65,7 @@ def command_to_dict(
 
     normalized = coerce_command(command)
     exported: dict[str, Any] = {
-        "kind": normalized.kind,
+        "command": normalized.command,
         "value": normalized.value.tolist(),
     }
     if not compact or normalized.ref_frame is not None:
@@ -92,7 +92,7 @@ def action_to_dict(
     When ``commands_as_mapping=True`` (the default), compact actions without
     action-level metadata export directly as:
 
-    ``{"arm": {"kind": "...", "value": [...]}}``
+    ``{"arm": {"command": "...", "value": [...]}}``
 
     If action-level metadata is present, the wrapped form is used instead:
 
@@ -139,10 +139,9 @@ def component_spec_to_dict(
     normalized = coerce_component_spec(spec)
     return {
         "name": normalized.name,
-        "kind": normalized.kind,
+        "type": normalized.type,
         "dof": normalized.dof,
-        "supported_command_kinds": list(normalized.supported_command_kinds),
-        "state_keys": list(normalized.state_keys),
+        "command": list(normalized.command),
         "meta": dict(normalized.meta),
     }
 
@@ -170,7 +169,7 @@ def policy_output_spec_to_dict(
     normalized = coerce_policy_output_spec(spec)
     return {
         "target": normalized.target,
-        "command_kind": normalized.command_kind,
+        "command": normalized.command,
         "dim": normalized.dim,
         "meta": dict(normalized.meta),
     }

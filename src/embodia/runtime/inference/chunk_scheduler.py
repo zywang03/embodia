@@ -452,7 +452,7 @@ class ChunkScheduler:
         return Action(
             commands={
                 target: Command(
-                    kind=command.kind,
+                    command=command.command,
                     value=command.value.copy(),
                     ref_frame=command.ref_frame,
                     meta=dict(command.meta),

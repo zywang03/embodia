@@ -25,4 +25,19 @@ def as_action(value: Action | Mapping[str, Any]) -> Action:
     return coerce_action(value)
 
 
-__all__ = ["as_action", "as_frame"]
+def maybe_as_action(value: object) -> Action | None:
+    """Return one action when a value looks action-like, else ``None``.
+
+    This lets embodia treat ``robot.act(...)`` / ``send_command(...)`` return
+    values as the final executed action without forcing every robot backend to
+    return one.
+    """
+
+    if isinstance(value, Action):
+        return value
+    if isinstance(value, Mapping):
+        return coerce_action(value)
+    return None
+
+
+__all__ = ["as_action", "as_frame", "maybe_as_action"]

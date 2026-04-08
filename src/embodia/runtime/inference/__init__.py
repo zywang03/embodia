@@ -2,7 +2,7 @@
 
 from .chunk_scheduler import ChunkScheduler
 from .control import RealtimeController
-from .engine import InferenceMode, InferenceRuntime, InferenceStepResult
+from .engine import InferenceMode, InferenceRuntime
 from .optimizers import ActionEnsembler, ActionInterpolator
 from .profile import SyncInferenceProfile, profile_sync_inference
 from .protocols import (
@@ -32,7 +32,6 @@ __all__ = [
     "ChunkScheduler",
     "InferenceMode",
     "InferenceRuntime",
-    "InferenceStepResult",
     "RealtimeController",
     "SyncInferenceProfile",
     "profile_sync_inference",

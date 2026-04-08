@@ -139,7 +139,6 @@ def openpi_actions_to_action_plan(
     *,
     target: str = "arm",
     kind: str,
-    dt: float = 0.1,
     ref_frame: str | None = None,
 ) -> list[Action]:
     """Convert an OpenPI action chunk into embodia-standard actions."""
@@ -150,7 +149,6 @@ def openpi_actions_to_action_plan(
             kind=kind,
             value=row,
             ref_frame=ref_frame,
-            dt=dt,
         )
         for row in _coerce_action_rows(response_or_actions)
     ]
@@ -164,7 +162,6 @@ def openpi_first_action(
     *,
     target: str = "arm",
     kind: str,
-    dt: float = 0.1,
     ref_frame: str | None = None,
 ) -> Action:
     """Convert an OpenPI action chunk and return its first action."""
@@ -173,7 +170,6 @@ def openpi_first_action(
         response_or_actions,
         target=target,
         kind=kind,
-        dt=dt,
         ref_frame=ref_frame,
     )[0]
 
@@ -193,16 +189,15 @@ def openpi_response_from_action_plan(
             "action because OpenPI responses carry one action vector per step."
         )
 
-    first_command = actions[0].commands[0]
+    first_target, first_command = next(iter(actions[0].commands.items()))
     response: dict[str, Any] = {
-        "actions": [list(action.commands[0].value) for action in actions],
+        "actions": [list(next(iter(action.commands.values())).value) for action in actions],
     }
 
     if include_embodia_metadata:
         response["embodia"] = {
-            "action_target": first_command.target,
+            "action_target": first_target,
             "action_kind": first_command.kind,
-            "action_dt": actions[0].dt,
             "action_ref_frame": first_command.ref_frame,
             "chunk_size": len(actions),
         }
@@ -220,7 +215,6 @@ class OpenPITransform:
 
     command_kind: str
     action_target: str = "arm"
-    dt: float = 0.1
     ref_frame: str | None = None
     frame_to_obs_fn: Callable[[Frame], Mapping[str, Any]] | None = None
     obs_to_frame_fn: Callable[[Mapping[str, Any]], Frame | Mapping[str, Any]] | None = None
@@ -238,13 +232,6 @@ class OpenPITransform:
             raise InterfaceValidationError(
                 "OpenPITransform.command_kind must be a non-empty string."
             )
-        if isinstance(self.dt, bool) or not isinstance(self.dt, Real):
-            raise InterfaceValidationError(
-                "OpenPITransform.dt must be a real number."
-            )
-        self.dt = float(self.dt)
-        if self.dt <= 0.0:
-            raise InterfaceValidationError("OpenPITransform.dt must be > 0.")
         if self.ref_frame is not None and (
             not isinstance(self.ref_frame, str) or not self.ref_frame.strip()
         ):
@@ -309,7 +296,6 @@ class OpenPITransform:
             response_or_actions,
             target=self.action_target,
             kind=self.command_kind,
-            dt=self.dt,
             ref_frame=self.ref_frame,
         )
 

@@ -200,6 +200,44 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(second.action), 2.0)
         self.assertEqual(arm_value(robot.last_action), 2.0)  # type: ignore[arg-type]
 
+    def test_sync_runtime_prefers_robot_returned_action(self) -> None:
+        class ReturningRobot(RuntimeRobot):
+            def _act_impl(self, action: em.Action) -> em.Action:
+                del action
+                self.last_action = em.Action.single(
+                    target="arm",
+                    kind="cartesian_pose_delta",
+                    value=[9.0] * 6,
+                )
+                return self.last_action
+
+        robot = ReturningRobot()
+        policy = RuntimePolicy()
+        runtime = em.InferenceRuntime(mode=em.InferenceMode.SYNC)
+
+        result = em.run_step(robot, policy, runtime=runtime)
+
+        self.assertEqual(arm_value(result.raw_action), 1.0)
+        self.assertEqual(arm_value(result.action), 9.0)
+        self.assertEqual(arm_value(robot.last_action), 9.0)  # type: ignore[arg-type]
+
+    def test_runtime_step_can_report_embodia_timing(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+        runtime = em.InferenceRuntime(
+            mode=em.InferenceMode.SYNC,
+            action_optimizers=[em.ActionEnsembler(current_weight=0.5)],
+        )
+
+        result = em.run_step(robot, policy, runtime=runtime, measure_timing=True)
+
+        self.assertIsNotNone(result.timing)
+        assert result.timing is not None
+        self.assertGreaterEqual(result.timing.total_s, 0.0)
+        self.assertGreaterEqual(result.timing.embodia_overhead_s, 0.0)
+        self.assertGreaterEqual(result.timing.source_call_s, 0.0)
+        self.assertGreaterEqual(result.timing.act_call_s, 0.0)
+
     def test_sync_runtime_can_use_overlap_with_plan_provider(self) -> None:
         robot = RuntimeRobot()
         policy = RuntimePolicy()

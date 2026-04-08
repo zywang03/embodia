@@ -52,6 +52,93 @@ def _copy_sequence(value: object, field_name: str) -> list[Any]:
     return list(value)
 
 
+def _coerce_action_commands(
+    value: object,
+    field_name: str,
+) -> dict[str, Command]:
+    """Normalize command payloads from either a sequence or a mapping.
+
+    Supported mapping form:
+
+    ``{"arm": {"kind": "...", "value": [...]}, "gripper": {...}}``
+
+    The mapping key is the command target. If a nested mapping also provides
+    ``target``, it must match the outer key.
+    """
+
+    if isinstance(value, Mapping):
+        commands: dict[str, Command] = {}
+        for target, item in value.items():
+            if not isinstance(target, str):
+                raise InterfaceValidationError(
+                    f"{field_name} mapping keys must be strings, got {target!r}."
+                )
+            if isinstance(item, Command):
+                commands[target] = coerce_command(item)
+                continue
+            if not isinstance(item, Mapping):
+                raise InterfaceValidationError(
+                    f"{field_name}[{target!r}] must be a command mapping, got "
+                    f"{type(item).__name__}."
+                )
+
+            nested_target = item.get("target", target)
+            if nested_target != target:
+                raise InterfaceValidationError(
+                    f"{field_name}[{target!r}] target mismatch: outer key is "
+                    f"{target!r} but nested target is {nested_target!r}."
+                )
+
+            commands[target] = coerce_command(
+                {
+                    "kind": item.get("kind"),
+                    "value": item.get("value"),
+                    "ref_frame": item.get("ref_frame"),
+                    "meta": item.get("meta"),
+                }
+            )
+        return commands
+
+    commands = {}
+    for index, item in enumerate(_copy_sequence(value, field_name)):
+        if isinstance(item, Command):
+            raise InterfaceValidationError(
+                f"{field_name}[{index}] must be a mapping with a 'target' field; "
+                "bare Command items are not supported in sequence form."
+            )
+        if not isinstance(item, Mapping):
+            raise InterfaceValidationError(
+                f"{field_name}[{index}] must be a command mapping, got "
+                f"{type(item).__name__}."
+            )
+
+        try:
+            target = item["target"]
+        except KeyError as exc:
+            raise InterfaceValidationError(
+                f"{field_name}[{index}] is missing required field {exc.args[0]!r}."
+            ) from exc
+        if not isinstance(target, str):
+            raise InterfaceValidationError(
+                f"{field_name}[{index}].target must be a string, got "
+                f"{type(target).__name__}."
+            )
+        if target in commands:
+            raise InterfaceValidationError(
+                f"{field_name} contains duplicate target {target!r}."
+            )
+
+        commands[target] = coerce_command(
+            {
+                "kind": item.get("kind"),
+                "value": item.get("value"),
+                "ref_frame": item.get("ref_frame"),
+                "meta": item.get("meta"),
+            }
+        )
+    return commands
+
+
 def _copy_float_vector(value: object, field_name: str) -> list[Any]:
     """Convert list-like action payloads into plain Python lists."""
 
@@ -104,11 +191,14 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
 
 
 def coerce_command(value: Command | Mapping[str, Any]) -> Command:
-    """Normalize a ``Command`` or mapping into a standard :class:`Command`."""
+    """Normalize a ``Command`` or mapping into a standard :class:`Command`.
+
+    A standalone command payload does not carry its owning target. The target
+    belongs to ``Action.commands`` when the command is part of one action.
+    """
 
     if isinstance(value, Command):
         return Command(
-            target=value.target,
             kind=value.kind,
             value=list(value.value),
             ref_frame=value.ref_frame,
@@ -120,7 +210,6 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
         )
 
     try:
-        target = value["target"]
         command_value = value["value"]
     except KeyError as exc:
         raise InterfaceValidationError(
@@ -134,7 +223,6 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
         )
 
     return Command(
-        target=target,
         kind=kind,
         value=_copy_float_vector(command_value, "command.value"),
         ref_frame=value.get("ref_frame"),
@@ -143,12 +231,32 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
 
 def coerce_action(value: Action | Mapping[str, Any]) -> Action:
-    """Normalize an ``Action`` or mapping into a standard :class:`Action`."""
+    """Normalize an ``Action`` or mapping into a standard :class:`Action`.
+
+    Supported mapping forms are:
+
+    1. wrapped:
+       ``{"commands": {"arm": {"kind": "...", "value": [...]}}}``
+    2. compact:
+       ``{"arm": {"kind": "...", "value": [...]}}``
+    3. legacy list:
+       ``{"commands": [{"target": "arm", "kind": "...", "value": [...]}]}``
+
+    The compact form keeps JSON smaller for the common case where action-level
+    metadata is empty.
+    """
 
     if isinstance(value, Action):
+        if not isinstance(value.commands, Mapping):
+            raise InterfaceValidationError(
+                "Action.commands must be a mapping from target to Command, got "
+                f"{type(value.commands).__name__}."
+            )
         return Action(
-            commands=[coerce_command(command) for command in value.commands],
-            dt=value.dt,
+            commands={
+                target: coerce_command(command)
+                for target, command in value.commands.items()
+            },
             meta=dict(value.meta),
         )
     if not isinstance(value, Mapping):
@@ -156,17 +264,21 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
             f"action must be an Action or mapping, got {type(value).__name__}."
         )
 
-    try:
-        commands = value["commands"]
-    except KeyError as exc:
+    if "commands" in value:
+        return Action(
+            commands=_coerce_action_commands(value["commands"], "action.commands"),
+            meta=_copy_string_key_mapping(value.get("meta"), "action.meta"),
+        )
+
+    if "meta" in value:
         raise InterfaceValidationError(
-            f"action mapping is missing required field {exc.args[0]!r}."
-        ) from exc
+            "action mapping with top-level 'meta' must use the wrapped form "
+            "{'commands': ..., 'meta': ...}."
+        )
 
     return Action(
-        commands=[coerce_command(item) for item in _copy_sequence(commands, "action.commands")],
-        dt=value.get("dt", 0.1),
-        meta=_copy_string_key_mapping(value.get("meta"), "action.meta"),
+        commands=_coerce_action_commands(value, "action"),
+        meta={},
     )
 
 

@@ -61,11 +61,8 @@ class DummyPolicy(PolicyMixin):
 
     def _step_impl(self, frame: Frame) -> dict[str, object]:
         return {
-            "commands": [
-                {
-                    "target": "arm",
-                    "kind": "cartesian_pose_delta",
-                    "value": [0.0] * 6,
-                }
-            ]
+            "arm": {
+                "kind": "cartesian_pose_delta",
+                "value": [0.0] * 6,
+            }
         }

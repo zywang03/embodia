@@ -39,28 +39,89 @@ def frame_to_dict(frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def command_to_dict(command: Command | Mapping[str, Any]) -> dict[str, Any]:
-    """Export a command-like object into a plain dictionary."""
+def command_to_dict(
+    command: Command | Mapping[str, Any],
+    *,
+    compact: bool = True,
+) -> dict[str, Any]:
+    """Export a command-like object into a plain dictionary.
+
+    The owning target is intentionally not included here. In embodia's current
+    schema, the target lives on ``Action.commands`` as the dictionary key.
+
+    When ``compact=True`` (the default), optional empty/default fields are
+    omitted so action JSON stays easier to read:
+
+    - omit ``ref_frame`` when it is ``None``
+    - omit ``meta`` when it is empty
+    """
 
     normalized = coerce_command(command)
-    return {
-        "target": normalized.target,
+    exported: dict[str, Any] = {
         "kind": normalized.kind,
         "value": list(normalized.value),
-        "ref_frame": normalized.ref_frame,
-        "meta": dict(normalized.meta),
     }
+    if not compact or normalized.ref_frame is not None:
+        exported["ref_frame"] = normalized.ref_frame
+    if not compact or normalized.meta:
+        exported["meta"] = dict(normalized.meta)
+    return exported
 
 
-def action_to_dict(action: Action | Mapping[str, Any]) -> dict[str, Any]:
-    """Export an action-like object into a plain dictionary."""
+def action_to_dict(
+    action: Action | Mapping[str, Any],
+    *,
+    compact: bool = True,
+    commands_as_mapping: bool = True,
+) -> dict[str, Any]:
+    """Export an action-like object into a plain dictionary.
+
+    When ``compact=True`` (the default), optional empty/default fields are
+    omitted:
+
+    - omit ``meta`` when it is empty
+    - apply the same compact export rules to each command
+
+    When ``commands_as_mapping=True`` (the default), compact actions without
+    action-level metadata export directly as:
+
+    ``{"arm": {"kind": "...", "value": [...]}}``
+
+    If action-level metadata is present, the wrapped form is used instead:
+
+    ``{"commands": {"arm": {...}}, "meta": {...}}``
+
+    This keeps JSON smaller by using the component name as the key instead of
+    repeating ``target`` inside each command.
+    """
 
     normalized = coerce_action(action)
-    return {
-        "commands": [command_to_dict(command) for command in normalized.commands],
-        "dt": normalized.dt,
-        "meta": dict(normalized.meta),
-    }
+    if commands_as_mapping:
+        commands_export: dict[str, Any] = {
+            target: command_to_dict(
+                command,
+                compact=compact,
+            )
+            for target, command in normalized.commands.items()
+        }
+        if compact and not normalized.meta:
+            return commands_export
+    else:
+        commands_export = [
+            {
+                "target": target,
+                **command_to_dict(
+                    command,
+                    compact=compact,
+                ),
+            }
+            for target, command in normalized.commands.items()
+        ]
+
+    exported = {"commands": commands_export}
+    if not compact or normalized.meta:
+        exported["meta"] = dict(normalized.meta)
+    return exported
 
 
 def component_spec_to_dict(

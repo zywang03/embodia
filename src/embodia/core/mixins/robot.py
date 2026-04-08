@@ -528,19 +528,32 @@ class RobotMixin(_CommonInterfaceMixin):
 
         return self.embodia_observe()
 
-    def embodia_act(self, action: Action | Mapping[str, Any]) -> None:
-        """Normalize and validate an action before forwarding it."""
+    def embodia_act(self, action: Action | Mapping[str, Any]) -> Action:
+        """Normalize, execute, and return the final action used by the robot.
+
+        When the wrapped native ``act`` / ``send_command`` method returns an
+        action-like value, embodia treats that as the robot-confirmed action
+        and normalizes it back into the shared schema. When it returns
+        ``None`` or some non-action status object, embodia falls back to the
+        requested normalized action.
+        """
 
         raw_act = self._resolve_impl("act", "_act_impl")
         normalized_action = self.validate_action(action)
         spec = self.embodia_get_spec()
         _ensure_action_supported_by_robot(normalized_action, spec)
-        raw_act(self.to_native_action(normalized_action))
+        raw_result = raw_act(self.to_native_action(normalized_action))
+        if not isinstance(raw_result, (Action, Mapping)):
+            return normalized_action
 
-    def act(self, action: Action | Mapping[str, Any]) -> None:
+        executed_action = self.validate_action(raw_result)
+        _ensure_action_supported_by_robot(executed_action, spec)
+        return executed_action
+
+    def act(self, action: Action | Mapping[str, Any]) -> Action:
         """Backward-compatible alias for :meth:`embodia_act`."""
 
-        self.embodia_act(action)
+        return self.embodia_act(action)
 
     def embodia_reset(self) -> Frame:
         """Return the normalized reset frame used internally by embodia."""

@@ -33,34 +33,63 @@ class YourRobot(em.RobotMixin):
             "meta": {"step_index": self.step_index},
         }
 
-    def send_command(self, action: object) -> None:
-        self.last_native_action = action
+    def send_command(self, action: object) -> object:
+        """Pretend the robot controller returns the final accepted action."""
+
+        accepted = em.coerce_action(action)
+        self.last_native_action = accepted
+        return accepted
 
     def home(self) -> dict[str, object]:
         self.step_index = 0
         return self.capture()
 
 
-def scripted_action(frame: em.Frame) -> dict[str, object]:
-    """Pretend this action comes from teleop or a scripted collector."""
+class DemoTeleop:
+    """Tiny stand-in for teleop input or an external data-collection source."""
 
-    qpos0 = float(frame.state["joint_positions"][0])
-    gripper_pos = float(frame.state["position"])
-    return {
-        "commands": [
+    def __init__(self) -> None:
+        self.step_index = 0
+        self.script = [
             {
-                "target": "arm",
-                "kind": "cartesian_pose_delta",
-                "value": [qpos0 * 0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "arm": {
+                    "kind": "cartesian_pose_delta",
+                    "value": [0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+                "gripper": {
+                    "kind": "gripper_position",
+                    "value": [1.0],
+                },
             },
             {
-                "target": "gripper",
-                "kind": "gripper_position",
-                "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
+                "arm": {
+                    "kind": "cartesian_pose_delta",
+                    "value": [0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+                "gripper": {
+                    "kind": "gripper_position",
+                    "value": [0.5],
+                },
             },
-        ],
-        "dt": 0.1,
-    }
+            {
+                "arm": {
+                    "kind": "cartesian_pose_delta",
+                    "value": [-0.01, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+                "gripper": {
+                    "kind": "gripper_position",
+                    "value": [0.0],
+                },
+            },
+        ]
+
+    def next_action(self, frame: em.Frame) -> dict[str, object]:
+        """Return the next operator-provided action, independent of robot state."""
+
+        del frame
+        action = self.script[min(self.step_index, len(self.script) - 1)]
+        self.step_index += 1
+        return action
 
 
 def main() -> None:
@@ -69,6 +98,7 @@ def main() -> None:
         return
 
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
+    teleop = DemoTeleop()
     output_path = Path("tmp") / "episode_0000.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,7 +107,7 @@ def main() -> None:
     records.append({"frame": em.frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
-        result = em.run_step(robot, action_fn=scripted_action)
+        result = em.run_step(robot, action_fn=teleop.next_action)
         records.append(
             {
                 "frame": em.frame_to_dict(result.frame),

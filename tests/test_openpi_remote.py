@@ -17,7 +17,6 @@ class OpenPIRemoteTests(unittest.TestCase):
             {"actions": [[1, 2, 3], [4, 5, 6]]},
             target="arm",
             kind="joint_position",
-            dt=0.05,
             ref_frame="tool",
         )
 
@@ -34,14 +33,12 @@ class OpenPIRemoteTests(unittest.TestCase):
                     target="arm",
                     kind="joint_position",
                     value=[0.1, 0.2, 0.3],
-                    dt=0.05,
                     ref_frame="tool",
                 ),
                 em.Action.single(
                     target="arm",
                     kind="joint_position",
                     value=[0.4, 0.5, 0.6],
-                    dt=0.05,
                     ref_frame="tool",
                 ),
             ]
@@ -55,7 +52,6 @@ class OpenPIRemoteTests(unittest.TestCase):
         transform = em_openpi_remote.OpenPITransform(
             command_kind="joint_position",
             action_target="arm",
-            dt=0.1,
         )
 
         frame = transform.build_frame(
@@ -99,7 +95,6 @@ class OpenPIRemoteTests(unittest.TestCase):
                     target="arm",
                     kind="joint_position",
                     value=[1.0, 2.0, 3.0],
-                    dt=0.05,
                 )
 
         adapter = em_openpi_remote.build_policy_adapter(DemoPolicy())
@@ -158,7 +153,6 @@ class OpenPIRemoteTests(unittest.TestCase):
                 obs_builder=em.frame_to_dict,
                 action_target="arm",
                 command_kind="joint_position",
-                dt=0.05,
             )
 
         action = robot.request_remote_policy_action(robot.reset())

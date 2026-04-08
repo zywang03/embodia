@@ -16,21 +16,15 @@ class InterfaceTests(unittest.TestCase):
     def test_action_roundtrip_uses_grouped_commands(self) -> None:
         action = em.coerce_action(
             {
-                "commands": [
-                    {
-                        "target": "arm",
-                        "kind": "cartesian_pose_delta",
-                        "value": [0.1, 0.2, 0.3],
-                        "ref_frame": "tool",
-                    },
-                    {
-                        "target": "gripper",
-                        "kind": "gripper_position",
-                        "value": [0.8],
-                    },
-                ],
-                "dt": 0.05,
-                "meta": {"source": "test"},
+                "arm": {
+                    "kind": "cartesian_pose_delta",
+                    "value": [0.1, 0.2, 0.3],
+                    "ref_frame": "tool",
+                },
+                "gripper": {
+                    "kind": "gripper_position",
+                    "value": [0.8],
+                },
             }
         )
 
@@ -41,6 +35,60 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(action.get_command("gripper").value, [0.8])  # type: ignore[union-attr]
         self.assertEqual(
             em.action_to_dict(action),
+            {
+                "arm": {
+                    "kind": "cartesian_pose_delta",
+                    "value": [0.1, 0.2, 0.3],
+                    "ref_frame": "tool",
+                },
+                "gripper": {
+                    "kind": "gripper_position",
+                    "value": [0.8],
+                },
+            },
+        )
+
+        action_with_meta = em.coerce_action(
+            {
+                "commands": {
+                    "arm": {
+                        "kind": "cartesian_pose_delta",
+                        "value": [0.1, 0.2, 0.3],
+                        "ref_frame": "tool",
+                    },
+                    "gripper": {
+                        "kind": "gripper_position",
+                        "value": [0.8],
+                    },
+                },
+                "meta": {"source": "test"},
+            }
+        )
+
+        self.assertEqual(
+            em.action_to_dict(action_with_meta),
+            {
+                "commands": {
+                    "arm": {
+                        "kind": "cartesian_pose_delta",
+                        "value": [0.1, 0.2, 0.3],
+                        "ref_frame": "tool",
+                    },
+                    "gripper": {
+                        "kind": "gripper_position",
+                        "value": [0.8],
+                    },
+                },
+                "meta": {"source": "test"},
+            },
+        )
+
+        self.assertEqual(
+            em.action_to_dict(
+                action_with_meta,
+                compact=False,
+                commands_as_mapping=False,
+            ),
             {
                 "commands": [
                     {
@@ -58,25 +106,28 @@ class InterfaceTests(unittest.TestCase):
                         "meta": {},
                     },
                 ],
-                "dt": 0.05,
                 "meta": {"source": "test"},
             },
         )
 
-    def test_validate_action_rejects_duplicate_targets(self) -> None:
-        action = em.Action(
-            commands=[
-                em.Command(
-                    target="arm",
-                    kind="cartesian_pose_delta",
-                    value=[0.0] * 6,
-                ),
-                em.Command(target="arm", kind="joint_position", value=[0.0] * 6),
+    def test_coerce_action_rejects_duplicate_targets_in_legacy_list(self) -> None:
+        action = {
+            "commands": [
+                {
+                    "target": "arm",
+                    "kind": "cartesian_pose_delta",
+                    "value": [0.0] * 6,
+                },
+                {
+                    "target": "arm",
+                    "kind": "joint_position",
+                    "value": [0.0] * 6,
+                },
             ]
-        )
+        }
 
         with self.assertRaises(em.InterfaceValidationError) as ctx:
-            em.validate_action(action)
+            em.coerce_action(action)
 
         self.assertIn("duplicate target", str(ctx.exception))
 
@@ -102,7 +153,6 @@ class InterfaceTests(unittest.TestCase):
     def test_validate_command_accepts_unregistered_custom_kind(self) -> None:
         em.validate_command(
             em.Command(
-                target="tool",
                 kind="custom:my_lab_synergy",
                 value=[0.1, 0.2],
             )
@@ -112,7 +162,6 @@ class InterfaceTests(unittest.TestCase):
         with self.assertRaises(em.InterfaceValidationError):
             em.validate_command(
                 em.Command(
-                    target="arm",
                     kind="definitely_unknown_kind",
                     value=[0.0],
                 )
@@ -239,19 +288,14 @@ class InterfaceTests(unittest.TestCase):
             def infer(self, frame: em.Frame) -> dict[str, object]:
                 self.seen = frame
                 return {
-                    "commands": [
-                        {
-                            "target": "vendor_arm",
-                            "kind": "cartesian_delta",
-                            "value": [0.1] * 6,
-                        },
-                        {
-                            "target": "vendor_gripper",
-                            "kind": "gripper_position",
-                            "value": [0.2],
-                        },
-                    ],
-                    "dt": 0.05,
+                    "vendor_arm": {
+                        "kind": "cartesian_delta",
+                        "value": [0.1] * 6,
+                    },
+                    "vendor_gripper": {
+                        "kind": "gripper_position",
+                        "value": [0.2],
+                    },
                 }
 
         class YourPolicy(em.PolicyMixin, VendorPolicy):
@@ -322,6 +366,59 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(result.action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
         self.assertEqual(robot.last_action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
 
+    def test_run_step_prefers_robot_returned_action(self) -> None:
+        class ReturningRobot(em.RobotMixin):
+            def __init__(self) -> None:
+                self.last_action: em.Action | None = None
+
+            def _get_spec_impl(self) -> dict[str, object]:
+                return {
+                    "name": "returning_robot",
+                    "image_keys": ["front_rgb"],
+                    "components": [
+                        {
+                            "name": "arm",
+                            "kind": "arm",
+                            "dof": 6,
+                            "supported_command_kinds": ["cartesian_pose_delta"],
+                            "state_keys": ["joint_positions"],
+                        }
+                    ],
+                }
+
+            def _observe_impl(self) -> dict[str, object]:
+                return {
+                    "timestamp_ns": time.time_ns(),
+                    "images": {"front_rgb": None},
+                    "state": {"joint_positions": [0.0] * 6},
+                }
+
+            def _act_impl(self, action: em.Action) -> em.Action:
+                del action
+                self.last_action = em.Action.single(
+                    target="arm",
+                    kind="cartesian_pose_delta",
+                    value=[0.25] * 6,
+                )
+                return self.last_action
+
+            def _reset_impl(self) -> dict[str, object]:
+                return self._observe_impl()
+
+        robot = ReturningRobot()
+
+        def scripted(frame: em.Frame) -> em.Action:
+            del frame
+            return em.Action.single(
+                target="arm",
+                kind="cartesian_pose_delta",
+                value=[1.0] * 6,
+            )
+
+        result = em.run_step(robot, action_fn=scripted)
+        self.assertEqual(result.action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
+        self.assertEqual(robot.last_action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
+
     def test_run_step_result_can_be_exported(self) -> None:
         robot = DummyRobot()
         policy = DummyPolicy()
@@ -329,8 +426,25 @@ class InterfaceTests(unittest.TestCase):
 
         self.assertEqual(em.frame_to_dict(result.frame)["state"]["joint_positions"], [0.0] * 6)
         self.assertEqual(
-            em.action_to_dict(result.action)["commands"][0]["target"],
-            "arm",
+            em.action_to_dict(result.action)["arm"]["kind"],
+            "cartesian_pose_delta",
+        )
+
+    def test_run_step_can_report_embodia_timing(self) -> None:
+        robot = DummyRobot()
+        policy = DummyPolicy()
+
+        result = em.run_step(robot, policy, measure_timing=True)
+
+        self.assertIsNotNone(result.timing)
+        assert result.timing is not None
+        self.assertGreaterEqual(result.timing.total_s, 0.0)
+        self.assertGreaterEqual(result.timing.embodia_overhead_s, 0.0)
+        self.assertGreaterEqual(result.timing.source_call_s, 0.0)
+        self.assertGreaterEqual(result.timing.observe_call_s, 0.0)
+        self.assertGreaterEqual(
+            result.timing.total_s,
+            result.timing.embodia_overhead_s,
         )
 
 

@@ -98,21 +98,19 @@ The normalized runtime action is grouped by control target:
 
 ```python
 {
-    "commands": [
-        {
-            "target": "arm",
-            "kind": "cartesian_pose_delta",
-            "value": [...],
-        },
-        {
-            "target": "gripper",
-            "kind": "gripper_position",
-            "value": [0.5],
-        },
-    ],
-    "dt": 0.1,
+    "arm": {
+        "kind": "cartesian_pose_delta",
+        "value": [...],
+    },
+    "gripper": {
+        "kind": "gripper_position",
+        "value": [0.5],
+    },
 }
 ```
+
+If you later add action-level metadata, embodia will automatically switch to
+the wrapped form `{"commands": ..., "meta": ...}`.
 
 ## Optional Python-side remapping
 

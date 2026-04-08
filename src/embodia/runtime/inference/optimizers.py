@@ -15,7 +15,6 @@ def _clone_command(command: Command) -> Command:
     """Return a detached copy of one command."""
 
     return Command(
-        target=command.target,
         kind=command.kind,
         value=list(command.value),
         ref_frame=command.ref_frame,
@@ -27,8 +26,10 @@ def _clone_action(action: Action) -> Action:
     """Return a detached copy of one action."""
 
     return Action(
-        commands=[_clone_command(command) for command in action.commands],
-        dt=action.dt,
+        commands={
+            target: _clone_command(command)
+            for target, command in action.commands.items()
+        },
         meta=dict(action.meta),
     )
 
@@ -36,15 +37,14 @@ def _clone_action(action: Action) -> Action:
 def _command_map(action: Action) -> dict[str, Command]:
     """Index commands by target."""
 
-    return {command.target: command for command in action.commands}
+    return action.commands
 
 
 def _compatible_command(left: Command, right: Command) -> bool:
     """Return whether two commands can be blended safely."""
 
     return (
-        left.target == right.target
-        and left.kind == right.kind
+        left.kind == right.kind
         and left.ref_frame == right.ref_frame
         and len(left.value) == len(right.value)
     )
@@ -52,9 +52,6 @@ def _compatible_command(left: Command, right: Command) -> bool:
 
 def _compatible_action(left: Action, right: Action) -> bool:
     """Return whether two actions can be blended/interpolated."""
-
-    if not math.isclose(left.dt, right.dt, rel_tol=0.0, abs_tol=1e-12):
-        return False
 
     left_map = _command_map(left)
     right_map = _command_map(right)
@@ -90,25 +87,21 @@ def _blend_action(left: Action, right: Action, ratio: float) -> Action:
     """Blend two compatible actions."""
 
     left_map = _command_map(left)
-    blended_commands: list[Command] = []
-    for command in right.commands:
-        previous = left_map[command.target]
-        blended_commands.append(
-            Command(
-                target=command.target,
-                kind=command.kind,
-                value=[
-                    start + (target - start) * ratio
-                    for start, target in zip(previous.value, command.value)
-                ],
-                ref_frame=command.ref_frame,
-                meta=dict(command.meta),
-            )
+    blended_commands: dict[str, Command] = {}
+    for target, command in right.commands.items():
+        previous = left_map[target]
+        blended_commands[target] = Command(
+            kind=command.kind,
+            value=[
+                start + (target_value - start) * ratio
+                for start, target_value in zip(previous.value, command.value)
+            ],
+            ref_frame=command.ref_frame,
+            meta=dict(command.meta),
         )
 
     return Action(
         commands=blended_commands,
-        dt=right.dt,
         meta=dict(right.meta),
     )
 

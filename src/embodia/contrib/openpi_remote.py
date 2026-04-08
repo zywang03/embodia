@@ -556,7 +556,6 @@ def configure_robot_remote_policy(
     obs_builder: Callable[[Frame], Mapping[str, Any]] | None = None,
     action_target: str | None = None,
     command_kind: str | None = None,
-    dt: float | None = None,
     ref_frame: str | None = None,
     transform: OpenPITransform | None = None,
     enabled: bool = True,
@@ -572,11 +571,11 @@ def configure_robot_remote_policy(
 
     if transform is not None and any(
         value is not None
-        for value in (obs_builder, action_target, command_kind, dt, ref_frame)
+        for value in (obs_builder, action_target, command_kind, ref_frame)
     ):
         raise InterfaceValidationError(
             "configure_robot_remote_policy() accepts either transform=... or "
-            "obs_builder=/action_target=/command_kind=/dt=/ref_frame, not both."
+            "obs_builder=/action_target=/command_kind=/ref_frame, not both."
         )
 
     response_to_action: Callable[[object], Action]
@@ -623,7 +622,6 @@ def configure_robot_remote_policy(
             response,
             target=resolved_action_target,
             kind=resolved_command_kind,
-            dt=0.1 if dt is None else dt,
             ref_frame=ref_frame,
         )
         request_builder = obs_builder

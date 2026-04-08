@@ -127,11 +127,10 @@ def remap_frame(
 def remap_command(
     command: Command | Mapping[str, Any],
     *,
-    target_map: Mapping[str, str] | None = None,
     kind_map: Mapping[str, str] | None = None,
     ref_frame_map: Mapping[str, str] | None = None,
 ) -> Command:
-    """Rename one command's target/kind/reference frame."""
+    """Rename one command's kind/reference frame."""
 
     normalized = coerce_command(command)
     mapped_ref_frame = normalized.ref_frame
@@ -139,7 +138,6 @@ def remap_command(
         mapped_ref_frame = _remap_name(mapped_ref_frame, ref_frame_map or {})
 
     return Command(
-        target=_remap_name(normalized.target, target_map or {}),
         kind=_remap_name(normalized.kind, kind_map or {}),
         value=list(normalized.value),
         ref_frame=mapped_ref_frame,
@@ -157,17 +155,21 @@ def remap_action(
     """Rename action commands according to mapping tables."""
 
     normalized = coerce_action(action)
-    return Action(
-        commands=[
-            remap_command(
-                command,
-                target_map=target_map,
-                kind_map=kind_map,
-                ref_frame_map=ref_frame_map,
+    remapped_commands: dict[str, Command] = {}
+    for target, command in normalized.commands.items():
+        mapped_target = _remap_name(target, target_map or {})
+        if mapped_target in remapped_commands:
+            raise InterfaceValidationError(
+                f"action.commands remapping creates duplicate target "
+                f"{mapped_target!r}."
             )
-            for command in normalized.commands
-        ],
-        dt=normalized.dt,
+        remapped_commands[mapped_target] = remap_command(
+            command,
+            kind_map=kind_map,
+            ref_frame_map=ref_frame_map,
+        )
+    return Action(
+        commands=remapped_commands,
         meta=dict(normalized.meta),
     )
 

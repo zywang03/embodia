@@ -124,6 +124,15 @@ class _CompletedChunk:
     request: ChunkRequest
     plan: list[Action]
     completed_at_s: float
+    provider_call_s: float = 0.0
+
+
+@dataclass(slots=True)
+class _ChunkStepTiming:
+    """Timing details for one scheduler-managed action emission."""
+
+    provider_call_s: float = 0.0
+    wait_for_ready_s: float = 0.0
 
 
 @dataclass(slots=True)
@@ -441,17 +450,15 @@ class ChunkScheduler:
         """Return a detached copy of one standardized action."""
 
         return Action(
-            commands=[
-                Command(
-                    target=command.target,
+            commands={
+                target: Command(
                     kind=command.kind,
                     value=list(command.value),
                     ref_frame=command.ref_frame,
                     meta=dict(command.meta),
                 )
-                for command in action.commands
-            ],
-            dt=action.dt,
+                for target, command in action.commands.items()
+            },
             meta=dict(action.meta),
         )
 
@@ -517,28 +524,43 @@ class ChunkScheduler:
         request: ChunkRequest,
         *,
         fallback_action_source: FallbackActionSource | None,
-    ) -> list[Action]:
+    ) -> tuple[list[Action], float]:
         """Run the configured chunk provider or fall back to single-step action."""
 
         raw_plan: ActionPlan
         provider = self.chunk_provider
         if provider is not None:
             try:
+                provider_started_at_s = float(self.clock())
                 raw_plan = provider(source, frame, request)
+                provider_call_s = max(
+                    float(self.clock()) - provider_started_at_s,
+                    0.0,
+                )
             except Exception as exc:
                 raise InterfaceValidationError(
                     f"chunk_provider raised {type(exc).__name__}: {exc}"
                 ) from exc
         elif self.plan_provider is not None:
             try:
+                provider_started_at_s = float(self.clock())
                 raw_plan = self.plan_provider(source, frame)
+                provider_call_s = max(
+                    float(self.clock()) - provider_started_at_s,
+                    0.0,
+                )
             except Exception as exc:
                 raise InterfaceValidationError(
                     f"plan_provider raised {type(exc).__name__}: {exc}"
                 ) from exc
         elif fallback_action_source is not None:
             try:
+                provider_started_at_s = float(self.clock())
                 raw_plan = fallback_action_source(frame)
+                provider_call_s = max(
+                    float(self.clock()) - provider_started_at_s,
+                    0.0,
+                )
             except Exception as exc:
                 raise InterfaceValidationError(
                     f"fallback action source raised {type(exc).__name__}: {exc}"
@@ -549,7 +571,7 @@ class ChunkScheduler:
                 "a fallback single-step action source."
             )
 
-        return self._normalize_plan(raw_plan)
+        return self._normalize_plan(raw_plan), provider_call_s
 
     def _execute_request(
         self,
@@ -560,7 +582,7 @@ class ChunkScheduler:
     ) -> _CompletedChunk:
         """Execute one chunk request and capture completion timing."""
 
-        plan = self._call_chunk_provider(
+        plan, provider_call_s = self._call_chunk_provider(
             source,
             frame,
             request,
@@ -570,6 +592,7 @@ class ChunkScheduler:
             request=request,
             plan=plan,
             completed_at_s=float(self.clock()),
+            provider_call_s=provider_call_s,
         )
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -600,20 +623,25 @@ class ChunkScheduler:
             fallback_action_source,
         )
 
-    def _collect_in_flight(self, *, block: bool) -> None:
+    def _collect_in_flight(self, *, block: bool) -> float:
         """Move one completed async request into the ready slot when available."""
 
         if self._in_flight is None:
-            return
+            return 0.0
         if not block and not self._in_flight.done():
-            return
+            return 0.0
+        waited_s = 0.0
         if block and not self._in_flight.done():
             self._maybe_warn(
                 "ChunkScheduler had to wait for the next chunk because observed "
                 "latency exceeded the current request lead window."
             )
+            wait_started_at_s = float(self.clock())
+            completed = self._in_flight.result()
+            waited_s = max(float(self.clock()) - wait_started_at_s, 0.0)
+        else:
+            completed = self._in_flight.result()
 
-        completed = self._in_flight.result()
         latency_s = max(
             completed.completed_at_s - completed.request.request_time_s,
             0.0,
@@ -625,6 +653,7 @@ class ChunkScheduler:
         )
         self._ready_response = completed
         self._in_flight = None
+        return waited_s
 
     def _activate_ready_response(self) -> bool:
         """Try to activate one completed chunk response."""
@@ -666,7 +695,7 @@ class ChunkScheduler:
         fallback_action_source: FallbackActionSource | None,
         *,
         include_latency: bool,
-    ) -> None:
+    ) -> float:
         """Refresh the next chunk immediately and store it in the ready slot."""
 
         request = self._build_request(include_latency=include_latency)
@@ -684,6 +713,7 @@ class ChunkScheduler:
             request.active_chunk_length,
             include_latency=include_latency,
         )
+        return completed.provider_call_s
 
     def _maybe_start_async_prefetch(
         self,
@@ -714,17 +744,17 @@ class ChunkScheduler:
         source: object,
         frame: Frame,
         fallback_action_source: FallbackActionSource | None,
-    ) -> None:
+    ) -> float:
         """Refresh the next chunk synchronously once overlap becomes small."""
 
         if self._in_flight is not None or self._ready_response is not None:
-            return
+            return 0.0
         if self._remaining_steps() > self.request_trigger_steps(
             len(self._active_chunk),
             include_latency=False,
         ):
-            return
-        self._refresh_ready_response(
+            return 0.0
+        return self._refresh_ready_response(
             source,
             frame,
             fallback_action_source,
@@ -738,7 +768,8 @@ class ChunkScheduler:
         *,
         fallback_action_source: FallbackActionSource | None = None,
         prefetch_async: bool = True,
-    ) -> tuple[Action, bool]:
+        measure_timing: bool = False,
+    ) -> tuple[Action, bool, _ChunkStepTiming | None]:
         """Return the next action and whether a new chunk became active.
 
         When ``prefetch_async`` is ``True``, the next chunk is requested in the
@@ -750,19 +781,24 @@ class ChunkScheduler:
         normalized_frame = as_frame(frame)
         validate_frame(normalized_frame)
         plan_refreshed = False
+        timing = _ChunkStepTiming() if measure_timing else None
 
         self._collect_in_flight(block=False)
         if self._remaining_steps() == 0:
             if prefetch_async and self._ready_response is None:
-                self._collect_in_flight(block=True)
+                waited_s = self._collect_in_flight(block=True)
+                if timing is not None:
+                    timing.wait_for_ready_s += waited_s
 
             if self._remaining_steps() == 0 and not self._activate_ready_response():
-                self._refresh_ready_response(
+                provider_call_s = self._refresh_ready_response(
                     source,
                     normalized_frame,
                     fallback_action_source,
                     include_latency=prefetch_async,
                 )
+                if timing is not None:
+                    timing.provider_call_s += provider_call_s
                 if not self._activate_ready_response():
                     raise InterfaceValidationError(
                         "ChunkScheduler could not activate a usable chunk after "
@@ -782,12 +818,14 @@ class ChunkScheduler:
                 fallback_action_source,
             )
         else:
-            self._maybe_refresh_sync(
+            provider_call_s = self._maybe_refresh_sync(
                 source,
                 normalized_frame,
                 fallback_action_source,
             )
-        return action, plan_refreshed
+            if timing is not None:
+                timing.provider_call_s += provider_call_s
+        return action, plan_refreshed, timing
 
 
 __all__ = ["ChunkScheduler"]

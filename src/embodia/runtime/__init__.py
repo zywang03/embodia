@@ -10,7 +10,7 @@ from .checks import (
     validate_policy_spec,
     validate_robot_spec,
 )
-from .flow import StepResult, run_step
+from .flow import StepResult, StepTiming, run_step
 from .flow import ActionSource
 from .inference import (
     ActionEnsembler,
@@ -27,7 +27,6 @@ from .inference import (
     ChunkRequest,
     InferenceMode,
     InferenceRuntime,
-    InferenceStepResult,
     RealtimeController,
     SyncInferenceProfile,
     profile_sync_inference,
@@ -49,11 +48,11 @@ __all__ = [
     "ActionSource",
     "InferenceMode",
     "InferenceRuntime",
-    "InferenceStepResult",
     "InterfaceValidationError",
     "RealtimeController",
     "SyncInferenceProfile",
     "StepResult",
+    "StepTiming",
     "profile_sync_inference",
     "check_policy",
     "check_pair",

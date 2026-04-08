@@ -102,9 +102,9 @@ That means the common method contracts are:
 - `home()` / `reset()` on the robot has the same return contract as
   `capture()`.
 - `send_command(action)` / `act(action)` receives an `em.Action`. Its
-  `action.commands[*].target` values are the component names from YAML, and
-  `action.commands[*].kind` values are the command kinds declared for those
-  components.
+  `action.commands` keys are the component names from YAML, and each
+  `action.commands[component].kind` value is the command kind declared for
+  that component.
 - `clear_state()` / `reset()` on the policy returns `None`.
 - `infer(frame)` receives an `em.Frame`. `frame.images` and `frame.state`
   already follow the YAML schema. If `schema.task` was declared, policy-side
@@ -129,19 +129,14 @@ For the example YAML in this repo, the expected runtime shapes are:
 
 # policy.infer(frame) returns this shape
 {
-    "commands": [
-        {
-            "target": "arm",
-            "kind": "cartesian_pose_delta",
-            "value": [...],
-        },
-        {
-            "target": "gripper",
-            "kind": "gripper_position",
-            "value": [0.5],
-        },
-    ],
-    "dt": 0.1,
+    "arm": {
+        "kind": "cartesian_pose_delta",
+        "value": [...],
+    },
+    "gripper": {
+        "kind": "gripper_position",
+        "value": [0.5],
+    },
 }
 ```
 
@@ -157,35 +152,41 @@ So the recommended rule is simple: YAML defines the standardized structure,
 your methods either speak that structure directly, or `MODALITY_MAPS` tells
 embodia how to translate.
 
-The normalized action shape is:
+The default compact action shape is:
 
 ```python
 {
-    "commands": [
-        {
-            "target": "arm",
-            "kind": "cartesian_pose_delta",
-            "value": [...],
-            "ref_frame": "tool",
-        },
-        {
-            "target": "gripper",
-            "kind": "gripper_position",
-            "value": [0.5],
-        },
-    ],
-    "dt": 0.1,
+    "arm": {
+        "kind": "cartesian_pose_delta",
+        "value": [...],
+        "ref_frame": "tool",
+    },
+    "gripper": {
+        "kind": "gripper_position",
+        "value": [0.5],
+    },
 }
 ```
 
 `Action` is a small container of grouped commands. End-effectors such as
 grippers, hands, suction tools, or custom actuators are first-class robot
-components, not ad-hoc extra channels.
+components, not ad-hoc extra channels. Runtime pacing belongs to
+`InferenceRuntime` / `RealtimeController`, so `Action` itself does not carry a
+separate `dt` field. If action-level metadata is present, embodia
+automatically switches to the wrapped form `{"commands": ..., "meta": ...}`.
 
 The smallest local inference path is:
 
 ```python
 result = em.run_step(robot, policy)
+```
+
+If you want to see how much synchronous wall time embodia itself adds on one
+closed-loop step, keep the same API and enable timing:
+
+```python
+result = em.run_step(robot, policy, measure_timing=True)
+print(result.timing.embodia_overhead_s)
 ```
 
 If you want runtime-side features such as async scheduling or pacing, keep the
@@ -215,7 +216,7 @@ tools rather than the main user path.
 
 They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
 That shared config defines two components, `arm` and `gripper`, and the
-Python examples emit one grouped `Action.commands` payload per control step.
+Python examples emit one grouped `Action.commands` mapping per control step.
 
 ## Design
 

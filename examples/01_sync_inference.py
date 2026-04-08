@@ -30,8 +30,12 @@ class YourRobot(em.RobotMixin):
             },
         }
 
-    def send_command(self, action: object) -> None:
-        self.last_native_action = action
+    def send_command(self, action: object) -> object:
+        """Pretend the robot controller returns the final accepted action."""
+
+        accepted = em.coerce_action(action)
+        self.last_native_action = accepted
+        return accepted
 
     def home(self) -> dict[str, object]:
         self.step_index = 0
@@ -47,25 +51,20 @@ class YourPolicy(em.PolicyMixin):
     def clear_state(self) -> None:
         self.step_index = 0
 
-    def infer(self, frame: object) -> dict[str, object]:
+    def infer(self, frame: em.Frame) -> dict[str, object]:
         qpos0 = float(frame.state["joint_positions"][0])
         gripper_pos = float(frame.state["position"])
         offset = float(self.step_index * 2)
         self.step_index += 1
         return {
-            "commands": [
-                {
-                    "target": "arm",
-                    "kind": "cartesian_pose_delta",
-                    "value": [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
-                },
-                {
-                    "target": "gripper",
-                    "kind": "gripper_position",
-                    "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
-                },
-            ],
-            "dt": 0.05,
+            "arm": {
+                "kind": "cartesian_pose_delta",
+                "value": [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            "gripper": {
+                "kind": "gripper_position",
+                "value": [max(0.0, min(1.0, 1.0 - gripper_pos))],
+            },
         }
 
 
@@ -97,13 +96,16 @@ def main() -> None:
     )
 
     for step_index in range(5):
-        result = em.run_step(robot, policy, runtime=runtime)
+        result = em.run_step(robot, policy, runtime=runtime, measure_timing=True)
+        timing = result.timing
+        assert timing is not None
         print(
             f"step={step_index} "
             f"raw0={arm_value0(result.raw_action):.2f} "
             f"action0={arm_value0(result.action):.2f} "
             f"plan_refreshed={result.plan_refreshed} "
-            f"wait={result.control_wait_s:.4f}"
+            f"wait={result.control_wait_s:.4f} "
+            f"embodia_ms={timing.embodia_overhead_s * 1000.0:.3f}"
         )
 
     print("native_robot_received:", robot.last_native_action)

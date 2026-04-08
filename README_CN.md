@@ -91,8 +91,8 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
   `state` 的键来自所有 `schema.components[*].state` 的并集。
 - robot 的 `home()` / `reset()` 返回结构和 `capture()` 一样。
 - `send_command(action)` / `act(action)` 接收的是一个 `em.Action`。其中
-  `action.commands[*].target` 就是 YAML 里的组件名，
-  `action.commands[*].kind` 就是这些组件声明的命令类型。
+  `action.commands` 的键就是 YAML 里的组件名，
+  `action.commands[组件名].kind` 就是这个组件声明的命令类型。
 - policy 的 `clear_state()` / `reset()` 必须返回 `None`。
 - `infer(frame)` 接收的是一个 `em.Frame`。`frame.images` 和 `frame.state`
   已经按 YAML 对齐好了；如果声明了 `schema.task`，额外条件会出现在
@@ -116,19 +116,14 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 
 # policy.infer(frame) 返回这种结构
 {
-    "commands": [
-        {
-            "target": "arm",
-            "kind": "cartesian_pose_delta",
-            "value": [...],
-        },
-        {
-            "target": "gripper",
-            "kind": "gripper_position",
-            "value": [0.5],
-        },
-    ],
-    "dt": 0.1,
+    "arm": {
+        "kind": "cartesian_pose_delta",
+        "value": [...],
+    },
+    "gripper": {
+        "kind": "gripper_position",
+        "value": [0.5],
+    },
 }
 ```
 
@@ -143,34 +138,40 @@ prompt，放到 `Frame.task` 里。robot spec 不再声明 task 相关能力。
 所以最简单的理解就是：YAML 定义标准结构；你的方法要么直接说这套结构，要么让
 `MODALITY_MAPS` 告诉 embodia 如何翻译。
 
-标准 action 结构现在是：
+默认的紧凑 action 结构现在是：
 
 ```python
 {
-    "commands": [
-        {
-            "target": "arm",
-            "kind": "cartesian_pose_delta",
-            "value": [...],
-            "ref_frame": "tool",
-        },
-        {
-            "target": "gripper",
-            "kind": "gripper_position",
-            "value": [0.5],
-        },
-    ],
-    "dt": 0.1,
+    "arm": {
+        "kind": "cartesian_pose_delta",
+        "value": [...],
+        "ref_frame": "tool",
+    },
+    "gripper": {
+        "kind": "gripper_position",
+        "value": [0.5],
+    },
 }
 ```
 
 现在的 `Action` 是一个按组件组织的命令容器。gripper、hand、suction
 这类末端执行器都是一等 robot 组件，不再作为临时附加通道塞进一个扁平动作向量里。
+真正的运行频率由 `InferenceRuntime` / `RealtimeController` 管，`Action`
+本身不再携带单独的 `dt` 字段。如果 action 级还需要 `meta`，embodia 会自动
+切回 `{"commands": ..., "meta": ...}` 这种包裹形式。
 
 最小的本地推理路径就是：
 
 ```python
 result = em.run_step(robot, policy)
+```
+
+如果你想看 embodia 在单步闭环里自己同步消耗了多少时间，也不用换接口，
+只要打开计时：
+
+```python
+result = em.run_step(robot, policy, measure_timing=True)
+print(result.timing.embodia_overhead_s)
 ```
 
 如果你需要异步推理或其他推理期能力，仍然保持同一个入口，只是加一个 runtime：
@@ -196,7 +197,7 @@ result = em.run_step(robot, policy, runtime=runtime)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 
 它们共用 [`examples/basic_runtime.yml`](./examples/basic_runtime.yml)。
-这个共享配置定义了 `arm` 和 `gripper` 两个组件，Python 示例里每一步也都会输出对应的 `Action.commands`。
+这个共享配置定义了 `arm` 和 `gripper` 两个组件，Python 示例里每一步也都会输出对应的 `Action.commands` 映射。
 
 ## 设计
 

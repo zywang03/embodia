@@ -154,14 +154,12 @@ class Frame:
 
 @dataclass(slots=True)
 class Command:
-    """One command for one robot component.
+    """One command payload for one robot component.
 
-    ``target`` names the component, for example ``"left_arm"`` or
-    ``"right_hand"``. ``kind`` is the main semantic identifier and is the
-    primary hook into the command-kind registry.
+    The owning component name lives on ``Action.commands`` as the dictionary
+    key, for example ``"left_arm"`` or ``"right_hand"``.
     """
 
-    target: str
     kind: str
     value: list[float]
     ref_frame: str | None = None
@@ -170,10 +168,9 @@ class Command:
 
 @dataclass(slots=True)
 class Action:
-    """One control step containing one or more commands."""
+    """One control step containing one or more component-keyed commands."""
 
-    commands: list[Command]
-    dt: float = 0.1
+    commands: dict[str, Command]
     meta: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -183,7 +180,6 @@ class Action:
         target: str,
         kind: str,
         value: list[float],
-        dt: float = 0.1,
         ref_frame: str | None = None,
         command_meta: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
@@ -191,26 +187,21 @@ class Action:
         """Build an action containing exactly one command."""
 
         return cls(
-            commands=[
-                Command(
-                    target=target,
+            commands={
+                target: Command(
                     kind=kind,
                     value=list(value),
                     ref_frame=ref_frame,
                     meta={} if command_meta is None else dict(command_meta),
                 )
-            ],
-            dt=dt,
+            },
             meta={} if meta is None else dict(meta),
         )
 
     def get_command(self, target: str) -> Command | None:
         """Return the command for ``target`` when present."""
 
-        for command in self.commands:
-            if command.target == target:
-                return command
-        return None
+        return self.commands.get(target)
 
 
 @dataclass(slots=True)
@@ -393,7 +384,6 @@ def validate_command(cmd: Command) -> None:
             f"command must be a Command instance, got {type(cmd).__name__}."
         )
 
-    _ensure_non_empty_string(cmd.target, "command.target")
     kind = _validate_command_kind_name(
         cmd.kind,
         "command.kind",
@@ -431,31 +421,27 @@ def validate_action(action: Action) -> None:
         raise InterfaceValidationError(
             f"action must be an Action instance, got {type(action).__name__}."
         )
-    if not isinstance(action.commands, list):
+    if not isinstance(action.commands, dict):
         raise InterfaceValidationError(
-            f"action.commands must be a list[Command], got "
+            f"action.commands must be a dict[str, Command], got "
             f"{type(action.commands).__name__}."
         )
     if not action.commands:
         raise InterfaceValidationError("action.commands must not be empty.")
 
-    seen_targets: set[str] = set()
-    for index, command in enumerate(action.commands):
+    for target, command in action.commands.items():
+        if not isinstance(target, str):
+            raise InterfaceValidationError(
+                f"action.commands keys must be strings, got {target!r}."
+            )
+        _ensure_non_empty_string(target, f"action.commands[{target!r}] key")
         try:
             validate_command(command)
         except InterfaceValidationError as exc:
             raise InterfaceValidationError(
-                f"invalid action.commands[{index}]: {exc}"
+                f"invalid action.commands[{target!r}]: {exc}"
             ) from exc
-        if command.target in seen_targets:
-            raise InterfaceValidationError(
-                f"action.commands contains duplicate target {command.target!r}."
-            )
-        seen_targets.add(command.target)
 
-    dt = _ensure_real_number(action.dt, "action.dt")
-    if dt <= 0.0:
-        raise InterfaceValidationError("action.dt must be > 0.")
     _ensure_string_key_dict(action.meta, "action.meta")
 
 
@@ -620,12 +606,12 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
     validate_action(action)
     validate_robot_spec(spec)
 
-    for command in action.commands:
-        component = spec.get_component(command.target)
+    for target, command in action.commands.items():
+        component = spec.get_component(target)
         if component is None:
             raise InterfaceValidationError(
                 f"robot {spec.name!r} does not define component "
-                f"{command.target!r}."
+                f"{target!r}."
             )
         if command.kind not in component.supported_command_kinds:
             raise InterfaceValidationError(
@@ -659,7 +645,7 @@ def ensure_action_matches_policy_spec(action: Action, spec: PolicySpec) -> None:
     validate_action(action)
     validate_policy_spec(spec)
 
-    command_targets = {command.target for command in action.commands}
+    command_targets = set(action.commands)
     output_targets = {output.target for output in spec.outputs}
     if command_targets != output_targets:
         missing = sorted(output_targets - command_targets)
@@ -676,9 +662,7 @@ def ensure_action_matches_policy_spec(action: Action, spec: PolicySpec) -> None:
         )
 
     for output in spec.outputs:
-        command = next(
-            candidate for candidate in action.commands if candidate.target == output.target
-        )
+        command = action.commands[output.target]
         if command.kind != output.command_kind:
             raise InterfaceValidationError(
                 f"policy {spec.name!r} output {output.target!r} declared command "

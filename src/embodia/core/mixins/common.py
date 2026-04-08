@@ -301,10 +301,20 @@ class _CommonInterfaceMixin:
         _validate_action(normalized)
         return normalized
 
-    def action_to_dict(self, action: Action | Mapping[str, Any]) -> dict[str, Any]:
+    def action_to_dict(
+        self,
+        action: Action | Mapping[str, Any],
+        *,
+        compact: bool = True,
+        commands_as_mapping: bool = True,
+    ) -> dict[str, Any]:
         """Export an action-like value into a plain dictionary."""
 
-        return action_to_dict(action)
+        return action_to_dict(
+            action,
+            compact=compact,
+            commands_as_mapping=commands_as_mapping,
+        )
 
 
 __all__ = ["_CommonInterfaceMixin"]

@@ -122,18 +122,14 @@ class YamlConfigTests(unittest.TestCase):
             def infer(self, frame):
                 self.seen_frame = frame
                 return {
-                    "commands": [
-                        {
-                            "target": "arm",
-                            "kind": "cartesian_pose_delta",
-                            "value": [self.gain] * 6,
-                        },
-                        {
-                            "target": "gripper",
-                            "kind": "gripper_position",
-                            "value": [0.3],
-                        },
-                    ]
+                    "arm": {
+                        "kind": "cartesian_pose_delta",
+                        "value": [self.gain] * 6,
+                    },
+                    "gripper": {
+                        "kind": "gripper_position",
+                        "value": [0.3],
+                    },
                 }
 
         with mock.patch.object(config_io, "_import_yaml", return_value=_JsonYamlModule):

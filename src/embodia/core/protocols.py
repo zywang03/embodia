@@ -17,8 +17,8 @@ class RobotProtocol(Protocol):
     def observe(self) -> Frame:
         """Return the latest observation frame."""
 
-    def act(self, action: Action) -> None:
-        """Execute an action on the robot."""
+    def act(self, action: Action) -> Action | None:
+        """Execute one action and optionally return the final executed action."""
 
     def reset(self) -> Frame:
         """Reset the robot/environment and return the first observation."""

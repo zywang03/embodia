@@ -7,11 +7,11 @@ Run with:
 
 from __future__ import annotations
 
-import embodia as em
+import inferaxis as infra
 import numpy as np
 
 
-class YourRobot(em.RobotMixin):
+class YourRobot(infra.RobotMixin):
     """Pretend this is your original outer robot class after one small edit."""
 
     def __init__(self) -> None:
@@ -29,7 +29,7 @@ class YourRobot(em.RobotMixin):
     def YOUR_OWN_send_action(self, action: object) -> object:
         """Pretend the robot controller returns the final accepted action."""
 
-        accepted = em.coerce_action(action)
+        accepted = infra.coerce_action(action)
         self.last_native_action = accepted
         return accepted
 
@@ -37,7 +37,7 @@ class YourRobot(em.RobotMixin):
         return self.YOUR_OWN_get_obs()
 
 
-class YourPolicy(em.PolicyMixin):
+class YourPolicy(infra.PolicyMixin):
     """Pretend this is your original outer policy class after one small edit."""
 
     def __init__(self) -> None:
@@ -46,7 +46,7 @@ class YourPolicy(em.PolicyMixin):
     def YOUR_OWN_clear_state(self) -> None:
         self.step_index = 0
 
-    def YOUR_OWN_infer(self, frame: em.Frame) -> dict[str, object]:
+    def YOUR_OWN_infer(self, frame: infra.Frame) -> dict[str, object]:
         qpos0 = float(frame.state["YOUR_OWN_arm"][0])
         gripper_pos = float(frame.state["YOUR_OWN_gripper"][0])
         step = float(self.step_index)
@@ -74,23 +74,23 @@ def main() -> None:
     robot = YourRobot.from_yaml("examples/basic_runtime.yml")
     policy = YourPolicy.from_yaml("examples/basic_runtime.yml")
     
-    runtime = em.InferenceRuntime(
-        mode=em.InferenceMode.SYNC,
+    runtime = infra.InferenceRuntime(
+        mode=infra.InferenceMode.SYNC,
         overlap_ratio=0.2,
         action_optimizers=[
-            em.ActionEnsembler(current_weight=0.5),
+            infra.ActionEnsembler(current_weight=0.5),
             # This is still one runtime step per run_step() call. The
             # interpolator only changes the action emitted on that call.
-            em.ActionInterpolator(steps=1),
+            infra.ActionInterpolator(steps=1),
         ],
-        realtime_controller=em.RealtimeController(hz=20.0),
+        realtime_controller=infra.RealtimeController(hz=20.0),
     )
 
     for step_index in range(5):
-        result = em.run_step(robot, source=policy, runtime=runtime)
+        result = infra.run_step(robot, source=policy, runtime=runtime)
         print(
             "step:", step_index,
-            "action:", em.action_to_dict(result.action),
+            "action:", infra.action_to_dict(result.action),
             "plan_refreshed:", result.plan_refreshed,
             "wait:", f"{result.control_wait_s:.4f}",
         )

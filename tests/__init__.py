@@ -1,1 +1,1 @@
-"""Test package for embodia."""
+"""Test package for inferaxis."""

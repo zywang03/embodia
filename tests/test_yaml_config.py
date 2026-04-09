@@ -1,4 +1,4 @@
-"""Tests for embodia's optional YAML-based runtime configuration."""
+"""Tests for inferaxis's optional YAML-based runtime configuration."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import embodia as em
-from embodia.core import config_io
+import inferaxis as em
+from inferaxis.core import config_io
 
 from helpers import assert_array_equal, demo_image
 

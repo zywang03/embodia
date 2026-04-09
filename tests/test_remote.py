@@ -1,11 +1,11 @@
-"""Tests for embodia's optional remote helpers."""
+"""Tests for inferaxis's optional remote helpers."""
 
 from __future__ import annotations
 
 import unittest
 
-import embodia as em
-from embodia.contrib import remote as em_remote
+import inferaxis as em
+from inferaxis.contrib import remote as em_remote
 
 from helpers import assert_array_equal
 
@@ -46,8 +46,8 @@ class RemoteTests(unittest.TestCase):
         )
 
         self.assertEqual(response["actions"][0], [0.1, 0.2, 0.3])
-        self.assertEqual(response["embodia"]["action_target"], "arm")
-        self.assertEqual(response["embodia"]["action_command"], "joint_position")
+        self.assertEqual(response["inferaxis"]["action_target"], "arm")
+        self.assertEqual(response["inferaxis"]["action_command"], "joint_position")
 
     def test_remote_transform_converts_obs_and_actions(self) -> None:
         transform = em_remote.RemoteTransform(
@@ -108,7 +108,7 @@ class RemoteTests(unittest.TestCase):
         )
 
         self.assertEqual(response["actions"][0], [1.0, 2.0, 3.0])
-        self.assertIn("policy_spec", adapter.get_server_metadata()["embodia"])
+        self.assertIn("policy_spec", adapter.get_server_metadata()["inferaxis"])
 
     def test_remote_policy_source_can_drive_run_step(self) -> None:
         class DemoRobot(em.RobotMixin):
@@ -146,7 +146,7 @@ class RemoteTests(unittest.TestCase):
                 del obs
                 return {
                     "actions": [[0.4, 0.5, 0.6]],
-                    "embodia": {
+                    "inferaxis": {
                         "action_target": "arm",
                         "action_command": "joint_position",
                     },
@@ -172,7 +172,7 @@ class RemoteTests(unittest.TestCase):
 
             def get_server_metadata(self) -> dict[str, object]:
                 return {
-                    "embodia": {
+                    "inferaxis": {
                         "policy_spec": {
                             "name": "remote_policy",
                             "required_image_keys": [],

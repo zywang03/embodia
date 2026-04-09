@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import embodia as em
+import inferaxis as infra
 import numpy as np
 
 
-class YourRobot(em.RobotMixin):
+class YourRobot(infra.RobotMixin):
     """Pretend this is your original outer robot class after one small edit."""
 
     def __init__(self) -> None:
@@ -32,7 +32,7 @@ class YourRobot(em.RobotMixin):
     def YOUR_OWN_send_action(self, action: object) -> object:
         """Pretend the robot controller returns the final accepted action."""
 
-        accepted = em.coerce_action(action)
+        accepted = infra.coerce_action(action)
         self.last_native_action = accepted
         return accepted
 
@@ -79,7 +79,7 @@ class DemoTeleop:
         },
     ]
 
-    def next_action(self, frame: em.Frame) -> dict[str, object]:
+    def next_action(self, frame: infra.Frame) -> dict[str, object]:
         """Return one scripted action without exposing runtime metadata."""
 
         del frame
@@ -96,14 +96,14 @@ def main() -> None:
 
     records: list[dict[str, object]] = []
     reset_frame = robot.reset()
-    records.append({"frame": em.frame_to_dict(reset_frame), "action": None})
+    records.append({"frame": infra.frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
-        result = em.run_step(robot, source=teleop)
+        result = infra.run_step(robot, source=teleop)
         records.append(
             {
-                "frame": em.frame_to_dict(result.frame),
-                "action": em.action_to_dict(result.action),
+                "frame": infra.frame_to_dict(result.frame),
+                "action": infra.action_to_dict(result.action),
             }
         )
 

@@ -1,10 +1,10 @@
-"""Tests for embodia's grouped-command schema and core runtime flow."""
+"""Tests for inferaxis's grouped-command schema and core runtime flow."""
 
 from __future__ import annotations
 
 import unittest
 
-import embodia as em
+import inferaxis as em
 
 from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
 
@@ -502,7 +502,7 @@ class InterfaceTests(unittest.TestCase):
             "cartesian_pose_delta",
         )
 
-    def test_embodia_auto_fills_frame_sequence_id(self) -> None:
+    def test_inferaxis_auto_fills_frame_sequence_id(self) -> None:
         robot = DummyRobot()
 
         reset_frame = robot.reset()

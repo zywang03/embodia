@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from embodia import Action, Frame, PolicyMixin, RobotMixin
+from inferaxis import Action, Frame, PolicyMixin, RobotMixin
 
 
 def demo_image() -> np.ndarray:

@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "embodia"
+name = "inferaxis"
 version = "0.1.0"
 description = "Unified runtime interfaces for robots and models."
 readme = "README.md"
@@ -33,4 +33,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-embodia = ["py.typed"]
+inferaxis = ["py.typed"]

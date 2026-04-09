@@ -1,4 +1,4 @@
-"""Tests for embodia's inference runtime utilities."""
+"""Tests for inferaxis's inference runtime utilities."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import embodia as em
+import inferaxis as em
 import numpy as np
 
 from helpers import assert_array_equal, demo_image
@@ -127,7 +127,7 @@ class InferenceRuntimeTests(unittest.TestCase):
     """Coverage for action optimizers and sync/async runtime flow."""
 
     def test_action_ensembler_blends_with_previous_output(self) -> None:
-        frame = em.Frame(timestamp_ns=1, images={}, state={})
+        frame = em.Frame(images={}, state={})
         ensembler = em.ActionEnsembler(current_weight=0.5)
 
         first = ensembler(
@@ -151,7 +151,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert_array_equal(self, second.get_command("arm").value, [1.0, 3.0])  # type: ignore[union-attr]
 
     def test_action_interpolator_blends_over_one_extra_step(self) -> None:
-        frame = em.Frame(timestamp_ns=1, images={}, state={})
+        frame = em.Frame(images={}, state={})
         interpolator = em.ActionInterpolator(steps=1)
 
         first = interpolator(

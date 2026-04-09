@@ -1,4 +1,4 @@
-# embodia mixin guide
+# inferaxis mixin guide
 
 This guide explains the intentionally small integration surface around
 `RobotMixin` and `PolicyMixin`.
@@ -12,15 +12,15 @@ For most users, the main path should stay small:
 
 The preferred direction is now:
 
-- YAML describes the shared embodia schema only
+- YAML describes the shared inferaxis schema only
 - your Python class keeps its own constructor and native methods
 - if your native names already match the schema, you do not need any remapping
 - policy inputs and outputs are inferred from that shared schema
 - numeric payloads inside `Frame` / `Action` are numpy arrays in the runtime
 
-embodia now keeps its own normalized wrappers on internal `embodia_*` methods.
+inferaxis now keeps its own normalized wrappers on internal `inferaxis_*` methods.
 That means your native methods can stay named `YOUR_OWN_infer`,
-`YOUR_OWN_get_obs`, `YOUR_OWN_reset`, and so on, while embodia still has one
+`YOUR_OWN_get_obs`, `YOUR_OWN_reset`, and so on, while inferaxis still has one
 collision-free internal dispatch path.
 `task` is policy-side context, not robot capability, so robot specs no longer
 declare task-related fields. `robot` stays local-only; if you need remote
@@ -28,7 +28,7 @@ deployment, put it on the policy/source side.
 
 ## Method aliases
 
-`METHOD_ALIASES` always maps embodia method names to your existing method names:
+`METHOD_ALIASES` always maps inferaxis method names to your existing method names:
 
 ```python
 METHOD_ALIASES = {
@@ -86,7 +86,7 @@ POLICY_SPEC = {
 ```
 
 When you use `from_yaml(...)`, you do not repeat that information inside the
-`policy:` block. embodia derives:
+`policy:` block. inferaxis derives:
 
 - `required_image_keys` from `schema.images`
 - `required_state_keys` from the component names in `schema.components`
@@ -120,11 +120,11 @@ import numpy as np
 }
 ```
 
-If you later add action-level metadata, embodia will automatically switch to
+If you later add action-level metadata, inferaxis will automatically switch to
 the wrapped form `{"commands": ..., "meta": ...}`.
 
 The same numpy-first rule applies to observations: `frame.images[*]` and
-`frame.state[*]` should be `numpy.ndarray` in your native methods, and embodia
+`frame.state[*]` should be `numpy.ndarray` in your native methods, and inferaxis
 keeps them numpy-backed through validation, runtime execution, remote
 adaptation, and export.
 
@@ -137,10 +137,10 @@ If your native names differ, keep remapping in Python code with `MODALITY_MAPS`:
 
 ```python
 MODALITY_MAPS = {
-    em.IMAGE_KEYS: {"rgb_front": "YOUR_OWN_front_rgb"},
-    em.STATE_KEYS: {"qpos": "YOUR_OWN_arm", "gripper_pos": "YOUR_OWN_gripper"},
-    em.CONTROL_TARGETS: {"vendor_arm": "YOUR_OWN_arm"},
-    em.COMMAND_KINDS: {"cartesian_delta": "cartesian_pose_delta"},
+    infra.IMAGE_KEYS: {"rgb_front": "YOUR_OWN_front_rgb"},
+    infra.STATE_KEYS: {"qpos": "YOUR_OWN_arm", "gripper_pos": "YOUR_OWN_gripper"},
+    infra.CONTROL_TARGETS: {"vendor_arm": "YOUR_OWN_arm"},
+    infra.COMMAND_KINDS: {"cartesian_delta": "cartesian_pose_delta"},
 }
 ```
 

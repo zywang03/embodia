@@ -1,4 +1,4 @@
-# One embodia YAML file can hold both robot-side and policy-side config.
+# One inferaxis YAML file can hold both robot-side and policy-side config.
 # `RobotMixin.from_yaml(...)` automatically reads the top-level `robot:` block.
 # `PolicyMixin.from_yaml(...)` automatically reads the top-level `policy:` block.
 # This file only describes the shared runtime schema plus method aliases.

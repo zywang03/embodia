@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import unittest
 
-import embodia as em
+import inferaxis as em
 import numpy as np
-from embodia.contrib import openpi as em_openpi
-from embodia.contrib import remote as em_remote
+from inferaxis.contrib import openpi as em_openpi
+from inferaxis.contrib import remote as em_remote
 
 from helpers import assert_array_equal, demo_image
 
@@ -17,13 +17,13 @@ class OpenPITests(unittest.TestCase):
 
     def test_frame_to_openpi_obs_remaps_frame_fields(self) -> None:
         frame = em.Frame(
-            timestamp_ns=123,
             images={"front_rgb": demo_image()},
             state={"arm": [1.0, 2.0, 3.0], "gripper": 0.5},
             task={"prompt": "fold the cloth"},
             meta={"episode_id": "demo-1"},
-            sequence_id=7,
         )
+        frame.timestamp_ns = 123
+        frame.sequence_id = 7
 
         obs = em_openpi.frame_to_openpi_obs(
             frame,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import deque
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -12,6 +14,10 @@ import inferaxis as infra
 import numpy as np
 
 from inferaxis.runtime.inference.chunk_scheduler import ChunkScheduler, _CompletedChunk
+from inferaxis.runtime.inference.profile import (
+    _ProfiledRequestSample,
+    _build_async_buffer_trace,
+)
 
 from helpers import assert_array_equal, demo_image
 
@@ -723,6 +729,53 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=True), 2)
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=False), 1)
 
+    def test_async_scheduler_drops_only_executed_steps_after_wall_clock_wait(self) -> None:
+        release_second_chunk = threading.Event()
+        request_count = 0
+
+        def action_source(
+            frame: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del frame
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                return [arm_action(float(index)) for index in range(10)]
+            self.assertEqual(request.request_step, 5)
+            release_second_chunk.wait(timeout=1.0)
+            self.assertTrue(release_second_chunk.is_set())
+            return [arm_action(float(100 + index)) for index in range(10)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            overlap_ratio=0.5,
+            latency_ema_beta=1.0,
+            initial_latency_steps=0.0,
+        )
+        frame = infra.Frame(images={}, state={})
+
+        emitted = [
+            arm_value(scheduler.next_action(frame, prefetch_async=True)[0])
+            for _ in range(10)
+        ]
+        self.assertEqual(emitted, [float(index) for index in range(10)])
+        self.assertEqual(scheduler._global_step, 10)
+        self.assertEqual(len(scheduler._buffer), 0)
+
+        time.sleep(0.05)
+        release_second_chunk.set()
+
+        next_action, refreshed = scheduler.next_action(frame, prefetch_async=True)
+
+        self.assertTrue(refreshed)
+        self.assertEqual(arm_value(next_action), 105.0)
+        self.assertEqual(
+            [arm_value(action) for action in scheduler._buffer],
+            [106.0, 107.0, 108.0, 109.0],
+        )
+        self.assertEqual(scheduler.estimated_latency_steps(), 5)
+
     def test_async_runtime_requires_action_source(self) -> None:
         robot = RuntimeRobot()
         runtime = infra.InferenceRuntime(
@@ -1151,6 +1204,35 @@ class InferenceRuntimeTests(unittest.TestCase):
             self.assertIn("steps", trace_payload)
             self.assertIn("requests", trace_payload)
             self.assertIn("<svg", trace_svg_path.read_text(encoding="utf-8"))
+
+    def test_async_buffer_trace_drops_only_executed_steps_during_underrun(self) -> None:
+        trace = _build_async_buffer_trace(
+            request_samples=[
+                _ProfiledRequestSample(
+                    request_index=0,
+                    chunk_steps=10,
+                    inference_time_s=0.0,
+                    ignored_inference_sample=True,
+                    observed_latency_steps=1,
+                ),
+                _ProfiledRequestSample(
+                    request_index=1,
+                    chunk_steps=10,
+                    inference_time_s=0.0,
+                    ignored_inference_sample=False,
+                    observed_latency_steps=8,
+                ),
+            ],
+            target_hz=50.0,
+            overlap_ratio=0.5,
+        )
+
+        self.assertGreaterEqual(len(trace.requests), 2)
+        second_request = trace.requests[1]
+        self.assertEqual(second_request.observed_latency_steps, 8)
+        self.assertEqual(second_request.executed_wait_steps, 5)
+        self.assertEqual(second_request.aligned_chunk_steps, 5)
+        self.assertTrue(any(step.underrun for step in trace.steps))
 
 
 if __name__ == "__main__":

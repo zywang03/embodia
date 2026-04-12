@@ -146,6 +146,8 @@ class AsyncBufferTraceStep:
     started_request_index: int | None = None
     request_completed: bool = False
     completed_request_index: int | None = None
+    executed_request_index: int | None = None
+    blended_from_request_index: int | None = None
     underrun: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -164,6 +166,8 @@ class AsyncBufferTraceStep:
             "started_request_index": self.started_request_index,
             "request_completed": self.request_completed,
             "completed_request_index": self.completed_request_index,
+            "executed_request_index": self.executed_request_index,
+            "blended_from_request_index": self.blended_from_request_index,
             "underrun": self.underrun,
         }
 
@@ -178,7 +182,9 @@ class AsyncBufferTraceRequest:
     chunk_steps: int
     overlap_steps: int
     observed_latency_steps: int
+    executed_wait_steps: int
     aligned_chunk_steps: int
+    blended_steps_after_accept: int
     ignored_inference_sample: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -191,7 +197,9 @@ class AsyncBufferTraceRequest:
             "chunk_steps": self.chunk_steps,
             "overlap_steps": self.overlap_steps,
             "observed_latency_steps": self.observed_latency_steps,
+            "executed_wait_steps": self.executed_wait_steps,
             "aligned_chunk_steps": self.aligned_chunk_steps,
+            "blended_steps_after_accept": self.blended_steps_after_accept,
             "ignored_inference_sample": self.ignored_inference_sample,
         }
 
@@ -361,8 +369,17 @@ class _PendingAsyncTraceRequest:
 
     sample: _ProfiledRequestSample
     start_step: int
+    start_executed_step: int
     reply_step: int
     overlap_steps: int
+
+
+@dataclass(slots=True)
+class _TraceActionSlot:
+    """One simulated buffered action annotated by its request of origin."""
+
+    request_index: int
+    blended_from_request_index: int | None = None
 
 
 def _observed_latency_steps(
@@ -417,11 +434,12 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
 
     steps = trace.steps
     width = 960
-    height = 480
+    height = 588
     margin_left = 64
     margin_right = 24
-    margin_top = 52
-    margin_bottom = 64
+    header_height = 102
+    margin_top = header_height
+    margin_bottom = 140
     plot_width = width - margin_left - margin_right
     plot_height = height - margin_top - margin_bottom
     x_count = max(len(steps), 1)
@@ -453,12 +471,49 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
         plot_width=plot_width,
         plot_height=plot_height,
     )
+    blended_mask = [
+        step.blended_from_request_index is not None
+        for step in steps
+    ]
 
     def x_of(step: int) -> float:
         return margin_left + (plot_width * step / x_count)
 
     def y_of(value: int) -> float:
         return margin_top + plot_height * (1.0 - (value / y_max))
+
+    def request_color(request_index: int) -> str:
+        palette = [
+            "#2563eb",
+            "#10b981",
+            "#f59e0b",
+            "#ef4444",
+            "#8b5cf6",
+            "#14b8a6",
+            "#f97316",
+            "#84cc16",
+        ]
+        return palette[request_index % len(palette)]
+
+    blended_segments: list[str] = []
+    for index, step in enumerate(steps):
+        if not blended_mask[index]:
+            continue
+        left_x = x_of(index)
+        right_x = x_of(index + 1)
+        y = y_of(step.buffer_after_accept)
+        blended_segments.append(
+            f'<line x1="{left_x:.2f}" y1="{y:.2f}" '
+            f'x2="{right_x:.2f}" y2="{y:.2f}" '
+            'stroke="#f97316" stroke-width="3.5" stroke-linecap="round" />'
+        )
+        if index > 0 and blended_mask[index - 1]:
+            previous_y = y_of(steps[index - 1].buffer_after_accept)
+            blended_segments.append(
+                f'<line x1="{left_x:.2f}" y1="{previous_y:.2f}" '
+                f'x2="{left_x:.2f}" y2="{y:.2f}" '
+                'stroke="#f97316" stroke-width="3.5" stroke-linecap="round" />'
+            )
 
     grid_lines: list[str] = []
     for y_tick in range(y_max + 1):
@@ -473,6 +528,12 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
             f"{y_tick}</text>"
         )
 
+    x_axis_label_y = height - margin_bottom + 20
+    step_label_y = height - margin_bottom + 40
+    lane_label_y = height - margin_bottom + 62
+    lane_top = height - margin_bottom + 74
+    lane_height = 16
+
     x_ticks: list[str] = []
     x_tick_count = min(max(len(steps), 2), 8)
     for tick_index in range(x_tick_count + 1):
@@ -483,7 +544,7 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
             f'y2="{height - margin_bottom}" stroke="#f3f4f6" stroke-width="1" />'
         )
         x_ticks.append(
-            f'<text x="{x:.2f}" y="{height - margin_bottom + 22}" '
+            f'<text x="{x:.2f}" y="{x_axis_label_y}" '
             'font-size="11" text-anchor="middle" fill="#6b7280">'
             f"{step}</text>"
         )
@@ -525,14 +586,163 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
         f"latency_beta={trace.latency_ema_beta:.2f}"
     )
 
+    legend_row_y = 66
+    legend_cursor_x = float(margin_left)
+    legend_items: list[str] = []
+
+    def add_legend_item(
+        label: str,
+        marker_svg: str,
+        *,
+        marker_width: float,
+    ) -> None:
+        nonlocal legend_cursor_x
+        label_x = legend_cursor_x + marker_width + 8.0
+        legend_items.append(marker_svg)
+        legend_items.append(
+            f'<text x="{label_x:.2f}" y="{legend_row_y}" font-size="11" fill="#374151">'
+            f"{label}</text>"
+        )
+        legend_cursor_x = label_x + max(len(label) * 5.8, 24.0) + 28.0
+
+    add_legend_item(
+        "buffer_after_accept",
+        (
+            f'<line x1="{legend_cursor_x:.2f}" y1="{legend_row_y - 4}" '
+            f'x2="{legend_cursor_x + 36.0:.2f}" y2="{legend_row_y - 4}" '
+            'stroke="#2563eb" stroke-width="2.5" />'
+        ),
+        marker_width=36.0,
+    )
+    add_legend_item(
+        "trigger_threshold",
+        (
+            f'<line x1="{legend_cursor_x:.2f}" y1="{legend_row_y - 4}" '
+            f'x2="{legend_cursor_x + 36.0:.2f}" y2="{legend_row_y - 4}" '
+            'stroke="#6b7280" stroke-width="2" stroke-dasharray="6 4" />'
+        ),
+        marker_width=36.0,
+    )
+    add_legend_item(
+        "request_started",
+        (
+            f'<circle cx="{legend_cursor_x + 5.0:.2f}" cy="{legend_row_y - 4}" r="4.5" '
+            'fill="#10b981" stroke="#065f46" stroke-width="1.2" />'
+        ),
+        marker_width=10.0,
+    )
+    add_legend_item(
+        "request_completed",
+        (
+            f'<polygon points="{legend_cursor_x + 5.0:.2f},{legend_row_y - 9} '
+            f'{legend_cursor_x + 10.0:.2f},{legend_row_y - 4} '
+            f'{legend_cursor_x + 5.0:.2f},{legend_row_y + 1} '
+            f'{legend_cursor_x:.2f},{legend_row_y - 4}" fill="#f59e0b" '
+            'stroke="#92400e" stroke-width="1.2" />'
+        ),
+        marker_width=12.0,
+    )
+    add_legend_item(
+        "underrun",
+        (
+            f'<line x1="{legend_cursor_x:.2f}" y1="{legend_row_y - 9}" '
+            f'x2="{legend_cursor_x + 10.0:.2f}" y2="{legend_row_y + 1}" '
+            'stroke="#dc2626" stroke-width="2" />'
+            f'<line x1="{legend_cursor_x:.2f}" y1="{legend_row_y + 1}" '
+            f'x2="{legend_cursor_x + 10.0:.2f}" y2="{legend_row_y - 9}" '
+            'stroke="#dc2626" stroke-width="2" />'
+        ),
+        marker_width=12.0,
+    )
+    add_legend_item(
+        "ensemble",
+        (
+            f'<line x1="{legend_cursor_x:.2f}" y1="{legend_row_y - 4}" '
+            f'x2="{legend_cursor_x + 36.0:.2f}" y2="{legend_row_y - 4}" '
+            'stroke="#f97316" stroke-width="3.5" stroke-linecap="round" />'
+        ),
+        marker_width=36.0,
+    )
+
+    lane_rects: list[str] = []
+    lane_labels: list[str] = []
+    segment_start = 0
+    while segment_start < len(steps):
+        segment_step = steps[segment_start]
+        segment_key = (
+            segment_step.executed_request_index,
+            segment_step.blended_from_request_index,
+        )
+        segment_end = segment_start + 1
+        while segment_end < len(steps):
+            other = steps[segment_end]
+            other_key = (
+                other.executed_request_index,
+                other.blended_from_request_index,
+            )
+            if other_key != segment_key:
+                break
+            segment_end += 1
+
+        x0 = x_of(segment_start)
+        x1 = x_of(segment_end)
+        label = ""
+        if segment_key[0] is not None:
+            if segment_key[1] is None:
+                label = f"r{segment_key[0]}"
+            else:
+                label = f"r{segment_key[1]}+r{segment_key[0]}"
+        if segment_key[0] is None:
+            lane_rects.append(
+                f'<rect x="{x0:.2f}" y="{lane_top:.2f}" width="{max(x1 - x0, 1.0):.2f}" '
+                f'height="{lane_height}" fill="#ffffff" stroke="#d1d5db" stroke-width="0.8" />'
+            )
+        elif segment_key[1] is None:
+            lane_rects.append(
+                f'<rect x="{x0:.2f}" y="{lane_top:.2f}" width="{max(x1 - x0, 1.0):.2f}" '
+                f'height="{lane_height}" fill="{request_color(segment_key[0])}" '
+                'stroke="#ffffff" stroke-width="0.4" />'
+            )
+        else:
+            split_x = x0 + max((x1 - x0) / 2.0, 0.5)
+            lane_rects.append(
+                f'<rect x="{x0:.2f}" y="{lane_top:.2f}" width="{max(split_x - x0, 0.5):.2f}" '
+                f'height="{lane_height}" fill="{request_color(segment_key[1])}" '
+                'stroke="#ffffff" stroke-width="0.2" />'
+            )
+            lane_rects.append(
+                f'<rect x="{split_x:.2f}" y="{lane_top:.2f}" width="{max(x1 - split_x, 0.5):.2f}" '
+                f'height="{lane_height}" fill="{request_color(segment_key[0])}" '
+                'stroke="#ffffff" stroke-width="0.2" />'
+            )
+            lane_rects.append(
+                f'<rect x="{x0:.2f}" y="{lane_top:.2f}" width="{max(x1 - x0, 1.0):.2f}" '
+                f'height="{lane_height}" fill="none" stroke="#111827" stroke-width="0.35" />'
+            )
+
+        if label and x1 - x0 >= 26.0:
+            lane_labels.append(
+                f'<text x="{(x0 + x1) / 2.0:.2f}" y="{lane_top + 11:.2f}" '
+                'font-size="9" text-anchor="middle" fill="#ffffff">'
+                f"{escape(label)}</text>"
+            )
+
+        segment_start = segment_end
+
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" aria-label="Async buffer trace">'
         '<rect width="100%" height="100%" fill="#ffffff" />'
-        f'<text x="{margin_left}" y="24" font-size="18" font-weight="700" '
+        f'<text x="{margin_left}" y="26" font-size="18" font-weight="700" '
         'fill="#111827">Async Buffer Trace</text>'
-        f'<text x="{margin_left}" y="42" font-size="12" fill="#4b5563">'
+        f'<text x="{margin_left}" y="44" font-size="12" fill="#4b5563">'
         f"{escape(request_summary)}</text>"
+        + "".join(legend_items)
+        + (
+            f'<line x1="{margin_left}" y1="{header_height - 8}" '
+            f'x2="{width - margin_right}" y2="{header_height - 8}" '
+            'stroke="#e5e7eb" stroke-width="1" />'
+        )
         + "".join(grid_lines)
         + "".join(x_ticks)
         + (
@@ -541,6 +751,7 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
             if buffer_points
             else ""
         )
+        + "".join(blended_segments)
         + (
             f'<polyline fill="none" stroke="#6b7280" stroke-width="2" '
             'stroke-dasharray="6 4" '
@@ -549,33 +760,25 @@ def _async_buffer_trace_svg(trace: AsyncBufferTrace) -> str:
             else ""
         )
         + "".join(markers)
-        + f'<text x="{margin_left}" y="{height - 26}" font-size="12" fill="#111827">'
+        + f'<text x="{margin_left}" y="{lane_label_y:.2f}" font-size="11" '
+        'font-weight="600" fill="#111827">chunk lane</text>'
+        + f'<rect x="{margin_left + 82}" y="{lane_label_y - 10:.2f}" width="16" height="12" '
+        'fill="#2563eb" rx="2" ry="2" />'
+        + f'<text x="{margin_left + 108}" y="{lane_label_y:.2f}" font-size="11" fill="#374151">'
+        "color = emitted action origin</text>"
+        + f'<rect x="{margin_left + 318}" y="{lane_label_y - 10:.2f}" width="8" height="12" '
+        'fill="#10b981" rx="1.5" ry="1.5" />'
+        + f'<rect x="{margin_left + 326}" y="{lane_label_y - 10:.2f}" width="8" height="12" '
+        'fill="#f59e0b" rx="1.5" ry="1.5" />'
+        + f'<text x="{margin_left + 346}" y="{lane_label_y:.2f}" font-size="11" fill="#374151">'
+        "split = overlap-blended handoff</text>"
+        + "".join(lane_rects)
+        + "".join(lane_labels)
+        + f'<text x="{margin_left + (plot_width / 2.0):.2f}" y="{step_label_y}" '
+        'font-size="12" text-anchor="middle" fill="#111827">'
         "step</text>"
         + f'<text x="18" y="{margin_top - 12}" font-size="12" fill="#111827">'
         "buffer</text>"
-        + f'<line x1="{margin_left + 140}" y1="22" x2="{margin_left + 176}" y2="22" '
-        'stroke="#2563eb" stroke-width="2.5" />'
-        + f'<text x="{margin_left + 184}" y="26" font-size="11" fill="#374151">'
-        "buffer_after_accept</text>"
-        + f'<line x1="{margin_left + 320}" y1="22" x2="{margin_left + 356}" y2="22" '
-        'stroke="#6b7280" stroke-width="2" stroke-dasharray="6 4" />'
-        + f'<text x="{margin_left + 364}" y="26" font-size="11" fill="#374151">'
-        "trigger_threshold</text>"
-        + f'<circle cx="{margin_left + 515}" cy="22" r="4.5" fill="#10b981" '
-        'stroke="#065f46" stroke-width="1.2" />'
-        + f'<text x="{margin_left + 526}" y="26" font-size="11" fill="#374151">'
-        "request_started</text>"
-        + f'<polygon points="{margin_left + 662},17 {margin_left + 667},22 '
-        f'{margin_left + 662},27 {margin_left + 657},22" fill="#f59e0b" '
-        'stroke="#92400e" stroke-width="1.2" />'
-        + f'<text x="{margin_left + 674}" y="26" font-size="11" fill="#374151">'
-        "request_completed</text>"
-        + f'<line x1="{margin_left + 830}" y1="17" x2="{margin_left + 840}" y2="27" '
-        'stroke="#dc2626" stroke-width="2" />'
-        + f'<line x1="{margin_left + 830}" y1="27" x2="{margin_left + 840}" y2="17" '
-        'stroke="#dc2626" stroke-width="2" />'
-        + f'<text x="{margin_left + 848}" y="26" font-size="11" fill="#374151">'
-        "underrun</text>"
         + "</svg>"
     )
 
@@ -604,10 +807,14 @@ def _build_async_buffer_trace(
         )
 
     first_sample = request_samples[0]
-    buffer_steps = first_sample.chunk_steps
+    buffer_slots: deque[_TraceActionSlot] = deque(
+        _TraceActionSlot(request_index=first_sample.request_index)
+        for _ in range(first_sample.chunk_steps)
+    )
     reference_chunk_steps = first_sample.chunk_steps
     latency_steps_estimate = float(initial_latency_steps)
     request_cursor = 1
+    executed_steps = 0
     pending: _PendingAsyncTraceRequest | None = None
     steps: list[AsyncBufferTraceStep] = []
     requests: list[AsyncBufferTraceRequest] = [
@@ -618,7 +825,9 @@ def _build_async_buffer_trace(
             chunk_steps=first_sample.chunk_steps,
             overlap_steps=0,
             observed_latency_steps=first_sample.observed_latency_steps,
+            executed_wait_steps=0,
             aligned_chunk_steps=first_sample.chunk_steps,
+            blended_steps_after_accept=0,
             ignored_inference_sample=first_sample.ignored_inference_sample,
         )
     ]
@@ -631,20 +840,34 @@ def _build_async_buffer_trace(
     )
 
     for step_index in range(max_steps):
-        buffer_before_accept = buffer_steps
+        buffer_before_accept = len(buffer_slots)
         request_started = False
         started_request_index: int | None = None
         request_completed = False
         completed_request_index: int | None = None
+        executed_request_index: int | None = None
+        blended_from_request_index: int | None = None
 
         if pending is not None and step_index >= pending.reply_step:
-            waited_steps = max(step_index - pending.start_step, 0)
+            waited_slot_steps = max(step_index - pending.start_step, 0)
+            waited_executed_steps = max(
+                executed_steps - pending.start_executed_step,
+                0,
+            )
             if not pending.sample.ignored_inference_sample:
                 latency_steps_estimate = (
                     (1.0 - latency_ema_beta) * latency_steps_estimate
-                    + latency_ema_beta * float(waited_steps)
+                    + latency_ema_beta * float(waited_executed_steps)
                 )
-            aligned_chunk_steps = max(pending.sample.chunk_steps - waited_steps, 0)
+            aligned_chunk_steps = max(
+                pending.sample.chunk_steps - waited_executed_steps,
+                0,
+            )
+            surviving_old_slots = list(buffer_slots)
+            blended_steps_after_accept = min(
+                len(surviving_old_slots),
+                aligned_chunk_steps,
+            )
             requests.append(
                 AsyncBufferTraceRequest(
                     request_index=pending.sample.request_index,
@@ -652,19 +875,32 @@ def _build_async_buffer_trace(
                     reply_step=step_index,
                     chunk_steps=pending.sample.chunk_steps,
                     overlap_steps=pending.overlap_steps,
-                    observed_latency_steps=waited_steps,
+                    observed_latency_steps=waited_slot_steps,
+                    executed_wait_steps=waited_executed_steps,
                     aligned_chunk_steps=aligned_chunk_steps,
+                    blended_steps_after_accept=blended_steps_after_accept,
                     ignored_inference_sample=pending.sample.ignored_inference_sample,
                 )
             )
             if aligned_chunk_steps > 0:
-                buffer_steps = aligned_chunk_steps
+                blended_slots = [
+                    _TraceActionSlot(
+                        request_index=pending.sample.request_index,
+                        blended_from_request_index=surviving_old_slots[index].request_index,
+                    )
+                    for index in range(blended_steps_after_accept)
+                ]
+                tail_slots = [
+                    _TraceActionSlot(request_index=pending.sample.request_index)
+                    for _ in range(aligned_chunk_steps - blended_steps_after_accept)
+                ]
+                buffer_slots = deque(blended_slots + tail_slots)
                 reference_chunk_steps = pending.sample.chunk_steps
             request_completed = True
             completed_request_index = pending.sample.request_index
             pending = None
 
-        buffer_after_accept = buffer_steps
+        buffer_after_accept = len(buffer_slots)
         overlap_steps = max(int(math.floor(reference_chunk_steps * ratio)), 0)
         latency_steps_ceiled = max(int(math.ceil(latency_steps_estimate)), 0)
         trigger_threshold = latency_steps_ceiled + overlap_steps
@@ -678,6 +914,7 @@ def _build_async_buffer_trace(
             pending = _PendingAsyncTraceRequest(
                 sample=sample,
                 start_step=step_index,
+                start_executed_step=executed_steps,
                 reply_step=step_index + max(sample.observed_latency_steps, 1),
                 overlap_steps=overlap_steps,
             )
@@ -689,8 +926,11 @@ def _build_async_buffer_trace(
         if underrun:
             buffer_after_execute = 0
         else:
-            buffer_steps = max(buffer_after_accept - 1, 0)
-            buffer_after_execute = buffer_steps
+            emitted_slot = buffer_slots.popleft()
+            executed_request_index = emitted_slot.request_index
+            blended_from_request_index = emitted_slot.blended_from_request_index
+            buffer_after_execute = len(buffer_slots)
+            executed_steps += 1
 
         steps.append(
             AsyncBufferTraceStep(
@@ -706,11 +946,13 @@ def _build_async_buffer_trace(
                 started_request_index=started_request_index,
                 request_completed=request_completed,
                 completed_request_index=completed_request_index,
+                executed_request_index=executed_request_index,
+                blended_from_request_index=blended_from_request_index,
                 underrun=underrun,
             )
         )
 
-        if request_cursor >= len(request_samples) and pending is None and buffer_steps == 0:
+        if request_cursor >= len(request_samples) and pending is None and not buffer_slots:
             break
 
     return AsyncBufferTrace(

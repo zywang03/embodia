@@ -3,15 +3,19 @@
 
 # inferaxis
 
-`inferaxis` is a unified-data-interface inference system for embodied control.
-It standardizes observations into `Frame`, actions into `Action`, and keeps the
-outer execution loop stable through `run_step(...)` and `InferenceRuntime(...)`.
+![Async Buffer Trace Example](./assets/async_buffer_trace_300ms.svg)
+
+`inferaxis` is a unified-data-interface, dynamically latency-adaptive inference
+system for embodied control. It standardizes observations into `Frame`,
+actions into `Action`, and keeps the outer execution loop stable through
+`run_step(...)` and `InferenceRuntime(...)`.
 
 The point of the project is simple: once your data matches the shared runtime
 interface, the same loop can drive:
 
 - normal sync inference
 - async chunked inference
+- dynamically latency-adaptive chunk scheduling
 - local data collection
 - replay of recorded actions
 - sync-latency profiling and runtime recommendation
@@ -223,7 +227,9 @@ steps. When a reply arrives, inferaxis drops the stale prefix and either
 switches to the aligned new chunk directly or blends the overlap prefix when
 `ActionEnsembler(...)` is enabled. `ActionEnsembler(current_weight=...)` only
 blends aligned old/new chunk overlap actions; it does not apply an extra
-per-step temporal filter to every emitted action.
+per-step temporal filter to every emitted action. In practice, this makes
+inferaxis a dynamically latency-adaptive inference system: request timing is
+updated online from measured chunk latency instead of being fixed ahead of time.
 
 ## Validation
 

@@ -3,7 +3,7 @@
 
 # inferaxis
 
-`inferaxis` 是一个面向 embodied control 的统一数据接口推理系统。
+`inferaxis` 是一个面向 embodied control 的统一数据接口、动态自适应延迟推理系统。
 它把 observation 统一成 `Frame`，把 action 统一成 `Action`，并通过
 `run_step(...)` 和 `InferenceRuntime(...)` 维持稳定的外层执行方式。
 
@@ -12,6 +12,7 @@ loop 支持：
 
 - 普通同步推理
 - 异步 chunk 推理
+- 动态自适应延迟的 chunk 调度
 - 本地数采
 - 采集动作 replay
 - 同步推理延迟 profiling 与 runtime 推荐
@@ -222,7 +223,9 @@ result = infra.run_step(
 inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(...)`，
 就对 overlap 区段里同一未来时间步的旧/新 action 做融合，否则直接切到
 新的对齐后 chunk。`ActionEnsembler(current_weight=...)` 不会再对每一步
-输出额外做一层 temporal filter。
+输出额外做一层 temporal filter。也就是说，inferaxis 不是靠预先写死的
+固定时序在跑，而是会根据实际测到的 chunk 延迟在线调整请求时机，因此它本质上
+是一个动态自适应延迟推理系统。
 
 ## 校验
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ...core.schema import Action, Frame
 
@@ -17,44 +17,41 @@ class ActionOptimizerProtocol(Protocol):
         self,
         action: Action,
         frame: Frame,
-    ) -> Action | Mapping[str, Any]:
-        """Return an optimized action-like value."""
+    ) -> Action:
+        """Return an optimized action."""
 
 
-ActionOptimizer = Callable[[Action, Frame], Action | Mapping[str, Any]]
-ActionChunk = Sequence[Action | Mapping[str, Any]]
-ActionPlan = Action | Mapping[str, Any] | ActionChunk
+ActionOptimizer = Callable[[Action, Frame], Action]
+ActionChunk = Sequence[Action]
+ActionPlan = Action | ActionChunk
 
 
 @runtime_checkable
-class ActionPlanProviderProtocol(Protocol):
-    """Callable that builds one runtime-managed action plan from a frame."""
+class ActionSourceProtocol(Protocol):
+    """Callable that returns one future action or one future action chunk."""
 
     def __call__(
         self,
-        source: object,
         frame: Frame,
+        request: "ChunkRequest",
     ) -> ActionPlan:
         """Return one action or one action chunk."""
 
 
-ActionPlanProvider = Callable[[object, Frame], ActionPlan]
+ActionSource = Callable[[Frame, "ChunkRequest"], ActionPlan]
 
 
 @dataclass(slots=True)
 class ChunkRequest:
-    """Runtime context for one async chunk request.
+    """Runtime context for one overlap-aware action request.
 
-    ``history_actions`` contains the overlap tail slice from the currently
-    active chunk that the next chunk should condition on.
+    ``history_actions`` contains the overlap tail from the currently active
+    chunk. Sources can use it as conditioning context when producing the next
+    future actions.
 
-    ``request_step`` is the global action index that had already been emitted
-    when the request was sent.
-
-    ``plan_start_step`` is the global action index where the returned chunk is
-    expected to begin logically. This is earlier than the handoff point by
-    ``overlap_steps`` so the scheduler can trim stale overlap actions when the
-    response becomes active.
+    ``plan_start_step`` marks where an overlap-prefixed response would begin in
+    global-step coordinates. Future-only responses typically begin at
+    ``request_step`` instead.
     """
 
     request_step: int
@@ -70,30 +67,12 @@ class ChunkRequest:
     history_actions: list[Action] = field(default_factory=list)
 
 
-@runtime_checkable
-class ChunkProviderProtocol(Protocol):
-    """Callable that builds one overlap-conditioned action chunk."""
-
-    def __call__(
-        self,
-        source: object,
-        frame: Frame,
-        request: ChunkRequest,
-    ) -> ActionPlan:
-        """Return one action-like chunk for the next runtime window."""
-
-
-ChunkProvider = Callable[[object, Frame, ChunkRequest], ActionPlan]
-
-
 __all__ = [
     "ActionChunk",
-    "ChunkProvider",
-    "ChunkProviderProtocol",
-    "ChunkRequest",
     "ActionOptimizer",
     "ActionOptimizerProtocol",
     "ActionPlan",
-    "ActionPlanProvider",
-    "ActionPlanProviderProtocol",
+    "ActionSource",
+    "ActionSourceProtocol",
+    "ChunkRequest",
 ]

@@ -3,19 +3,21 @@
 
 # inferaxis
 
-`inferaxis` is a small Python library for unified runtime interfaces between
-robots and models. It focuses on one thing: making different robot classes and
-policy classes speak the same runtime data flow. It is not a training framework,
-not a server stack, not ROS, and not a plugin system.
+`inferaxis` is a unified-data-interface inference system for embodied control.
+It standardizes observations into `Frame`, actions into `Action`, and keeps the
+outer execution loop stable through `run_step(...)` and `InferenceRuntime(...)`.
 
-For most users, the public path should stay small:
+The point of the project is simple: once your data matches the shared runtime
+interface, the same loop can drive:
 
-1. inherit `RobotMixin` / `PolicyMixin`
-2. load interface alignment with `from_yaml(...)`
-3. call `run_step(...)`
-4. add `InferenceRuntime(...)` only when you need inference-time features
+- normal sync inference
+- async chunked inference
+- local data collection
+- replay of recorded actions
+- sync-latency profiling and runtime recommendation
 
-Everything else exists to support that path, not to replace it.
+`inferaxis` is not a robot middleware, transport stack, or deployment system.
+It focuses on the inference-side data contract and control loop.
 
 ## Install
 
@@ -25,208 +27,220 @@ cd inferaxis
 pip install .
 ```
 
-If you want YAML-based config loading with `from_yaml(...)`:
+`inferaxis` is numpy-based inside the core runtime. Images, state, and action
+payloads are normalized to `numpy.ndarray`.
 
-```bash
-pip install ".[yaml]"
-```
+## Core API
 
-If you want the optional remote policy helpers:
+The public surface is intentionally small:
 
-```bash
-pip install ".[remote]"
-```
+- `Frame`
+- `Action`
+- `Command`
+- `run_step(...)`
+- `InferenceRuntime(...)`
+- `ActionEnsembler`
+- `ActionInterpolator`
+- `RealtimeController`
 
-inferaxis depends on `numpy` and keeps image/state/action tensors as
-`numpy.ndarray` inside the core runtime. If a user project already uses
-`torch`, inferaxis can still accept tensors at the runtime boundary and convert
-them into numpy-backed core objects.
+The runtime call boundary is:
+
+- `observe_fn() -> Frame`
+- `act_fn(action) -> Action | None`
+- `act_src_fn(frame, request) -> Action | list[Action]`
+
+Returning one `Action` means chunk size `1`. Returning `list[Action]` lets the
+same source participate in overlap-aware async scheduling.
 
 ## Quickstart
 
-Keep inferaxis on the outermost layer of your existing classes and keep your
-native methods as they are. Any example name prefixed with `YOUR_OWN_` below is
-just a placeholder you replace with your real method or field name:
-
 ```python
 import inferaxis as infra
+import numpy as np
 
 
-class YourRobot(infra.RobotMixin):
-    def YOUR_OWN_get_obs(self): ...
-    def YOUR_OWN_send_action(self, action): ...
-    def YOUR_OWN_reset(self): ...
+class YourExecutor:
+    def get_obs(self):
+        return infra.Frame(
+            images={"front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={
+                "left_arm": np.zeros(6, dtype=np.float64),
+                "left_gripper": np.array([0.5], dtype=np.float64),
+                "right_arm": np.zeros(6, dtype=np.float64),
+                "right_gripper": np.array([0.5], dtype=np.float64),
+            },
+        )
+
+    def send_action(self, action):
+        return action
 
 
-class YourPolicy(infra.PolicyMixin):
-    def YOUR_OWN_clear_state(self): ...
-    def YOUR_OWN_infer(self, frame): ...
+class YourPolicy:
+    def infer(self, frame, request):
+        del frame, request
+        return infra.Action(
+            commands={
+                "left_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.zeros(6, dtype=np.float64),
+                ),
+                "left_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array([0.5], dtype=np.float64),
+                ),
+                "right_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.zeros(6, dtype=np.float64),
+                ),
+                "right_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array([0.5], dtype=np.float64),
+                ),
+            }
+        )
+
+
+executor = YourExecutor()
+policy = YourPolicy()
+
+result = infra.run_step(
+    observe_fn=executor.get_obs,
+    act_fn=executor.send_action,
+    act_src_fn=policy.infer,
+)
 ```
 
-Then load the runtime alignment from YAML:
+If you only want normalized `frame -> action` inference:
 
 ```python
-robot = YourRobot.from_yaml("docs/yaml_config_example.yml")
-policy = YourPolicy.from_yaml("docs/yaml_config_example.yml")
+result = infra.run_step(
+    frame=my_frame,
+    act_src_fn=policy.infer,
+    execute_action=False,
+)
 ```
 
-That YAML only describes the shared schema plus method aliases. Constructor
-arguments stay in Python code. On the policy side, inferaxis derives required
-inputs and output targets directly from the shared `schema:` block. If a policy
-needs extra conditioning such as `YOUR_OWN_prompt`, put it in `Frame.task`.
-Robot specs do not declare task-related capabilities.
+## Data Interface
 
-### How YAML and your methods relate
-
-`schema:` defines the canonical runtime field names. `method_aliases:` only
-tells inferaxis which of your existing methods should be used for `observe`,
-`act`, `reset`, and `infer`. It does not generate implementations and it does
-not change your constructor.
-
-If you do not declare Python-side `MODALITY_MAPS`, your native methods should
-directly use the names written in YAML. In other words, YAML is the contract.
-inferaxis validates your runtime inputs and outputs against that contract.
-
-The mapping is:
-
-- `schema.images` -> keys that should appear in `frame.images`
-- `schema.components.<name>` -> one shared component key that should appear in
-  both `frame.state[<name>]` and `action.commands[<name>]`
-- `schema.components.<name>.command` -> allowed values of `Command.command` for
-  that component
-- `schema.task` -> optional policy-side keys inside `frame.task`
-
-Any schema key that you are expected to rename in your own project should be
-written as `YOUR_OWN_*` in inferaxis's examples and docs.
-There is no separate `Command.target` field in the current schema. The target
-is the dictionary key on `Action.commands`.
-
-### Method I/O
-
-Only these method boundaries need to align with the YAML schema:
-
-- `YOUR_OWN_get_obs()` / `observe()` -> output must align to the shared frame structure
-- `YOUR_OWN_reset()` / `reset()` -> output must align to the same frame structure as `observe()`
-- `YOUR_OWN_infer(frame)` / `infer(frame)` -> input `frame` is already YAML-aligned, and output must align to the shared action structure
-- `YOUR_OWN_send_action(action)` / `act(action)` -> input `action` is already YAML-aligned
-
-`YOUR_OWN_clear_state()` / `reset()` is optional policy state cleanup. Its
-return value is ignored. Numeric payloads are expected to be numpy-backed.
-inferaxis manages frame timestamps and step ids internally.
-
-`command` is not a free-form string. For each component, it must match one of
-the entries declared in `schema.components.<name>.command`. inferaxis ships these
-built-in command kinds:
-`joint_position`, `joint_position_delta`, `joint_velocity`,
-`cartesian_pose`, `cartesian_pose_delta`, `cartesian_twist`,
-`gripper_position`, `gripper_position_delta`, `gripper_velocity`,
-`gripper_open_close`, `hand_joint_position`,
-`hand_joint_position_delta`, and `eef_activation`.
-If you need a project-specific command, register a `custom:...` kind with
-`register_command_kind(...)`.
-
-If your existing project uses different native names, keep that remapping in
-Python with `MODALITY_MAPS`. inferaxis will translate at the boundary:
-
-- robot `observe/reset`: native frame -> inferaxis `Frame`
-- policy `infer`: inferaxis `Frame` -> native frame
-- policy output: native action -> inferaxis `Action`
-- robot `act`: inferaxis `Action` -> native action
-
-So the recommended rule is simple: YAML defines the standardized structure,
-your methods either speak that structure directly, or `MODALITY_MAPS` tells
-inferaxis how to translate.
-
-`Action` is a small container of grouped commands. End-effectors such as
-grippers, hands, suction tools, or custom actuators are first-class robot
-components, not ad-hoc extra channels. Runtime pacing belongs to
-`InferenceRuntime` / `RealtimeController`, so `Action` itself does not carry a
-separate `dt` field. If action-level metadata is present, inferaxis
-automatically switches to the wrapped form `{"commands": ..., "meta": ...}`.
-
-The smallest local inference path is:
+`Frame` is the normalized observation container:
 
 ```python
-result = infra.run_step(robot, source=policy)
+frame = infra.Frame(
+    images={"front_rgb": np.ndarray(...)},
+    state={
+        "left_arm": np.ndarray(...),
+        "left_gripper": np.ndarray(...),
+        "right_arm": np.ndarray(...),
+        "right_gripper": np.ndarray(...),
+    },
+)
 ```
 
-If you want runtime-side features such as async scheduling or pacing, keep the
-same entrypoint and add a runtime object:
+`Action` is the normalized control container:
+
+```python
+action = infra.Action(
+    commands={
+        "left_arm": infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=np.ndarray(...),
+        ),
+        "left_gripper": infra.Command(
+            command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+            value=np.ndarray(...),
+        ),
+    },
+)
+```
+
+Key runtime rules:
+
+- `observe_fn()` must return `inferaxis.Frame`.
+- `act_src_fn(frame, request)` must return `inferaxis.Action` or `list[inferaxis.Action]`.
+- `act_fn(action)` receives `inferaxis.Action`.
+- `timestamp_ns` and `sequence_id` are generated by inferaxis internally.
+
+`command` is not a free string. It must match the declared command kind for that
+component. Built-ins include:
+
+- `joint_position`
+- `joint_position_delta`
+- `joint_velocity`
+- `cartesian_pose`
+- `cartesian_pose_delta`
+- `cartesian_twist`
+- `gripper_position`
+- `gripper_position_delta`
+- `gripper_velocity`
+- `gripper_open_close`
+- `hand_joint_position`
+- `hand_joint_position_delta`
+- `eef_activation`
+
+Project-specific command kinds can be registered as `custom:...`.
+
+## Runtime Features
+
+`run_step(...)` is the single outer loop entrypoint. `InferenceRuntime(...)`
+adds optimization and scheduling without changing that outer call style.
 
 ```python
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
-    overlap_ratio=0.2,
+    overlap_ratio=0.5,
+    action_optimizers=[
+        infra.ActionEnsembler(current_weight=0.5),
+        infra.ActionInterpolator(steps=1),
+    ],
+    realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
-result = infra.run_step(robot, source=policy, runtime=runtime)
-```
-
-`source=` is the preferred name because the second side may be a local policy,
-a remote policy client, a teleop object exposing `next_action(frame)`, or a
-plain callable. `policy=` still works as a compatibility alias. `robot` stays
-local-only in inferaxis's design; remote deployment belongs on the source/policy
-side. If one robot class also produces teleop actions itself, it can play both
-roles with `run_step(robot, source=robot)`.
-For inferaxis's own remote transport, `RemotePolicy(...)` only needs connection
-parameters. It infers action decoding from the remote response or server
-metadata instead of asking you to repeat schema fields locally.
-
-Per-step timing is now internal runtime bookkeeping rather than a public
-`run_step(...)` output. If you explicitly want timing analysis to choose async
-settings, use `profile_sync_inference(...)` instead.
-
-If the remote side is an OpenPI policy server, keep the same outer flow and
-adapt only the wire payload at the source boundary:
-
-```python
-from inferaxis.contrib import remote as infra_remote
-
-source = infra_remote.RemotePolicy(
-    host="127.0.0.1",
-    port=8000,
-    openpi=True,
+result = infra.run_step(
+    observe_fn=executor.get_obs,
+    act_fn=executor.send_action,
+    act_src_fn=policy.infer,
+    runtime=runtime,
 )
-
-result = infra.run_step(robot, source=source)
 ```
 
-For the default OpenPI path, inferaxis infers request/response adaptation from
-the wrapped robot spec in the background. If you want to reuse the official
-OpenPI client object directly, pass it through `runner=...` as long as it
-exposes `infer(obs)`.
+This lets the same data interface support:
 
-For normal usage, that is the whole story. `check_*`, `from_config(...)`, and
-other lower-level helpers are still available, but they are optional integration
-tools rather than the main user path.
+- sync inference with action smoothing
+- async overlap-based chunk scheduling
+- paced closed-loop execution
+- latency profiling against a required target control hz via `profile_sync_inference(...)`
+- mode recommendation via `recommend_inference_mode(...)`
+
+For chunked async execution, inferaxis uses:
+
+- `overlap_steps = floor(overlap_ratio * chunk_size)`
+- `trigger_steps = ceil(H_hat) + overlap_steps`
+
+Here `H_hat` is an EMA of observed request latency measured directly in control
+steps. When a reply arrives, inferaxis drops the stale prefix and either
+switches to the aligned new chunk directly or blends the overlap prefix when
+`ActionEnsembler(...)` is enabled.
+
+## Validation
+
+`check_policy(...)` and `check_pair(...)` are dry-run validation helpers.
+
+- They validate the interface contract.
+- They issue at most one observation request and one policy inference call.
+- They do not call `act_fn(...)`.
 
 ## Examples
 
-`examples/` is intentionally fixed to four core scripts:
+The public examples are fixed to these five paths:
 
 1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
 3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
+5. [`examples/05_profile_inference_latency.py`](./examples/05_profile_inference_latency.py)
 
-There is also one optional remote folder:
+Together they show the intended scope of the system: one shared data interface,
+one outer loop, multiple inference-time use cases.
 
-5. [`examples/remote/serve_inferaxis_policy.py`](./examples/remote/serve_inferaxis_policy.py)
-6. [`examples/remote/robot_with_inferaxis_remote_policy.py`](./examples/remote/robot_with_inferaxis_remote_policy.py)
-
-They all share [`examples/basic_runtime.yml`](./examples/basic_runtime.yml).
-That shared config defines two placeholder components,
-`YOUR_OWN_arm` and `YOUR_OWN_gripper`, and the Python examples emit one grouped
-`Action.commands` mapping per control step.
-
-## Design
-
-inferaxis is centered on unified runtime data flow. The core pieces are
-`Frame`, `Action`, `RobotProtocol`, `PolicyProtocol`, `RobotMixin`,
-`PolicyMixin`, `run_step()`, and `InferenceRuntime`. The preferred split is that
-your robot and policy keep doing their native work, while inferaxis handles
-alignment, remapping, validation, and runtime flow around them.
-
-If you need more detail, the extra docs are [`docs/mixin_guide.md`](./docs/mixin_guide.md),
-[`docs/yaml_config_example.yml`](./docs/yaml_config_example.yml), and
-[`docs/examples_guide.md`](./docs/examples_guide.md).
+More detail lives in [`docs/plain_objects_guide.md`](./docs/plain_objects_guide.md)
+and [`docs/examples_guide.md`](./docs/examples_guide.md).

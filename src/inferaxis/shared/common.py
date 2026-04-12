@@ -1,17 +1,15 @@
-"""Shared helpers for inference-time runtime modules."""
+"""Small shared helpers used across inferaxis internals."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import math
-from typing import Any
 
-from ...core.errors import InterfaceValidationError
-from ..shared.coerce import as_action, as_frame
+from ..core.errors import InterfaceValidationError
+from .coerce import as_action, as_frame
 
 
 def reset_if_possible(component: object) -> None:
-    """Reset a stateful runtime component when it exposes ``reset()``."""
+    """Reset a stateful component when it exposes ``reset()``."""
 
     reset = getattr(component, "reset", None)
     if callable(reset):
@@ -31,4 +29,6 @@ def validate_positive_number(value: object, field_name: str) -> float:
     if number <= 0.0:
         raise InterfaceValidationError(f"{field_name} must be > 0, got {value!r}.")
     return number
+
+
 __all__ = ["as_action", "as_frame", "reset_if_possible", "validate_positive_number"]

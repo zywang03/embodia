@@ -8,8 +8,7 @@ robotics middleware stack.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
-from numbers import Real
+from enum import StrEnum
 import time
 from typing import Any
 
@@ -28,6 +27,24 @@ KNOWN_COMPONENT_TYPES: tuple[str, ...] = (
 )
 CUSTOM_COMMAND_KIND_PREFIX = "custom:"
 _USES_COMPONENT_DOF_META_KEY = "uses_component_dof"
+
+
+class BuiltinCommandKind(StrEnum):
+    """Canonical built-in command-kind names."""
+
+    JOINT_POSITION = "joint_position"
+    JOINT_POSITION_DELTA = "joint_position_delta"
+    JOINT_VELOCITY = "joint_velocity"
+    CARTESIAN_POSE = "cartesian_pose"
+    CARTESIAN_POSE_DELTA = "cartesian_pose_delta"
+    CARTESIAN_TWIST = "cartesian_twist"
+    GRIPPER_POSITION = "gripper_position"
+    GRIPPER_POSITION_DELTA = "gripper_position_delta"
+    GRIPPER_VELOCITY = "gripper_velocity"
+    GRIPPER_OPEN_CLOSE = "gripper_open_close"
+    HAND_JOINT_POSITION = "hand_joint_position"
+    HAND_JOINT_POSITION_DELTA = "hand_joint_position_delta"
+    EEF_ACTIVATION = "eef_activation"
 
 
 def _ensure_non_empty_string(value: object, field_name: str) -> str:
@@ -84,19 +101,6 @@ def _ensure_string_list(
         seen.add(text)
         result.append(text)
     return result
-
-
-def _ensure_real_number(value: object, field_name: str) -> float:
-    """Validate one finite real number while rejecting ``bool``."""
-
-    if isinstance(value, bool) or not isinstance(value, Real):
-        raise InterfaceValidationError(
-            f"{field_name} must be a real number, got {type(value).__name__}."
-        )
-    number = float(value)
-    if not math.isfinite(number):
-        raise InterfaceValidationError(f"{field_name} must be finite, got {value!r}.")
-    return number
 
 
 def _ensure_ndarray(
@@ -249,6 +253,7 @@ class Command:
     def __post_init__(self) -> None:
         """Normalize command vectors at construction time."""
 
+        self.command = _ensure_non_empty_string(self.command, "command.command")
         self.value = to_numpy_array(
             self.value,
             field_name="command.value",
@@ -795,77 +800,77 @@ def _builtin_command_kind_specs() -> tuple[CommandKindSpec, ...]:
 
     return (
         CommandKindSpec(
-            name="joint_position",
+            name=BuiltinCommandKind.JOINT_POSITION,
             description="Absolute joint position command.",
             allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
-            name="joint_position_delta",
+            name=BuiltinCommandKind.JOINT_POSITION_DELTA,
             description="Joint position delta command.",
             allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
-            name="joint_velocity",
+            name=BuiltinCommandKind.JOINT_VELOCITY,
             description="Joint velocity command.",
             allowed_component_types=["arm", "hand", "base", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
-            name="cartesian_pose",
+            name=BuiltinCommandKind.CARTESIAN_POSE,
             description="End-effector cartesian pose command.",
             allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
-            name="cartesian_pose_delta",
+            name=BuiltinCommandKind.CARTESIAN_POSE_DELTA,
             description="End-effector cartesian pose delta command.",
             allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
-            name="cartesian_twist",
+            name=BuiltinCommandKind.CARTESIAN_TWIST,
             description="End-effector cartesian twist command.",
             default_dim=6,
             allowed_component_types=["arm", "custom"],
         ),
         CommandKindSpec(
-            name="gripper_position",
+            name=BuiltinCommandKind.GRIPPER_POSITION,
             description="Absolute gripper position command.",
             default_dim=1,
             allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
-            name="gripper_position_delta",
+            name=BuiltinCommandKind.GRIPPER_POSITION_DELTA,
             description="Gripper position delta command.",
             default_dim=1,
             allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
-            name="gripper_velocity",
+            name=BuiltinCommandKind.GRIPPER_VELOCITY,
             description="Gripper velocity command.",
             default_dim=1,
             allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
-            name="gripper_open_close",
+            name=BuiltinCommandKind.GRIPPER_OPEN_CLOSE,
             description="Binary or scalar open/close gripper command.",
             default_dim=1,
             allowed_component_types=["gripper", "custom"],
         ),
         CommandKindSpec(
-            name="hand_joint_position",
+            name=BuiltinCommandKind.HAND_JOINT_POSITION,
             description="Absolute dexterous-hand joint position command.",
             allowed_component_types=["hand", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
-            name="hand_joint_position_delta",
+            name=BuiltinCommandKind.HAND_JOINT_POSITION_DELTA,
             description="Dexterous-hand joint position delta command.",
             allowed_component_types=["hand", "custom"],
             meta={_USES_COMPONENT_DOF_META_KEY: True},
         ),
         CommandKindSpec(
-            name="eef_activation",
+            name=BuiltinCommandKind.EEF_ACTIVATION,
             description="Generic end-effector activation command.",
             default_dim=1,
             allowed_component_types=["gripper", "hand", "suction", "custom"],
@@ -885,6 +890,7 @@ _register_builtin_command_kinds()
 
 __all__ = [
     "Action",
+    "BuiltinCommandKind",
     "COMMAND_KIND_REGISTRY",
     "CUSTOM_COMMAND_KIND_PREFIX",
     "ComponentSpec",

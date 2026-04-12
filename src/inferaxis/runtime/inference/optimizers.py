@@ -9,7 +9,7 @@ import numpy as np
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Command, Frame
 from ..checks import validate_action
-from .common import as_action
+from ...shared.common import as_action
 
 
 def _clone_command(command: Command) -> Command:

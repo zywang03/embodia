@@ -14,30 +14,29 @@ import inferaxis as infra
 import numpy as np
 
 
-class YourRobot(infra.RobotMixin):
-    """Pretend this is your original outer robot class after one small edit."""
+class YourRobot:
+    """Plain local executor used by the collection loop."""
 
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def YOUR_OWN_get_obs(self) -> dict[str, object]:
-        return {
-            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
-            "state": {
+    def get_obs(self) -> infra.Frame:
+        return infra.Frame(
+            images={"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={
                 "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
                 "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
-        }
+        )
 
-    def YOUR_OWN_send_action(self, action: object) -> object:
+    def send_action(self, action: infra.Action) -> infra.Action:
         """Pretend the robot controller returns the final accepted action."""
 
-        accepted = infra.coerce_action(action)
-        self.last_native_action = accepted
-        return accepted
+        self.last_native_action = action
+        return action
 
-    def YOUR_OWN_reset(self) -> dict[str, object]:
-        return self.YOUR_OWN_get_obs()
+    def reset(self) -> infra.Frame:
+        return self.get_obs()
 
 
 class DemoTeleop:
@@ -47,49 +46,59 @@ class DemoTeleop:
         self.cursor = 0
 
     script = [
-        {
-            "YOUR_OWN_arm": {
-                "command": "cartesian_pose_delta",
-                "value": np.array([0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
-            },
-            "YOUR_OWN_gripper": {
-                "command": "gripper_position",
-                "value": np.array([1.0], dtype=np.float64),
-            },
-        },
-        {
-            "YOUR_OWN_arm": {
-                "command": "cartesian_pose_delta",
-                "value": np.array([0.02, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
-            },
-            "YOUR_OWN_gripper": {
-                "command": "gripper_position",
-                "value": np.array([0.5], dtype=np.float64),
-            },
-        },
-        {
-            "YOUR_OWN_arm": {
-                "command": "cartesian_pose_delta",
-                "value": np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
-            },
-            "YOUR_OWN_gripper": {
-                "command": "gripper_position",
-                "value": np.array([0.0], dtype=np.float64),
-            },
-        },
+        infra.Action(
+            commands={
+                "YOUR_OWN_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.array([0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+                ),
+                "YOUR_OWN_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array([1.0], dtype=np.float64),
+                ),
+            }
+        ),
+        infra.Action(
+            commands={
+                "YOUR_OWN_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.array([0.02, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+                ),
+                "YOUR_OWN_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array([0.5], dtype=np.float64),
+                ),
+            }
+        ),
+        infra.Action(
+            commands={
+                "YOUR_OWN_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.array([-0.01, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64),
+                ),
+                "YOUR_OWN_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array([0.0], dtype=np.float64),
+                ),
+            }
+        ),
     ]
 
-    def next_action(self, frame: infra.Frame) -> dict[str, object]:
-        """Return one scripted action without exposing runtime metadata."""
+    def infer(
+        self,
+        obs: infra.Frame,
+        request: infra.ChunkRequest,
+    ) -> infra.Action:
+        """Return one scripted action and ignore chunk request metadata."""
 
-        del frame
+        del obs, request
         index = min(self.cursor, len(self.script) - 1)
         self.cursor += 1
         return self.script[index]
 
 
 def main() -> None:
-    robot = YourRobot.from_yaml("examples/basic_runtime.yml")
+    robot = YourRobot()
     teleop = DemoTeleop()
     output_path = Path("tmp") / "episode_0000.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +108,11 @@ def main() -> None:
     records.append({"frame": infra.frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
-        result = infra.run_step(robot, source=teleop)
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=teleop.infer,
+        )
         records.append(
             {
                 "frame": infra.frame_to_dict(result.frame),

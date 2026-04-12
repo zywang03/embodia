@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from inferaxis import Action, Frame, PolicyMixin, RobotMixin
+from inferaxis import Action, ChunkRequest, Frame, PolicySpec, RobotSpec
+from inferaxis.core.schema import ComponentSpec, PolicyOutputSpec
 
 
 def demo_image() -> np.ndarray:
@@ -19,60 +20,63 @@ def assert_array_equal(testcase: object, actual: object, expected: object) -> No
     np.testing.assert_allclose(np.asarray(actual), np.asarray(expected))
 
 
-class DummyRobot(RobotMixin):
+class DummyRobot:
     def __init__(self) -> None:
         self.last_action: Action | None = None
 
-    def _get_spec_impl(self) -> dict[str, object]:
-        return {
-            "name": "dummy_robot",
-            "image_keys": ["front_rgb"],
-            "components": [
-                {
-                    "name": "arm",
-                    "type": "arm",
-                    "dof": 6,
-                    "command": ["cartesian_pose_delta"],
-                }
+    def get_spec(self) -> RobotSpec:
+        return RobotSpec(
+            name="dummy_robot",
+            image_keys=["front_rgb"],
+            components=[
+                ComponentSpec(
+                    name="arm",
+                    type="arm",
+                    dof=6,
+                    command=["cartesian_pose_delta"],
+                )
             ],
-        }
+        )
 
-    def _observe_impl(self) -> dict[str, object]:
-        return {
-            "images": {"front_rgb": demo_image()},
-            "state": {"arm": np.zeros(6, dtype=np.float64)},
-        }
+    def get_obs(self) -> Frame:
+        return Frame(
+            images={"front_rgb": demo_image()},
+            state={"arm": np.zeros(6, dtype=np.float64)},
+        )
 
-    def _act_impl(self, action: Action) -> None:
+    def send_action(self, action: Action) -> None:
         self.last_action = action
 
-    def _reset_impl(self) -> dict[str, object]:
-        return self._observe_impl()
+    def reset(self) -> Frame:
+        return self.get_obs()
 
 
-class DummyPolicy(PolicyMixin):
-    def _get_spec_impl(self) -> dict[str, object]:
-        return {
-            "name": "dummy_model",
-            "required_image_keys": ["front_rgb"],
-            "required_state_keys": ["arm"],
-            "required_task_keys": [],
-            "outputs": [
-                {
-                    "target": "arm",
-                    "command": "cartesian_pose_delta",
-                    "dim": 6,
-                }
+class DummyPolicy:
+    def get_spec(self) -> PolicySpec:
+        return PolicySpec(
+            name="dummy_model",
+            required_image_keys=["front_rgb"],
+            required_state_keys=["arm"],
+            outputs=[
+                PolicyOutputSpec(
+                    target="arm",
+                    command="cartesian_pose_delta",
+                    dim=6,
+                )
             ],
-        }
+        )
 
-    def _reset_impl(self) -> None:
+    def reset(self) -> None:
         return None
 
-    def _step_impl(self, frame: Frame) -> dict[str, object]:
-        return {
-            "arm": {
-                "command": "cartesian_pose_delta",
-                "value": [0.0] * 6,
-            }
-        }
+    def infer(
+        self,
+        obs: Frame,
+        request: ChunkRequest,
+    ) -> Action:
+        del obs, request
+        return Action.single(
+            target="arm",
+            command="cartesian_pose_delta",
+            value=np.zeros(6, dtype=np.float64),
+        )

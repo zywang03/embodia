@@ -5,41 +5,32 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
-from ..shared.action_source import (
+from ..checks import validate_action
+from ..flow import (
+    StepResult,
+    _execute_step_action,
+    _resolve_step_frame,
+)
+from ...shared.action_source import (
+    ActionSink,
     ActionSource,
-    coalesce_source_argument as _coalesce_source_argument,
-    resolve_action_source as _resolve_action_source,
+    FrameSource,
+    first_action_and_plan_length_from_action_call,
+    callable_key,
+    resolve_runtime_owner,
 )
-from ..shared.coerce import maybe_as_action as _maybe_as_action
-from ..shared.dispatch import (
-    POLICY_INFER_CHUNK_METHODS,
-    POLICY_INFER_METHODS,
-    POLICY_PLAN_METHODS,
-    POLICY_RESET_METHODS,
-    ROBOT_ACT_METHODS,
-    ROBOT_OBSERVE_METHODS,
-    format_method_options,
-    resolve_callable_method,
-)
-from ..shared.sequence import attach_runtime_frame_metadata
-from ..checks import validate_action, validate_frame
-from ..flow import StepResult, run_step
 from .chunk_scheduler import ChunkScheduler
-from .common import as_action, as_frame, reset_if_possible
+from ...shared.common import as_action, reset_if_possible
 from .control import RealtimeController
+from .optimizers import ActionEnsembler
 from .protocols import ActionOptimizer, ActionOptimizerProtocol
 
 
 class InferenceMode(StrEnum):
-    """Named runtime modes for :class:`InferenceRuntime`.
-
-    ``StrEnum`` keeps the values readable in user code while remaining fully
-    compatible with plain string-based configuration.
-    """
+    """Named runtime modes for :class:`InferenceRuntime`."""
 
     SYNC = "sync"
     ASYNC = "async"
@@ -58,12 +49,17 @@ class InferenceRuntime:
         init=False,
         repr=False,
     )
-    _chunk_scheduler_source_id: int | None = field(
+    _chunk_scheduler_key: object | None = field(
         default=None,
         init=False,
         repr=False,
     )
-    _chunk_scheduler_action_source_key: object | None = field(
+    _single_step_source_keys: set[object] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
+    _optimizer_source_key: object | None = field(
         default=None,
         init=False,
         repr=False,
@@ -86,285 +82,195 @@ class InferenceRuntime:
             ):
                 raise InterfaceValidationError(
                     "InferenceRuntime.overlap_ratio must be a real number in "
-                    "the range (0, 1)."
+                    "the range [0, 1)."
                 )
             self.overlap_ratio = float(self.overlap_ratio)
-            if not 0.0 < self.overlap_ratio < 1.0:
+            if not 0.0 <= self.overlap_ratio < 1.0:
                 raise InterfaceValidationError(
-                    "InferenceRuntime.overlap_ratio must be in the range (0, 1), "
+                    "InferenceRuntime.overlap_ratio must be in the range [0, 1), "
                     f"got {self.overlap_ratio!r}."
                 )
 
-    def reset(
-        self,
-        *,
-        source: object | None = None,
-        policy: object | None = None,
-    ) -> None:
+    def reset(self) -> None:
         """Reset source state and any attached runtime components."""
-
-        source_obj = _coalesce_source_argument(source, policy)
-        if source_obj is not None:
-            reset, reset_name = resolve_callable_method(source_obj, POLICY_RESET_METHODS)
-            if not callable(reset) or reset_name is None:
-                raise InterfaceValidationError(
-                    "InferenceRuntime.reset(source=...) requires the source to expose "
-                    f"{format_method_options(POLICY_RESET_METHODS)}."
-                )
-            try:
-                reset()
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"{type(source_obj).__name__}.{reset_name}() raised "
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
 
         for optimizer in self.action_optimizers:
             reset_if_possible(optimizer)
 
         if self._chunk_scheduler is not None:
             self._chunk_scheduler.reset()
-        self._chunk_scheduler_source_id = None
-        self._chunk_scheduler_action_source_key = None
+        self._chunk_scheduler_key = None
+        self._optimizer_source_key = None
 
         if self.realtime_controller is not None:
             self.realtime_controller.reset()
 
-    def optimize_action(self, action: Action, *, frame: Frame) -> Action:
-        """Run the configured action optimizers in sequence."""
+    def close(self) -> None:
+        """Release any background scheduler resources held by this runtime."""
 
-        current = as_action(action)
-        validate_action(current)
-
-        for index, optimizer in enumerate(self.action_optimizers):
-            try:
-                optimized = optimizer(current, frame)
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"action optimizer #{index} raised {type(exc).__name__}: {exc}"
-                ) from exc
-
-            current = as_action(optimized)
-            validate_action(current)
-
-        return current
-
-    @staticmethod
-    def _resolve_runtime_chunk_hooks(
-        source: object | None,
-        action_source: ActionSource,
-    ) -> tuple[
-        Any | None,
-        Any | None,
-    ]:
-        """Resolve optional source-level chunk hooks for runtime scheduling.
-
-        Supported optional hooks are:
-
-        - ``inferaxis_infer_chunk(frame, request)`` / ``infer_chunk(frame, request)``
-          for overlap-conditioned chunk generation
-        - ``plan(frame)`` for simple chunk generation without request context
-        """
-
-        candidates: list[object] = []
-        if source is not None:
-            candidates.append(source)
-        if action_source is not source:
-            candidates.append(action_source)
-
-        for candidate in candidates:
-            infer_chunk, _ = resolve_callable_method(
-                candidate,
-                POLICY_INFER_CHUNK_METHODS,
-            )
-            if callable(infer_chunk):
-                return (
-                    lambda _source, frame, request, _infer_chunk=infer_chunk: _infer_chunk(
-                        frame,
-                        request,
-                    ),
-                    None,
-                )
-
-            plan, _ = resolve_callable_method(candidate, POLICY_PLAN_METHODS)
-            if callable(plan):
-                return (
-                    None,
-                    lambda _source, frame, _plan=plan: _plan(frame),
-                )
-
-        return None, None
-
-    def _should_use_chunk_scheduler(self) -> bool:
-        """Return whether this runtime should route steps through chunk scheduling."""
-
-        return self.mode is InferenceMode.ASYNC or self.overlap_ratio is not None
-
-    @staticmethod
-    def _action_source_key(action_source: ActionSource) -> object:
-        """Return one stable identity key for a callable action source."""
-
-        bound_self = getattr(action_source, "__self__", None)
-        bound_func = getattr(action_source, "__func__", None)
-        if bound_self is not None and bound_func is not None:
-            return (id(bound_self), id(bound_func))
-        return id(action_source)
+        if self._chunk_scheduler is not None:
+            self._chunk_scheduler.close()
+            self._chunk_scheduler = None
+        self._chunk_scheduler_key = None
+        self._optimizer_source_key = None
 
     def _ensure_chunk_scheduler(
         self,
         *,
-        source: object | None,
-        action_source: ActionSource,
+        act_src_fn: ActionSource | None,
     ) -> ChunkScheduler | None:
         """Create one hidden chunk scheduler lazily when runtime mode needs it."""
 
-        if not self._should_use_chunk_scheduler():
+        scheduler_key = callable_key(act_src_fn)
+        if (
+            self.mode is not InferenceMode.ASYNC
+            and self.overlap_ratio is None
+            and scheduler_key in self._single_step_source_keys
+        ):
             return None
-
-        source_id = id(source) if source is not None else None
-        action_source_key = self._action_source_key(action_source)
+        if self.mode is InferenceMode.ASYNC and scheduler_key in self._single_step_source_keys:
+            raise InterfaceValidationError(
+                "InferenceRuntime(mode=ASYNC) requires act_src_fn=... to return "
+                "a chunk with more than one action."
+            )
         if self._chunk_scheduler is not None:
             if (
-                self._chunk_scheduler_source_id != source_id
-                or self._chunk_scheduler_action_source_key != action_source_key
+                self._chunk_scheduler_key != scheduler_key
+                or (
+                    self.mode is not InferenceMode.ASYNC
+                    and self.overlap_ratio is None
+                    and scheduler_key in self._single_step_source_keys
+                )
             ):
+                self._chunk_scheduler.close()
                 self._chunk_scheduler = None
+                self._chunk_scheduler_key = None
             else:
-                if self.overlap_ratio is not None:
-                    self._chunk_scheduler.overlap_ratio = self.overlap_ratio
+                self._chunk_scheduler.overlap_ratio = (
+                    self.overlap_ratio
+                    if self.overlap_ratio is not None
+                    else (0.2 if self.mode is InferenceMode.ASYNC else 0.0)
+                )
+                self._chunk_scheduler.use_overlap_blend = self._uses_overlap_blend()
                 return self._chunk_scheduler
 
-        chunk_provider, plan_provider = self._resolve_runtime_chunk_hooks(
-            source,
-            action_source,
+        if act_src_fn is None:
+            raise InterfaceValidationError(
+                "InferenceRuntime async/overlap scheduling requires act_src_fn=...."
+            )
+
+        scheduler_overlap_ratio = (
+            self.overlap_ratio
+            if self.overlap_ratio is not None
+            else (0.2 if self.mode is InferenceMode.ASYNC else 0.0)
         )
         scheduler = ChunkScheduler(
-            chunk_provider=chunk_provider,
-            plan_provider=plan_provider,
-            overlap_ratio=(
-                self.overlap_ratio if self.overlap_ratio is not None else 0.2
-            ),
+            action_source=act_src_fn,
+            overlap_ratio=scheduler_overlap_ratio,
+            use_overlap_blend=self._uses_overlap_blend(),
         )
         self._chunk_scheduler = scheduler
-        self._chunk_scheduler_source_id = source_id
-        self._chunk_scheduler_action_source_key = action_source_key
+        self._chunk_scheduler_key = scheduler_key
         return scheduler
+
+    def _uses_overlap_blend(self) -> bool:
+        """Return whether chunk handoff should blend overlap actions."""
+
+        for optimizer in self.action_optimizers:
+            if isinstance(optimizer, ActionEnsembler):
+                return True
+        return False
 
     def _run_step_impl(
         self,
-        robot: object,
-        source: object | None = None,
         *,
-        policy: object | None = None,
-        action_fn: ActionSource | None = None,
-        frame: Frame | Mapping[str, Any] | None = None,
+        observe_fn: FrameSource | None = None,
+        act_fn: ActionSink | None = None,
+        act_src_fn: ActionSource | None = None,
+        frame: Frame | Mapping[str, object] | None = None,
         execute_action: bool | None = None,
-        reset_policy: bool = False,
         pace_control: bool = True,
+        metadata_owner: object | None = None,
     ) -> StepResult:
-        """Internal implementation for runtime-managed inference."""
-        source_obj = _coalesce_source_argument(source, policy)
+        """Internal implementation for runtime-managed local execution."""
 
-        resolved_action_source, can_reset = _resolve_action_source(
-            source_obj,
-            action_fn,
-            robot=robot,
+        source_key = callable_key(act_src_fn)
+        known_single_step_source = source_key in self._single_step_source_keys
+        chunk_scheduler = self._ensure_chunk_scheduler(act_src_fn=act_src_fn)
+
+        frame_owner = (
+            metadata_owner
+            if metadata_owner is not None
+            else resolve_runtime_owner(observe_fn, act_src_fn)
         )
-        if reset_policy and not can_reset:
-            raise InterfaceValidationError(
-                "reset_policy=True requires a source object exposing "
-                f"{format_method_options(POLICY_RESET_METHODS)} together with "
-                f"{format_method_options(POLICY_INFER_METHODS)} or "
-                f"{format_method_options(POLICY_INFER_CHUNK_METHODS)}, not a bare callable."
-            )
-
-        if reset_policy:
-            self.reset(source=source_obj)
-
-        chunk_scheduler = self._ensure_chunk_scheduler(
-            source=source_obj,
-            action_source=resolved_action_source,
+        normalized_frame = _resolve_step_frame(
+            observe_fn,
+            frame,
+            owner=frame_owner,
         )
 
         if chunk_scheduler is None:
-            raw_result = run_step(
-                robot,
-                source=source_obj,
-                action_fn=action_fn,
-                frame=frame,
-                execute_action=False,
-                reset_policy=False,
-                runtime=None,
-            )
-            normalized_frame = raw_result.frame
-            raw_action = raw_result.raw_action
-            plan_refreshed = True
-        else:
-            if frame is None:
-                observe, observe_name = resolve_callable_method(
-                    robot,
-                    ROBOT_OBSERVE_METHODS,
+            if act_src_fn is None:
+                raise InterfaceValidationError(
+                    "run_step() requires act_src_fn=...."
                 )
-                if not callable(observe) or observe_name is None:
-                    raise InterfaceValidationError(
-                        f"{type(robot).__name__} must expose "
-                        f"{format_method_options(ROBOT_OBSERVE_METHODS)}."
-                    )
-                try:
-                    raw_frame = observe()
-                except Exception as exc:
-                    raise InterfaceValidationError(
-                        f"{type(robot).__name__}.{observe_name}() raised "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
-            else:
-                raw_frame = frame
-            normalized_frame = attach_runtime_frame_metadata(
-                as_frame(raw_frame),
-                owner=robot,
+            raw_action, returned_plan_length = (
+                first_action_and_plan_length_from_action_call(
+                    act_src_fn,
+                    normalized_frame,
+                )
             )
-            validate_frame(normalized_frame)
-
-            if (
-                chunk_scheduler.control_hz is None
-                and self.realtime_controller is not None
-            ):
-                chunk_scheduler.bind_control_hz(self.realtime_controller.hz)
-
-            action_context = (
-                source_obj
-                if source_obj is not None
-                else (action_fn if action_fn is not None else resolved_action_source)
-            )
-            raw_action, plan_refreshed, _ = chunk_scheduler.next_action(
-                action_context,
+            if known_single_step_source and returned_plan_length != 1:
+                raise InterfaceValidationError(
+                    "act_src_fn was previously classified as single-step for "
+                    f"this runtime, but returned chunk length "
+                    f"{returned_plan_length}."
+                )
+            if source_key is not None and returned_plan_length == 1:
+                self._single_step_source_keys.add(source_key)
+            plan_refreshed = True
+            apply_runtime_processing = returned_plan_length > 1
+        else:
+            raw_action, plan_refreshed = chunk_scheduler.next_action(
                 normalized_frame,
-                fallback_action_source=resolved_action_source,
                 prefetch_async=self.mode is InferenceMode.ASYNC,
             )
+            source_plan_length = chunk_scheduler.active_source_plan_length
+            apply_runtime_processing = source_plan_length > 1
+            if source_plan_length == 1 and source_key is not None:
+                self._single_step_source_keys.add(source_key)
+                chunk_scheduler.close()
+                self._chunk_scheduler = None
+                self._chunk_scheduler_key = None
+                if self.mode is InferenceMode.ASYNC:
+                    raise InterfaceValidationError(
+                        "InferenceRuntime(mode=ASYNC) requires act_src_fn=... "
+                        "to return a chunk with more than one action."
+                    )
 
-        optimized_action = self.optimize_action(raw_action, frame=normalized_frame)
+        action = raw_action
+        if apply_runtime_processing:
+            if self._optimizer_source_key != source_key:
+                for optimizer in self.action_optimizers:
+                    reset_if_possible(optimizer)
+                self._optimizer_source_key = source_key
+            for index, optimizer in enumerate(self.action_optimizers):
+                try:
+                    optimized = optimizer(action, normalized_frame)
+                except Exception as exc:
+                    raise InterfaceValidationError(
+                        f"action optimizer #{index} raised {type(exc).__name__}: {exc}"
+                    ) from exc
+                action = as_action(optimized)
+                validate_action(action)
+        else:
+            for optimizer in self.action_optimizers:
+                reset_if_possible(optimizer)
+            self._optimizer_source_key = None
 
         should_execute = True if execute_action is None else execute_action
-        final_action = optimized_action
         if should_execute:
-            act, act_name = resolve_callable_method(robot, ROBOT_ACT_METHODS)
-            if not callable(act) or act_name is None:
-                raise InterfaceValidationError(
-                    f"{type(robot).__name__} must expose "
-                    f"{format_method_options(ROBOT_ACT_METHODS)}."
-                )
-            try:
-                raw_executed_action = act(optimized_action)
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"{type(robot).__name__}.{act_name}(action) raised "
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
-            executed_action = _maybe_as_action(raw_executed_action)
-            if executed_action is not None:
-                validate_action(executed_action)
-                final_action = executed_action
+            action = _execute_step_action(act_fn, action)
 
         control_wait_s = 0.0
         if pace_control and self.realtime_controller is not None:
@@ -373,60 +279,39 @@ class InferenceRuntime:
         return StepResult(
             frame=normalized_frame,
             raw_action=raw_action,
-            action=final_action,
+            action=action,
             plan_refreshed=plan_refreshed,
             control_wait_s=control_wait_s,
         )
 
-    def step(
-        self,
-        robot: object,
-        source: object | None = None,
-        *,
-        policy: object | None = None,
-        action_fn: ActionSource | None = None,
-        frame: Frame | Mapping[str, Any] | None = None,
-        execute_action: bool | None = None,
-        reset_policy: bool = False,
-        pace_control: bool = True,
-    ) -> StepResult:
-        """Compatibility wrapper around :func:`inferaxis.run_step`."""
-
-        return run_step(
-            robot,
-            source,
-            policy=policy,
-            action_fn=action_fn,
-            frame=frame,
-            execute_action=True if execute_action is None else execute_action,
-            reset_policy=reset_policy,
-            runtime=self,
-            pace_control=pace_control,
-        )
-
     def run_step(
         self,
-        robot: object,
-        source: object | None = None,
         *,
-        policy: object | None = None,
-        action_fn: ActionSource | None = None,
-        frame: Frame | Mapping[str, Any] | None = None,
+        observe_fn: FrameSource | None = None,
+        act_fn: ActionSink | None = None,
+        act_src_fn: ActionSource | None = None,
+        frame: Frame | Mapping[str, object] | None = None,
         execute_action: bool | None = None,
-        reset_policy: bool = False,
         pace_control: bool = True,
     ) -> StepResult:
-        """Alias for :meth:`step` for users who prefer function-style naming."""
+        """Run one runtime-managed step directly through this runtime instance."""
 
-        return self.step(
-            robot,
-            source,
-            policy=policy,
-            action_fn=action_fn,
-            frame=frame,
-            execute_action=execute_action,
-            reset_policy=reset_policy,
-            pace_control=pace_control,
+        metadata_owner = resolve_runtime_owner(
+            observe_fn,
+            act_fn,
+            act_src_fn,
         )
+        return self._run_step_impl(
+            observe_fn=observe_fn,
+            act_fn=act_fn,
+            act_src_fn=act_src_fn,
+            frame=frame,
+            execute_action=True if execute_action is None else execute_action,
+            pace_control=pace_control,
+            metadata_owner=metadata_owner,
+        )
+
+    step = run_step
+
 
 __all__ = ["InferenceMode", "InferenceRuntime"]

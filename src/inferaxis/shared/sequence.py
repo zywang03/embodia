@@ -6,7 +6,7 @@ from threading import Lock
 import time
 from weakref import WeakKeyDictionary
 
-from ...core.schema import Frame
+from ..core.schema import Frame
 
 _SEQUENCE_ATTR = "_inferaxis_next_frame_sequence_id"
 _weak_counters: WeakKeyDictionary[object, int] = WeakKeyDictionary()
@@ -69,26 +69,6 @@ def _next_sequence_id(owner: object, *, reset: bool) -> int:
             return counter
 
 
-def ensure_frame_sequence_id(
-    frame: Frame,
-    *,
-    owner: object | None,
-    reset: bool = False,
-) -> Frame:
-    """Return ``frame`` with a framework-managed ``sequence_id`` when absent."""
-
-    if frame.sequence_id is not None or owner is None:
-        return frame
-    updated = Frame(
-        images={key: value.copy() for key, value in frame.images.items()},
-        state={key: value.copy() for key, value in frame.state.items()},
-        task=dict(frame.task),
-        meta=dict(frame.meta),
-    )
-    updated.timestamp_ns = frame.timestamp_ns
-    updated.sequence_id = _next_sequence_id(owner, reset=reset)
-    return updated
-
 def attach_runtime_frame_metadata(
     frame: Frame,
     *,
@@ -113,4 +93,4 @@ def attach_runtime_frame_metadata(
     return updated
 
 
-__all__ = ["attach_runtime_frame_metadata", "ensure_frame_sequence_id"]
+__all__ = ["attach_runtime_frame_metadata"]

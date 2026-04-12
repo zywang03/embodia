@@ -18,17 +18,6 @@ from .export import (
     policy_spec_to_dict,
     robot_spec_to_dict,
 )
-from .remap import (
-    invert_mapping,
-    remap_action,
-    remap_command,
-    remap_component_spec,
-    remap_frame,
-    remap_mapping_keys,
-    remap_policy_output_spec,
-    remap_policy_spec,
-    remap_robot_spec,
-)
 
 __all__ = [
     "action_to_dict",
@@ -42,16 +31,7 @@ __all__ = [
     "coerce_robot_spec",
     "command_to_dict",
     "frame_to_dict",
-    "invert_mapping",
     "policy_output_spec_to_dict",
     "policy_spec_to_dict",
-    "remap_action",
-    "remap_command",
-    "remap_component_spec",
-    "remap_frame",
-    "remap_mapping_keys",
-    "remap_policy_output_spec",
-    "remap_policy_spec",
-    "remap_robot_spec",
     "robot_spec_to_dict",
 ]

@@ -1,306 +1,166 @@
-"""Chunk scheduling helpers for inference runtime."""
+"""Chunk scheduling helpers for inference runtime.
+
+The scheduling rule follows a step-based async controller:
+
+1. Keep one executable action buffer.
+2. Keep at most one in-flight chunk request.
+3. Estimate request latency directly in control steps.
+4. Trigger the next request once:
+
+   ``len(buffer) <= ceil(H_hat) + floor(overlap_ratio * chunk_size)``
+
+5. When a reply arrives, drop the stale prefix that became unusable while the
+   request was in flight, then either:
+
+   - switch directly to the aligned new chunk, or
+   - blend the overlap prefix against the current buffer when
+     ``use_overlap_blend=True``.
+
+This keeps the implementation close to the runtime behavior we want to reason
+about: everything is expressed in steps, not seconds.
+"""
 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 import math
 import time
-import warnings
-from typing import Any
+
+import numpy as np
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Command, Frame
+from ...shared.common import as_action, as_frame
 from ..checks import validate_action, validate_frame
-from .common import as_action, as_frame, validate_positive_number
 from .protocols import (
     ActionPlan,
-    ActionPlanProvider,
-    ActionPlanProviderProtocol,
-    ChunkProvider,
-    ChunkProviderProtocol,
+    ActionSource,
+    ActionSourceProtocol,
     ChunkRequest,
 )
-
-FallbackActionSource = Callable[[Frame], Action | Mapping[str, Any]]
-
-
-@dataclass(slots=True)
-class _RobustMeanEstimator:
-    """Small rolling robust-mean estimator for timing signals."""
-
-    window_size: int = 64
-    startup_ignore_samples: int = 1
-    trim_ratio: float = 0.1
-    mad_scale: float = 3.5
-    _seen_samples: int = field(default=0, init=False, repr=False)
-    _samples: deque[float] = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        """Validate estimator hyperparameters."""
-
-        if isinstance(self.window_size, bool) or not isinstance(self.window_size, int):
-            raise InterfaceValidationError("window_size must be an int.")
-        if self.window_size <= 0:
-            raise InterfaceValidationError(
-                f"window_size must be > 0, got {self.window_size!r}."
-            )
-        if isinstance(self.startup_ignore_samples, bool) or not isinstance(
-            self.startup_ignore_samples,
-            int,
-        ):
-            raise InterfaceValidationError("startup_ignore_samples must be an int.")
-        if self.startup_ignore_samples < 0:
-            raise InterfaceValidationError(
-                "startup_ignore_samples must be >= 0, got "
-                f"{self.startup_ignore_samples!r}."
-            )
-        self.trim_ratio = float(self.trim_ratio)
-        if not 0.0 <= self.trim_ratio < 0.5:
-            raise InterfaceValidationError(
-                f"trim_ratio must be in [0, 0.5), got {self.trim_ratio!r}."
-            )
-        self.mad_scale = validate_positive_number(self.mad_scale, "mad_scale")
-        self._samples = deque(maxlen=self.window_size)
-
-    def add(self, value: float) -> None:
-        """Add one finite sample, skipping configured startup samples."""
-
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise InterfaceValidationError(
-                f"timing_sample_s must be a real number, got {type(value).__name__}."
-            )
-        sample = float(value)
-        if not math.isfinite(sample):
-            raise InterfaceValidationError(
-                f"timing_sample_s must be finite, got {value!r}."
-            )
-        if sample <= 0.0:
-            return
-        self._seen_samples += 1
-        if self._seen_samples <= self.startup_ignore_samples:
-            return
-        self._samples.append(sample)
-
-    @property
-    def mean(self) -> float | None:
-        """Return the current robust mean."""
-
-        if not self._samples:
-            return None
-
-        samples = sorted(self._samples)
-        median = samples[len(samples) // 2]
-        deviations = sorted(abs(sample - median) for sample in samples)
-        mad = deviations[len(deviations) // 2]
-
-        filtered = samples
-        if mad > 0.0:
-            scale = 1.4826 * mad
-            threshold = self.mad_scale * scale
-            filtered = [
-                sample
-                for sample in samples
-                if abs(sample - median) <= threshold
-            ]
-            if not filtered:
-                filtered = samples
-
-        trim = int(len(filtered) * self.trim_ratio)
-        if self.trim_ratio > 0.0 and len(filtered) >= 3:
-            trim = max(trim, 1)
-        if trim > 0 and len(filtered) > 2 * trim:
-            filtered = filtered[trim:-trim]
-
-        return sum(filtered) / len(filtered)
 
 
 @dataclass(slots=True)
 class _CompletedChunk:
-    """One completed chunk request."""
+    """One finished chunk request."""
 
     request: ChunkRequest
     plan: list[Action]
+    returned_plan_start_step: int
     completed_at_s: float
-    provider_call_s: float = 0.0
-
-
-@dataclass(slots=True)
-class _ChunkStepTiming:
-    """Timing details for one scheduler-managed action emission."""
-
-    provider_call_s: float = 0.0
-    wait_for_ready_s: float = 0.0
 
 
 @dataclass(slots=True)
 class ChunkScheduler:
-    """Overlap-conditioned chunk scheduler with optional async prefetch.
+    """Step-based async chunk scheduler.
 
-    Users specify ``overlap_ratio`` instead of raw step counts. For a chunk of
-    length ``N``, the scheduler uses ``ceil(N * overlap_ratio)`` overlap steps
-    and, in async mode, estimates how many additional lead steps are needed to
-    cover inference latency. The async request is started once:
+    ``action_source(frame, request)`` may return either:
 
-    ``remaining_steps <= overlap_steps + estimated_latency_steps``
+    - one ``Action`` (treated as chunk size ``1``), or
+    - a sequence of ``Action`` objects.
 
-    When used through ``InferenceRuntime(mode='sync')``, inferaxis keeps the same
-    overlap semantics but refreshes the next chunk synchronously once:
+    The scheduler keeps one executable buffer of future actions. In async mode,
+    it requests the next chunk before the buffer is exhausted. In sync mode, it
+    uses the same overlap rule but performs the refresh inline.
 
-    ``remaining_steps <= overlap_steps``
-
-    This keeps the policy API focused on ``obs -> action chunk`` while inferaxis
-    owns the chunk handoff policy.
+    ``request.history_actions`` exposes the tail overlap from the current
+    buffer. Sources may use it only as conditioning context, or they may return
+    a plan that repeats that overlap prefix. The scheduler aligns both forms.
     """
 
-    chunk_provider: ChunkProviderProtocol | ChunkProvider | None = None
-    plan_provider: ActionPlanProviderProtocol | ActionPlanProvider | None = None
+    action_source: ActionSourceProtocol | ActionSource | None = None
     overlap_ratio: float = 0.2
-    min_overlap_steps: int = 1
+    latency_ema_beta: float = 0.5
+    initial_latency_steps: float = 0.0
     max_chunk_size: int | None = None
-    control_hz: float | None = None
-    latency_budget_s: float | None = None
-    safety_margin_steps: int = 1
-    timing_window_size: int = 64
-    startup_ignore_inference_samples: int = 1
-    timing_trim_ratio: float = 0.1
-    warning_interval_s: float = 5.0
+    use_overlap_blend: bool = False
     clock: Callable[[], float] = time.perf_counter
-    warning_emitter: Callable[[str], None] | None = None
-    _active_chunk: list[Action] = field(default_factory=list, init=False, repr=False)
-    _active_index: int = field(default=0, init=False, repr=False)
+    _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
-    _ready_response: _CompletedChunk | None = field(default=None, init=False, repr=False)
-    _in_flight: Future[_CompletedChunk] | None = field(default=None, init=False, repr=False)
-    _latency_samples_s: deque[float] = field(init=False, repr=False)
-    _step_time_estimator: _RobustMeanEstimator = field(init=False, repr=False)
-    _inference_time_estimator: _RobustMeanEstimator = field(init=False, repr=False)
+    _reference_chunk_size: int = field(default=0, init=False, repr=False)
+    _active_source_plan_length: int = field(default=0, init=False, repr=False)
+    _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
+    _pending_future: Future[_CompletedChunk] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
-    _last_warning_time: float | None = field(default=None, init=False, repr=False)
-    _last_action_emitted_at_s: float | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate configuration and initialize runtime state."""
 
-        if self.chunk_provider is not None and self.plan_provider is not None:
-            raise InterfaceValidationError(
-                "ChunkScheduler accepts chunk_provider or plan_provider, not both."
-            )
         if isinstance(self.overlap_ratio, bool) or not isinstance(
             self.overlap_ratio,
             (int, float),
         ):
             raise InterfaceValidationError(
-                "overlap_ratio must be a real number in the range (0, 1)."
+                "overlap_ratio must be a real number in the range [0, 1)."
             )
         self.overlap_ratio = float(self.overlap_ratio)
-        if not 0.0 < self.overlap_ratio < 1.0:
+        if not 0.0 <= self.overlap_ratio < 1.0:
             raise InterfaceValidationError(
-                "overlap_ratio must be in the range (0, 1), got "
+                "overlap_ratio must be in the range [0, 1), got "
                 f"{self.overlap_ratio!r}."
             )
-        if isinstance(self.min_overlap_steps, bool) or not isinstance(
-            self.min_overlap_steps,
-            int,
+
+        if isinstance(self.latency_ema_beta, bool) or not isinstance(
+            self.latency_ema_beta,
+            (int, float),
         ):
             raise InterfaceValidationError(
-                "min_overlap_steps must be an int."
+                "latency_ema_beta must be a real number in the range (0, 1]."
             )
-        if self.min_overlap_steps < 0:
+        self.latency_ema_beta = float(self.latency_ema_beta)
+        if not 0.0 < self.latency_ema_beta <= 1.0:
             raise InterfaceValidationError(
-                f"min_overlap_steps must be >= 0, got {self.min_overlap_steps!r}."
+                "latency_ema_beta must be in the range (0, 1], got "
+                f"{self.latency_ema_beta!r}."
+            )
+
+        if isinstance(self.initial_latency_steps, bool) or not isinstance(
+            self.initial_latency_steps,
+            (int, float),
+        ):
+            raise InterfaceValidationError(
+                "initial_latency_steps must be a real number >= 0."
+            )
+        self.initial_latency_steps = float(self.initial_latency_steps)
+        if self.initial_latency_steps < 0.0:
+            raise InterfaceValidationError(
+                "initial_latency_steps must be >= 0, got "
+                f"{self.initial_latency_steps!r}."
             )
 
         if self.max_chunk_size is not None:
             if isinstance(self.max_chunk_size, bool) or not isinstance(
-                self.max_chunk_size, int
+                self.max_chunk_size,
+                int,
             ):
                 raise InterfaceValidationError(
                     "max_chunk_size must be an int when provided."
                 )
             if self.max_chunk_size <= 0:
                 raise InterfaceValidationError(
-                    "max_chunk_size must be > 0 when provided, "
-                    f"got {self.max_chunk_size!r}."
+                    "max_chunk_size must be > 0 when provided, got "
+                    f"{self.max_chunk_size!r}."
                 )
 
-        if self.control_hz is not None:
-            self.control_hz = validate_positive_number(self.control_hz, "control_hz")
-        if self.latency_budget_s is not None:
-            self.latency_budget_s = validate_positive_number(
-                self.latency_budget_s,
-                "latency_budget_s",
-            )
-        if isinstance(self.safety_margin_steps, bool) or not isinstance(
-            self.safety_margin_steps, int
-        ):
-            raise InterfaceValidationError("safety_margin_steps must be an int.")
-        if self.safety_margin_steps < 0:
-            raise InterfaceValidationError(
-                f"safety_margin_steps must be >= 0, got {self.safety_margin_steps!r}."
-            )
-        self.warning_interval_s = validate_positive_number(
-            self.warning_interval_s,
-            "warning_interval_s",
-        )
-        if isinstance(self.timing_window_size, bool) or not isinstance(
-            self.timing_window_size,
-            int,
-        ):
-            raise InterfaceValidationError("timing_window_size must be an int.")
-        if self.timing_window_size <= 0:
-            raise InterfaceValidationError(
-                f"timing_window_size must be > 0, got {self.timing_window_size!r}."
-            )
-        if isinstance(self.startup_ignore_inference_samples, bool) or not isinstance(
-            self.startup_ignore_inference_samples,
-            int,
-        ):
-            raise InterfaceValidationError(
-                "startup_ignore_inference_samples must be an int."
-            )
-        if self.startup_ignore_inference_samples < 0:
-            raise InterfaceValidationError(
-                "startup_ignore_inference_samples must be >= 0, got "
-                f"{self.startup_ignore_inference_samples!r}."
-            )
-        self.timing_trim_ratio = float(self.timing_trim_ratio)
-        if not 0.0 <= self.timing_trim_ratio < 0.5:
-            raise InterfaceValidationError(
-                "timing_trim_ratio must be in [0, 0.5), got "
-                f"{self.timing_trim_ratio!r}."
-            )
-        self._latency_samples_s = deque(maxlen=128)
-        self._step_time_estimator = _RobustMeanEstimator(
-            window_size=self.timing_window_size,
-            startup_ignore_samples=0,
-            trim_ratio=self.timing_trim_ratio,
-        )
-        self._inference_time_estimator = _RobustMeanEstimator(
-            window_size=self.timing_window_size,
-            startup_ignore_samples=self.startup_ignore_inference_samples,
-            trim_ratio=self.timing_trim_ratio,
-        )
-
-    def bind_control_hz(self, hz: float) -> None:
-        """Bind the scheduler to one control frequency."""
-
-        self.control_hz = validate_positive_number(hz, "control_hz")
+        self._latency_steps_estimate = self.initial_latency_steps
 
     def reset(self) -> None:
-        """Discard active/pending chunks but keep learned latency samples."""
+        """Discard buffered and in-flight chunks but keep learned latency."""
 
-        self._active_chunk.clear()
-        self._active_index = 0
+        self._buffer.clear()
         self._global_step = 0
-        self._ready_response = None
-        self._last_warning_time = None
-        self._last_action_emitted_at_s = None
-        if self._in_flight is not None:
-            self._in_flight.cancel()
-        self._in_flight = None
+        self._reference_chunk_size = 0
+        self._active_source_plan_length = 0
+        if self._pending_future is not None:
+            self._pending_future.cancel()
+        self._pending_future = None
 
     def close(self) -> None:
         """Shut down background request execution."""
@@ -311,48 +171,18 @@ class ChunkScheduler:
             self._executor = None
 
     @property
-    def estimated_p99_latency_s(self) -> float | None:
-        """Return the observed p99 request latency when samples exist."""
+    def active_source_plan_length(self) -> int:
+        """Return the source chunk length most recently accepted."""
 
-        if not self._latency_samples_s:
-            return None
-        samples = sorted(self._latency_samples_s)
-        index = max(math.ceil(len(samples) * 0.99) - 1, 0)
-        return samples[index]
-
-    @property
-    def estimated_step_time_s(self) -> float | None:
-        """Return the robust mean control-step interval."""
-
-        return self._step_time_estimator.mean
-
-    @property
-    def estimated_inference_time_s(self) -> float | None:
-        """Return the robust mean request latency, excluding startup samples."""
-
-        return self._inference_time_estimator.mean
+        return self._active_source_plan_length
 
     def estimated_latency_steps(self) -> int:
-        """Return the current request lead implied by observed latency."""
+        """Return the current step-latency estimate used for triggering."""
 
-        latency_s = self.estimated_inference_time_s
-        if latency_s is None:
-            latency_s = self.estimated_p99_latency_s
-        if latency_s is None:
-            latency_s = self.latency_budget_s
-        if latency_s is None or latency_s <= 0.0:
-            return 0
-
-        step_time_s = self.estimated_step_time_s
-        if step_time_s is None:
-            if self.control_hz is None:
-                return 0
-            step_time_s = 1.0 / self.control_hz
-
-        return max(math.ceil(latency_s / step_time_s) + self.safety_margin_steps, 0)
+        return max(int(math.ceil(self._latency_steps_estimate)), 0)
 
     def overlap_steps_for_chunk(self, chunk_length: int) -> int:
-        """Return the overlap size for one concrete chunk length."""
+        """Return ``floor(overlap_ratio * chunk_length)``."""
 
         if isinstance(chunk_length, bool) or not isinstance(chunk_length, int):
             raise InterfaceValidationError(
@@ -364,9 +194,7 @@ class ChunkScheduler:
             )
         if chunk_length == 0:
             return 0
-
-        computed = math.ceil(chunk_length * self.overlap_ratio)
-        return min(max(computed, self.min_overlap_steps), chunk_length)
+        return min(int(math.floor(self.overlap_ratio * chunk_length)), chunk_length)
 
     def request_trigger_steps(
         self,
@@ -374,77 +202,12 @@ class ChunkScheduler:
         *,
         include_latency: bool = True,
     ) -> int:
-        """Return the remaining-step threshold that starts the next request."""
+        """Return the request threshold for one chunk length."""
 
-        trigger_steps = self.overlap_steps_for_chunk(chunk_length)
-        if include_latency:
-            trigger_steps += self.estimated_latency_steps()
-        return trigger_steps
-
-    def _emit_warning(self, message: str) -> None:
-        """Emit one throttled runtime warning."""
-
-        if self.warning_emitter is not None:
-            self.warning_emitter(message)
-            return
-        warnings.warn(message, RuntimeWarning, stacklevel=2)
-
-    def _maybe_warn(self, message: str) -> None:
-        """Emit one throttled warning when enough time has passed."""
-
-        now = float(self.clock())
-        if (
-            self._last_warning_time is not None
-            and now - self._last_warning_time < self.warning_interval_s
-        ):
-            return
-        self._emit_warning(message)
-        self._last_warning_time = now
-
-    def _record_inference_time(self, latency_s: float) -> None:
-        """Record one request latency into the timing estimators."""
-
-        self._latency_samples_s.append(latency_s)
-        self._inference_time_estimator.add(latency_s)
-
-    def _record_action_emission(self, emitted_at_s: float) -> None:
-        """Record the observed control-step interval between two emissions."""
-
-        if self._last_action_emitted_at_s is not None:
-            interval_s = max(emitted_at_s - self._last_action_emitted_at_s, 0.0)
-            if interval_s > 0.0:
-                self._step_time_estimator.add(interval_s)
-        self._last_action_emitted_at_s = emitted_at_s
-
-    def _maybe_warn_timing_budget(
-        self,
-        chunk_length: int,
-        *,
-        include_latency: bool,
-    ) -> None:
-        """Warn when latency consumes most or all of one chunk."""
-
-        if not include_latency:
-            return
-        if chunk_length <= 0:
-            return
         overlap_steps = self.overlap_steps_for_chunk(chunk_length)
-        latency_steps = self.estimated_latency_steps()
-        trigger_steps = self.request_trigger_steps(
-            chunk_length,
-            include_latency=True,
-        )
-        if trigger_steps < chunk_length:
-            return
-
-        hz_text = "unknown" if self.control_hz is None else f"{self.control_hz:.3f}"
-        self._maybe_warn(
-            "ChunkScheduler estimated latency requires requesting the next chunk "
-            "before or immediately when the current chunk becomes active: "
-            f"chunk_length={chunk_length}, overlap_steps={overlap_steps}, "
-            f"latency_steps={latency_steps}, request_trigger_steps={trigger_steps}, "
-            f"control_hz={hz_text}."
-        )
+        if not include_latency:
+            return overlap_steps
+        return self.estimated_latency_steps() + overlap_steps
 
     def _clone_action(self, action: Action) -> Action:
         """Return a detached copy of one standardized action."""
@@ -462,15 +225,84 @@ class ChunkScheduler:
             meta=dict(action.meta),
         )
 
-    def _normalize_plan(self, plan: ActionPlan) -> list[Action]:
-        """Coerce and validate one action plan or chunk."""
+    def _actions_match(self, left: Action, right: Action) -> bool:
+        """Return whether two actions are structurally identical."""
 
-        if isinstance(plan, (Action, Mapping)):
+        if left.meta != right.meta:
+            return False
+        if left.commands.keys() != right.commands.keys():
+            return False
+        for target, left_command in left.commands.items():
+            right_command = right.commands[target]
+            if left_command.command != right_command.command:
+                return False
+            if left_command.ref_frame != right_command.ref_frame:
+                return False
+            if left_command.meta != right_command.meta:
+                return False
+            if not np.array_equal(left_command.value, right_command.value):
+                return False
+        return True
+
+    def _actions_can_blend(self, left: Action, right: Action) -> bool:
+        """Return whether two actions can be fused safely."""
+
+        if left.commands.keys() != right.commands.keys():
+            return False
+        for target, left_command in left.commands.items():
+            right_command = right.commands[target]
+            if left_command.command != right_command.command:
+                return False
+            if left_command.ref_frame != right_command.ref_frame:
+                return False
+            if left_command.meta != right_command.meta:
+                return False
+            if left_command.value.shape != right_command.value.shape:
+                return False
+        return True
+
+    def _blend_overlap_action(
+        self,
+        old_action: Action,
+        new_action: Action,
+        *,
+        index: int,
+        total: int,
+    ) -> Action:
+        """Blend one overlap step using a linear old->new annealing weight."""
+
+        if not self._actions_can_blend(old_action, new_action):
+            return self._clone_action(new_action)
+
+        if total <= 1:
+            old_weight = 0.5
+        else:
+            old_weight = 1.0 - (index / (total - 1))
+
+        blended_commands: dict[str, Command] = {}
+        for target, new_command in new_action.commands.items():
+            old_command = old_action.commands[target]
+            blended_commands[target] = Command(
+                command=new_command.command,
+                value=old_command.value * old_weight
+                + new_command.value * (1.0 - old_weight),
+                ref_frame=new_command.ref_frame,
+                meta=dict(new_command.meta),
+            )
+        return Action(
+            commands=blended_commands,
+            meta=dict(new_action.meta),
+        )
+
+    def _normalize_plan(self, plan: ActionPlan) -> list[Action]:
+        """Coerce and validate one returned chunk."""
+
+        if isinstance(plan, Action):
             normalized = [as_action(plan)]
         elif isinstance(plan, (str, bytes)) or not isinstance(plan, Sequence):
             raise InterfaceValidationError(
-                "chunk_provider must return an action-like object or a sequence of "
-                f"action-like objects, got {type(plan).__name__}."
+                "act_src_fn(frame, request) must return an Action or a sequence "
+                f"of Action, got {type(plan).__name__}."
             )
         else:
             normalized = [as_action(item) for item in plan]
@@ -486,113 +318,86 @@ class ChunkScheduler:
             validate_action(action)
         return [self._clone_action(action) for action in normalized]
 
-    def _build_request(self, *, include_latency: bool) -> ChunkRequest:
-        """Build one chunk request from the current scheduler state."""
+    def _reference_chunk_size_for_request(self) -> int:
+        """Return the chunk size used for overlap and trigger calculations."""
 
-        active_length = len(self._active_chunk)
-        overlap_steps = self.overlap_steps_for_chunk(active_length)
-        history_end = active_length
-        history_start = max(history_end - overlap_steps, 0)
+        if self._reference_chunk_size > 0:
+            return self._reference_chunk_size
+        return len(self._buffer)
+
+    def _build_request(self, *, include_latency: bool) -> ChunkRequest:
+        """Build one request from the current buffer state."""
+
+        buffer_list = list(self._buffer)
+        reference_chunk_size = self._reference_chunk_size_for_request()
+        overlap_steps = self.overlap_steps_for_chunk(reference_chunk_size)
+        history_count = min(overlap_steps, len(buffer_list))
+        history_start = len(buffer_list) - history_count
         history_actions = [
             self._clone_action(action)
-            for action in self._active_chunk[history_start:history_end]
+            for action in buffer_list[history_start:]
         ]
-        latency_steps = self.estimated_latency_steps() if include_latency else 0
-        current_chunk_start_step = max(self._global_step - self._active_index, 0)
-        plan_start_step = current_chunk_start_step + history_start
         return ChunkRequest(
             request_step=self._global_step,
             request_time_s=float(self.clock()),
             history_start=history_start,
-            history_end=history_end,
-            active_chunk_length=active_length,
-            remaining_steps=max(active_length - self._active_index, 0),
+            history_end=len(buffer_list),
+            active_chunk_length=len(buffer_list),
+            remaining_steps=len(buffer_list),
             overlap_steps=overlap_steps,
-            latency_steps=latency_steps,
+            latency_steps=self.estimated_latency_steps() if include_latency else 0,
             request_trigger_steps=self.request_trigger_steps(
-                active_length,
+                reference_chunk_size,
                 include_latency=include_latency,
             ),
-            plan_start_step=plan_start_step,
+            plan_start_step=self._global_step + history_start,
             history_actions=history_actions,
         )
 
-    def _call_chunk_provider(
+    def _call_action_source(
         self,
-        source: object,
         frame: Frame,
         request: ChunkRequest,
-        *,
-        fallback_action_source: FallbackActionSource | None,
-    ) -> tuple[list[Action], float]:
-        """Run the configured chunk provider or fall back to single-step action."""
+    ) -> tuple[list[Action], int]:
+        """Run the configured source and infer the returned plan start step."""
 
-        raw_plan: ActionPlan
-        provider = self.chunk_provider
-        if provider is not None:
-            try:
-                provider_started_at_s = float(self.clock())
-                raw_plan = provider(source, frame, request)
-                provider_call_s = max(
-                    float(self.clock()) - provider_started_at_s,
-                    0.0,
-                )
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"chunk_provider raised {type(exc).__name__}: {exc}"
-                ) from exc
-        elif self.plan_provider is not None:
-            try:
-                provider_started_at_s = float(self.clock())
-                raw_plan = self.plan_provider(source, frame)
-                provider_call_s = max(
-                    float(self.clock()) - provider_started_at_s,
-                    0.0,
-                )
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"plan_provider raised {type(exc).__name__}: {exc}"
-                ) from exc
-        elif fallback_action_source is not None:
-            try:
-                provider_started_at_s = float(self.clock())
-                raw_plan = fallback_action_source(frame)
-                provider_call_s = max(
-                    float(self.clock()) - provider_started_at_s,
-                    0.0,
-                )
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"fallback action source raised {type(exc).__name__}: {exc}"
-                ) from exc
-        else:
+        if self.action_source is None:
+            raise InterfaceValidationError("ChunkScheduler needs action_source=....")
+
+        try:
+            raw_plan = self.action_source(frame, request)
+        except Exception as exc:
             raise InterfaceValidationError(
-                "ChunkScheduler needs chunk_provider=..., plan_provider=..., or "
-                "a fallback single-step action source."
-            )
+                f"act_src_fn(frame, request) raised {type(exc).__name__}: {exc}"
+            ) from exc
 
-        return self._normalize_plan(raw_plan), provider_call_s
+        plan = self._normalize_plan(raw_plan)
+        returned_plan_start_step = request.request_step
+        history_actions = request.history_actions
+        if (
+            history_actions
+            and len(plan) >= len(history_actions)
+            and all(
+                self._actions_match(plan[index], history_actions[index])
+                for index in range(len(history_actions))
+            )
+        ):
+            returned_plan_start_step = request.plan_start_step
+        return plan, returned_plan_start_step
 
     def _execute_request(
         self,
-        source: object,
         frame: Frame,
         request: ChunkRequest,
-        fallback_action_source: FallbackActionSource | None,
     ) -> _CompletedChunk:
-        """Execute one chunk request and capture completion timing."""
+        """Execute one chunk request."""
 
-        plan, provider_call_s = self._call_chunk_provider(
-            source,
-            frame,
-            request,
-            fallback_action_source=fallback_action_source,
-        )
+        plan, returned_plan_start_step = self._call_action_source(frame, request)
         return _CompletedChunk(
             request=request,
             plan=plan,
+            returned_plan_start_step=returned_plan_start_step,
             completed_at_s=float(self.clock()),
-            provider_call_s=provider_call_s,
         )
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -607,225 +412,184 @@ class ChunkScheduler:
 
     def _submit_request(
         self,
-        source: object,
         frame: Frame,
         request: ChunkRequest,
-        fallback_action_source: FallbackActionSource | None,
     ) -> Future[_CompletedChunk]:
-        """Submit one async chunk request."""
+        """Launch one background request."""
 
-        executor = self._ensure_executor()
-        return executor.submit(
+        return self._ensure_executor().submit(
             self._execute_request,
-            source,
             frame,
             request,
-            fallback_action_source,
         )
 
-    def _collect_in_flight(self, *, block: bool) -> float:
-        """Move one completed async request into the ready slot when available."""
+    def _update_latency_estimate(self, waited_steps: int) -> None:
+        """Update ``H_hat`` using the latest observed request duration."""
 
-        if self._in_flight is None:
-            return 0.0
-        if not block and not self._in_flight.done():
-            return 0.0
-        waited_s = 0.0
-        if block and not self._in_flight.done():
-            self._maybe_warn(
-                "ChunkScheduler had to wait for the next chunk because observed "
-                "latency exceeded the current request lead window."
+        self._latency_steps_estimate = (
+            (1.0 - self.latency_ema_beta) * self._latency_steps_estimate
+            + self.latency_ema_beta * float(waited_steps)
+        )
+
+    def _align_completed_plan(
+        self,
+        completed: _CompletedChunk,
+    ) -> tuple[int, list[Action]]:
+        """Drop the stale prefix from a returned plan."""
+
+        current_step = self._global_step
+        stale_steps = max(current_step - completed.returned_plan_start_step, 0)
+        if stale_steps >= len(completed.plan):
+            return current_step, []
+        aligned_start_step = completed.returned_plan_start_step + stale_steps
+        return aligned_start_step, [
+            self._clone_action(action)
+            for action in completed.plan[stale_steps:]
+        ]
+
+    def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
+        """Align one completed reply and merge it into the current buffer."""
+
+        waited_steps = max(self._global_step - completed.request.request_step, 0)
+        self._update_latency_estimate(waited_steps)
+
+        aligned_start_step, aligned_chunk = self._align_completed_plan(completed)
+        if not aligned_chunk:
+            return False
+
+        current_buffer = list(self._buffer)
+        prefix_keep_steps = max(aligned_start_step - self._global_step, 0)
+        if prefix_keep_steps > len(current_buffer):
+            raise InterfaceValidationError(
+                "ChunkScheduler received a chunk that begins after the current "
+                "buffer ends."
             )
-            wait_started_at_s = float(self.clock())
-            completed = self._in_flight.result()
-            waited_s = max(float(self.clock()) - wait_started_at_s, 0.0)
+
+        prefix = [self._clone_action(action) for action in current_buffer[:prefix_keep_steps]]
+        remaining = current_buffer[prefix_keep_steps:]
+
+        if self.use_overlap_blend and remaining:
+            overlap_count = min(len(remaining), len(aligned_chunk))
+            fused = [
+                self._blend_overlap_action(
+                    remaining[index],
+                    aligned_chunk[index],
+                    index=index,
+                    total=overlap_count,
+                )
+                for index in range(overlap_count)
+            ]
+            merged = prefix + fused + aligned_chunk[overlap_count:]
         else:
-            completed = self._in_flight.result()
+            merged = prefix + aligned_chunk
 
-        latency_s = max(
-            completed.completed_at_s - completed.request.request_time_s,
-            0.0,
-        )
-        self._record_inference_time(latency_s)
-        self._maybe_warn_timing_budget(
-            completed.request.active_chunk_length,
-            include_latency=True,
-        )
-        self._ready_response = completed
-        self._in_flight = None
-        return waited_s
-
-    def _activate_ready_response(self) -> bool:
-        """Try to activate one completed chunk response."""
-
-        if self._ready_response is None:
-            return False
-
-        completed = self._ready_response
-        consumed_since_plan_start = max(
-            self._global_step - completed.request.plan_start_step,
-            0,
-        )
-        if consumed_since_plan_start >= len(completed.plan):
-            self._ready_response = None
-            return False
-
-        # Drop the prefix that was already covered by the previously active
-        # chunk while the request was in flight. The returned chunk is expected
-        # to begin at request.plan_start_step, not at request.request_step.
-        trimmed = completed.plan[consumed_since_plan_start:]
-        if not trimmed:
-            self._ready_response = None
-            return False
-
-        self._active_chunk = [self._clone_action(action) for action in trimmed]
-        self._active_index = 0
-        self._ready_response = None
+        self._buffer = deque(merged)
+        self._reference_chunk_size = len(completed.plan)
+        self._active_source_plan_length = len(completed.plan)
         return True
 
-    def _remaining_steps(self) -> int:
-        """Return the number of actions left in the active chunk."""
+    def _maybe_accept_pending(self, *, block: bool) -> bool:
+        """Integrate a finished async request when available."""
 
-        return max(len(self._active_chunk) - self._active_index, 0)
+        if self._pending_future is None:
+            return False
+        if not block and not self._pending_future.done():
+            return False
 
-    def _refresh_ready_response(
+        completed = self._pending_future.result()
+        self._pending_future = None
+        return self._integrate_completed_chunk(completed)
+
+    def _ensure_buffer(
         self,
-        source: object,
         frame: Frame,
-        fallback_action_source: FallbackActionSource | None,
         *,
-        include_latency: bool,
-    ) -> float:
-        """Refresh the next chunk immediately and store it in the ready slot."""
+        prefetch_async: bool,
+    ) -> bool:
+        """Ensure that at least one executable action is buffered."""
 
-        request = self._build_request(include_latency=include_latency)
+        plan_refreshed = self._maybe_accept_pending(block=False)
+        if self._buffer:
+            return plan_refreshed
+
+        if prefetch_async and self._pending_future is not None:
+            plan_refreshed = self._maybe_accept_pending(block=True) or plan_refreshed
+        if self._buffer:
+            return plan_refreshed
+
         completed = self._execute_request(
-            source,
             frame,
-            request,
-            fallback_action_source,
+            self._build_request(include_latency=prefetch_async),
         )
-        self._record_inference_time(
-            max(completed.completed_at_s - request.request_time_s, 0.0)
-        )
-        self._ready_response = completed
-        self._maybe_warn_timing_budget(
-            request.active_chunk_length,
+        if not self._integrate_completed_chunk(completed):
+            raise InterfaceValidationError(
+                "ChunkScheduler could not produce a usable action chunk."
+            )
+        return True
+
+    def _request_is_due(self, *, include_latency: bool) -> bool:
+        """Return whether the next request should start now."""
+
+        if self._pending_future is not None or not self._buffer:
+            return False
+        reference_chunk_size = self._reference_chunk_size_for_request()
+        threshold = self.request_trigger_steps(
+            reference_chunk_size,
             include_latency=include_latency,
         )
-        return completed.provider_call_s
+        return len(self._buffer) <= threshold
 
-    def _maybe_start_async_prefetch(
+    def _maybe_request_next(
         self,
-        source: object,
         frame: Frame,
-        fallback_action_source: FallbackActionSource | None,
-    ) -> None:
-        """Start the next async chunk request when the scheduler is close enough."""
+        *,
+        prefetch_async: bool,
+    ) -> bool:
+        """Start or refresh the next chunk once the trigger threshold is met."""
 
-        if self._in_flight is not None or self._ready_response is not None:
-            return
-        if self._remaining_steps() > self.request_trigger_steps(
-            len(self._active_chunk),
-            include_latency=True,
-        ):
-            return
+        if not self._request_is_due(include_latency=prefetch_async):
+            return False
 
-        request = self._build_request(include_latency=True)
-        self._in_flight = self._submit_request(
-            source,
-            frame,
-            request,
-            fallback_action_source,
-        )
+        request = self._build_request(include_latency=prefetch_async)
+        if prefetch_async:
+            self._pending_future = self._submit_request(frame, request)
+            return False
 
-    def _maybe_refresh_sync(
-        self,
-        source: object,
-        frame: Frame,
-        fallback_action_source: FallbackActionSource | None,
-    ) -> float:
-        """Refresh the next chunk synchronously once overlap becomes small."""
+        completed = self._execute_request(frame, request)
+        return self._integrate_completed_chunk(completed)
 
-        if self._in_flight is not None or self._ready_response is not None:
-            return 0.0
-        if self._remaining_steps() > self.request_trigger_steps(
-            len(self._active_chunk),
-            include_latency=False,
-        ):
-            return 0.0
-        return self._refresh_ready_response(
-            source,
-            frame,
-            fallback_action_source,
-            include_latency=False,
-        )
+    def _pop_next_action(self) -> Action:
+        """Pop one action from the buffer and advance the control step."""
+
+        if not self._buffer:
+            raise InterfaceValidationError(
+                "ChunkScheduler has no buffered action to emit."
+            )
+        action = self._clone_action(self._buffer.popleft())
+        self._global_step += 1
+        return action
 
     def next_action(
         self,
-        source: object,
-        frame: Frame | Mapping[str, Any],
+        frame: Frame,
         *,
-        fallback_action_source: FallbackActionSource | None = None,
         prefetch_async: bool = True,
-        measure_timing: bool = False,
-    ) -> tuple[Action, bool, _ChunkStepTiming | None]:
-        """Return the next action and whether a new chunk became active.
-
-        When ``prefetch_async`` is ``True``, the next chunk is requested in the
-        background using overlap plus estimated latency. When ``False``, inferaxis
-        still refreshes chunks before exhaustion, but it does so synchronously
-        and uses only the overlap window as the trigger.
-        """
+    ) -> tuple[Action, bool]:
+        """Return the next action and whether the buffer was refreshed."""
 
         normalized_frame = as_frame(frame)
         validate_frame(normalized_frame)
-        plan_refreshed = False
-        timing = _ChunkStepTiming() if measure_timing else None
 
-        self._collect_in_flight(block=False)
-        if self._remaining_steps() == 0:
-            if prefetch_async and self._ready_response is None:
-                waited_s = self._collect_in_flight(block=True)
-                if timing is not None:
-                    timing.wait_for_ready_s += waited_s
+        plan_refreshed = self._ensure_buffer(
+            normalized_frame,
+            prefetch_async=prefetch_async,
+        )
+        plan_refreshed = self._maybe_request_next(
+            normalized_frame,
+            prefetch_async=prefetch_async,
+        ) or plan_refreshed
 
-            if self._remaining_steps() == 0 and not self._activate_ready_response():
-                provider_call_s = self._refresh_ready_response(
-                    source,
-                    normalized_frame,
-                    fallback_action_source,
-                    include_latency=prefetch_async,
-                )
-                if timing is not None:
-                    timing.provider_call_s += provider_call_s
-                if not self._activate_ready_response():
-                    raise InterfaceValidationError(
-                        "ChunkScheduler could not activate a usable chunk after "
-                        "refresh."
-                    )
-            plan_refreshed = True
-
-        action = self._clone_action(self._active_chunk[self._active_index])
-        self._active_index += 1
-        self._global_step += 1
-        self._record_action_emission(float(self.clock()))
-
-        if prefetch_async:
-            self._maybe_start_async_prefetch(
-                source,
-                normalized_frame,
-                fallback_action_source,
-            )
-        else:
-            provider_call_s = self._maybe_refresh_sync(
-                source,
-                normalized_frame,
-                fallback_action_source,
-            )
-            if timing is not None:
-                timing.provider_call_s += provider_call_s
-        return action, plan_refreshed, timing
+        return self._pop_next_action(), plan_refreshed
 
 
 __all__ = ["ChunkScheduler"]

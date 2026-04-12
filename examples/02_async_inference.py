@@ -11,67 +11,86 @@ import inferaxis as infra
 import numpy as np
 
 
-class YourRobot(infra.RobotMixin):
-    """Pretend this is your original outer robot class after one small edit."""
+class YourRobot:
+    """Plain local executor used by the runtime loop."""
 
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def YOUR_OWN_get_obs(self) -> dict[str, object]:
-        return {
-            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
-            "state": {
+    def get_obs(self) -> infra.Frame:
+        return infra.Frame(
+            images={"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={
                 "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
                 "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
-        }
+        )
 
-    def YOUR_OWN_send_action(self, action: object) -> object:
+    def send_action(self, action: infra.Action) -> infra.Action:
         """Pretend the robot controller returns the final accepted action."""
 
-        accepted = infra.coerce_action(action)
-        self.last_native_action = accepted
-        return accepted
+        self.last_native_action = action
+        return action
 
-    def YOUR_OWN_reset(self) -> dict[str, object]:
-        return self.YOUR_OWN_get_obs()
+    def reset(self) -> infra.Frame:
+        return self.get_obs()
 
 
-class YourPolicy(infra.PolicyMixin):
-    """Pretend this is your original outer policy class after one small edit."""
+class YourPolicy:
+    """Plain async-capable source object using the same ``infer`` entrypoint."""
 
     def __init__(self) -> None:
         self.step_index = 0
 
-    def YOUR_OWN_clear_state(self) -> None:
+    def reset(self) -> None:
         self.step_index = 0
 
-    def YOUR_OWN_infer(self, frame: infra.Frame) -> dict[str, object]:
-        targets = [0.0, 3.0, 6.0, 9.0, 12.0]
-        base = targets[self.step_index % len(targets)]
-        self.step_index += 1
-        gripper_pos = float(frame.state["YOUR_OWN_gripper"][0])
-        return {
-            "YOUR_OWN_arm": {
-                "command": "cartesian_pose_delta",
-                "value": np.full(6, base, dtype=np.float64),
-            },
-            "YOUR_OWN_gripper": {
-                "command": "gripper_position",
-                "value": np.array(
-                    [max(0.0, min(1.0, 1.0 - gripper_pos))],
-                    dtype=np.float64,
-                ),
-            },
-        }
+    def infer(
+        self,
+        obs: infra.Frame,
+        request: infra.ChunkRequest,
+    ) -> list[infra.Action]:
+        gripper_pos = float(obs.state["YOUR_OWN_gripper"][0])
+        history_actions = request.history_actions
+
+        plan: list[infra.Action] = []
+        if history_actions:
+            last_arm = history_actions[-1].get_command("YOUR_OWN_arm")
+            assert last_arm is not None
+            next_base = float(last_arm.value[0] + 3.0)
+        else:
+            targets = [0.0, 3.0, 6.0, 9.0, 12.0]
+            next_base = targets[self.step_index % len(targets)]
+            self.step_index += 1
+
+        while len(plan) < 2:
+            plan.append(
+                infra.Action(
+                    commands={
+                        "YOUR_OWN_arm": infra.Command(
+                            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                            value=np.full(6, next_base, dtype=np.float64),
+                        ),
+                        "YOUR_OWN_gripper": infra.Command(
+                            command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                            value=np.array(
+                                [max(0.0, min(1.0, 1.0 - gripper_pos))],
+                                dtype=np.float64,
+                            ),
+                        ),
+                    }
+                )
+            )
+            next_base += 3.0
+        return plan
 
 
 def main() -> None:
-    robot = YourRobot.from_yaml("examples/basic_runtime.yml")
-    policy = YourPolicy.from_yaml("examples/basic_runtime.yml")
+    robot = YourRobot()
+    policy = YourPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
-        overlap_ratio=0.2,
+        overlap_ratio=0.5,
         action_optimizers=[
             infra.ActionEnsembler(current_weight=0.5),
             # This is still one runtime step per run_step() call. The
@@ -82,7 +101,12 @@ def main() -> None:
     )
 
     for step_index in range(5):
-        result = infra.run_step(robot, source=policy, runtime=runtime)
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
         print(
             "step:",
             step_index,

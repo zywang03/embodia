@@ -9,7 +9,7 @@ import time
 import warnings
 
 from ...core.errors import InterfaceValidationError
-from .common import validate_positive_number
+from ...shared.common import validate_positive_number
 
 
 @dataclass(slots=True)

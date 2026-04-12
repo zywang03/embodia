@@ -11,83 +11,87 @@ import inferaxis as infra
 import numpy as np
 
 
-class YourRobot(infra.RobotMixin):
-    """Pretend this is your original outer robot class after one small edit."""
+class YourRobot:
+    """Plain local executor used by the runtime loop."""
 
     def __init__(self) -> None:
         self.last_native_action: object | None = None
 
-    def YOUR_OWN_get_obs(self) -> dict[str, object]:
-        return {
-            "images": {"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
-            "state": {
+    def get_obs(self) -> infra.Frame:
+        return infra.Frame(
+            images={"YOUR_OWN_front_rgb": np.zeros((2, 2, 3), dtype=np.uint8)},
+            state={
                 "YOUR_OWN_arm": np.full(6, 0.25, dtype=np.float64),
                 "YOUR_OWN_gripper": np.array([0.5], dtype=np.float64),
             },
-        }
+        )
 
-    def YOUR_OWN_send_action(self, action: object) -> object:
+    def send_action(self, action: infra.Action) -> infra.Action:
         """Pretend the robot controller returns the final accepted action."""
 
-        accepted = infra.coerce_action(action)
-        self.last_native_action = accepted
-        return accepted
+        self.last_native_action = action
+        return action
 
-    def YOUR_OWN_reset(self) -> dict[str, object]:
-        return self.YOUR_OWN_get_obs()
+    def reset(self) -> infra.Frame:
+        return self.get_obs()
 
 
-class YourPolicy(infra.PolicyMixin):
-    """Pretend this is your original outer policy class after one small edit."""
+class YourPolicy:
+    """Plain policy object exposing one action source for sync execution."""
 
     def __init__(self) -> None:
         self.step_index = 0
 
-    def YOUR_OWN_clear_state(self) -> None:
+    def reset(self) -> None:
         self.step_index = 0
 
-    def YOUR_OWN_infer(self, frame: infra.Frame) -> dict[str, object]:
-        qpos0 = float(frame.state["YOUR_OWN_arm"][0])
-        gripper_pos = float(frame.state["YOUR_OWN_gripper"][0])
+    def infer(
+        self,
+        obs: infra.Frame,
+        request: infra.ChunkRequest,
+    ) -> infra.Action:
+        del request
+        qpos0 = float(obs.state["YOUR_OWN_arm"][0])
+        gripper_pos = float(obs.state["YOUR_OWN_gripper"][0])
         step = float(self.step_index)
         self.step_index += 1
         offset = step * 2.0
-        return {
-            "YOUR_OWN_arm": {
-                "command": "cartesian_pose_delta",
-                "value": np.array(
-                    [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
-                    dtype=np.float64,
+        return infra.Action(
+            commands={
+                "YOUR_OWN_arm": infra.Command(
+                    command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    value=np.array(
+                        [qpos0 * 0.01 + offset, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        dtype=np.float64,
+                    ),
                 ),
-            },
-            "YOUR_OWN_gripper": {
-                "command": "gripper_position",
-                "value": np.array(
-                    [max(0.0, min(1.0, 1.0 - gripper_pos))],
-                    dtype=np.float64,
+                "YOUR_OWN_gripper": infra.Command(
+                    command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    value=np.array(
+                        [max(0.0, min(1.0, 1.0 - gripper_pos))],
+                        dtype=np.float64,
+                    ),
                 ),
-            },
-        }
+            }
+        )
 
 
 def main() -> None:
-    robot = YourRobot.from_yaml("examples/basic_runtime.yml")
-    policy = YourPolicy.from_yaml("examples/basic_runtime.yml")
-    
+    robot = YourRobot()
+    policy = YourPolicy()
+
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.SYNC,
-        overlap_ratio=0.2,
-        action_optimizers=[
-            infra.ActionEnsembler(current_weight=0.5),
-            # This is still one runtime step per run_step() call. The
-            # interpolator only changes the action emitted on that call.
-            infra.ActionInterpolator(steps=1),
-        ],
         realtime_controller=infra.RealtimeController(hz=20.0),
     )
 
     for step_index in range(5):
-        result = infra.run_step(robot, source=policy, runtime=runtime)
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
         print(
             "step:", step_index,
             "action:", infra.action_to_dict(result.action),

@@ -1,64 +1,26 @@
-"""Runtime validation and compatibility checks."""
+"""Runtime entrypoints for inferaxis."""
 
-from .checks import (
-    InterfaceValidationError,
-    check_policy,
-    check_pair,
-    check_robot,
-    validate_action,
-    validate_frame,
-    validate_policy_spec,
-    validate_robot_spec,
-)
-from .flow import StepResult, run_step
-from .flow import ActionSource
+from .checks import InterfaceValidationError, check_pair
+from .flow import run_step
 from .inference import (
     ActionEnsembler,
     ActionInterpolator,
-    ActionChunk,
-    ActionPlan,
-    ActionPlanProvider,
-    ActionPlanProviderProtocol,
-    ActionOptimizer,
-    ActionOptimizerProtocol,
-    ChunkScheduler,
-    ChunkProvider,
-    ChunkProviderProtocol,
-    ChunkRequest,
     InferenceMode,
     InferenceRuntime,
     RealtimeController,
-    SyncInferenceProfile,
     profile_sync_inference,
+    recommend_inference_mode,
 )
 
 __all__ = [
     "ActionEnsembler",
     "ActionInterpolator",
-    "ActionChunk",
-    "ActionPlan",
-    "ActionPlanProvider",
-    "ActionPlanProviderProtocol",
-    "ActionOptimizer",
-    "ActionOptimizerProtocol",
-    "ChunkScheduler",
-    "ChunkProvider",
-    "ChunkProviderProtocol",
-    "ChunkRequest",
-    "ActionSource",
     "InferenceMode",
     "InferenceRuntime",
     "InterfaceValidationError",
     "RealtimeController",
-    "SyncInferenceProfile",
-    "StepResult",
-    "profile_sync_inference",
-    "check_policy",
     "check_pair",
-    "check_robot",
+    "profile_sync_inference",
+    "recommend_inference_mode",
     "run_step",
-    "validate_action",
-    "validate_frame",
-    "validate_policy_spec",
-    "validate_robot_spec",
 ]

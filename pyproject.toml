@@ -22,15 +22,9 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.26,<3"]
 
-[project.optional-dependencies]
-yaml = ["PyYAML>=6.0"]
-remote = ["msgpack>=1.0.5", "websockets>=11.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-inferaxis = ["py.typed"]

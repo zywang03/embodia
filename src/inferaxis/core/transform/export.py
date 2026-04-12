@@ -65,7 +65,7 @@ def command_to_dict(
 
     normalized = coerce_command(command)
     exported: dict[str, Any] = {
-        "command": normalized.command,
+        "command": str(normalized.command),
         "value": normalized.value.tolist(),
     }
     if not compact or normalized.ref_frame is not None:
@@ -141,7 +141,7 @@ def component_spec_to_dict(
         "name": normalized.name,
         "type": normalized.type,
         "dof": normalized.dof,
-        "command": list(normalized.command),
+        "command": [str(command) for command in normalized.command],
         "meta": dict(normalized.meta),
     }
 
@@ -169,7 +169,7 @@ def policy_output_spec_to_dict(
     normalized = coerce_policy_output_spec(spec)
     return {
         "target": normalized.target,
-        "command": normalized.command,
+        "command": str(normalized.command),
         "dim": normalized.dim,
         "meta": dict(normalized.meta),
     }

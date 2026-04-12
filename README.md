@@ -205,8 +205,10 @@ result = infra.run_step(
 
 This lets the same data interface support:
 
-- sync inference with action smoothing
+- sync and async chunk execution
 - async overlap-based chunk scheduling
+- chunk handoff blending via `ActionEnsembler(...)`
+- per-step interpolation via `ActionInterpolator(...)`
 - paced closed-loop execution
 - latency profiling against a required target control hz via `profile_sync_inference(...)`
 - mode recommendation via `recommend_inference_mode(...)`
@@ -219,7 +221,9 @@ For chunked async execution, inferaxis uses:
 Here `H_hat` is an EMA of observed request latency measured directly in control
 steps. When a reply arrives, inferaxis drops the stale prefix and either
 switches to the aligned new chunk directly or blends the overlap prefix when
-`ActionEnsembler(...)` is enabled.
+`ActionEnsembler(...)` is enabled. `ActionEnsembler(current_weight=...)` only
+blends aligned old/new chunk overlap actions; it does not apply an extra
+per-step temporal filter to every emitted action.
 
 ## Validation
 

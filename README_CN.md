@@ -205,8 +205,10 @@ result = infra.run_step(
 
 这样同一套数据接口就能支持：
 
-- 带动作平滑的同步推理
+- 同步或异步的 chunk 执行
 - 基于 overlap 的异步 chunk 调度
+- 通过 `ActionEnsembler(...)` 做 chunk handoff 融合
+- 通过 `ActionInterpolator(...)` 做逐步插值
 - 带节拍控制的闭环执行
 - `profile_sync_inference(...)` 基于目标控制频率的延迟 profiling
 - `recommend_inference_mode(...)` 模式推荐
@@ -218,7 +220,9 @@ result = infra.run_step(
 
 其中 `H_hat` 是按控制步数直接做 EMA 的请求延迟估计。结果返回后，
 inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(...)`，
-就对 overlap 区段做融合，否则直接切到新的对齐后 chunk。
+就对 overlap 区段里同一未来时间步的旧/新 action 做融合，否则直接切到
+新的对齐后 chunk。`ActionEnsembler(current_weight=...)` 不会再对每一步
+输出额外做一层 temporal filter。
 
 ## 校验
 

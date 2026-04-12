@@ -218,7 +218,7 @@ def make_profile_clock(
 class InferenceRuntimeTests(unittest.TestCase):
     """Coverage for action optimizers and sync/async runtime flow."""
 
-    def test_action_ensembler_blends_with_previous_output(self) -> None:
+    def test_action_ensembler_is_identity_when_called_directly(self) -> None:
         frame = infra.Frame(images={}, state={})
         ensembler = infra.ActionEnsembler(current_weight=0.5)
 
@@ -240,7 +240,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         )
 
         assert_array_equal(self, first.get_command("arm").value, [0.0, 2.0])  # type: ignore[union-attr]
-        assert_array_equal(self, second.get_command("arm").value, [1.0, 3.0])  # type: ignore[union-attr]
+        assert_array_equal(self, second.get_command("arm").value, [2.0, 4.0])  # type: ignore[union-attr]
 
     def test_action_interpolator_blends_over_one_extra_step(self) -> None:
         frame = infra.Frame(images={}, state={})
@@ -321,7 +321,7 @@ class InferenceRuntimeTests(unittest.TestCase):
 
         self.assertIn("more than one action", str(ctx.exception))
 
-    def test_sync_runtime_applies_action_optimizers_for_multi_step_chunks_without_overlap(self) -> None:
+    def test_sync_runtime_does_not_filter_multi_step_chunks_without_overlap(self) -> None:
         robot = RuntimeRobot()
         source = PlanningSource()
         runtime = infra.InferenceRuntime(
@@ -347,10 +347,10 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(first.raw_action), 10.0)
         self.assertEqual(arm_value(first.action), 10.0)
         self.assertEqual(arm_value(second.raw_action), 11.0)
-        self.assertEqual(arm_value(second.action), 10.5)
-        self.assertEqual(arm_value(robot.last_action), 10.5)  # type: ignore[arg-type]
+        self.assertEqual(arm_value(second.action), 11.0)
+        self.assertEqual(arm_value(robot.last_action), 11.0)  # type: ignore[arg-type]
 
-    def test_async_runtime_applies_action_optimizers_for_multi_step_chunks(self) -> None:
+    def test_async_runtime_does_not_filter_each_emitted_action(self) -> None:
         robot = RuntimeRobot()
         source = PlanningSource()
         runtime = infra.InferenceRuntime(
@@ -375,8 +375,8 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(first.raw_action), 10.0)
         self.assertEqual(arm_value(first.action), 10.0)
         self.assertEqual(arm_value(second.raw_action), 11.0)
-        self.assertEqual(arm_value(second.action), 10.5)
-        self.assertEqual(arm_value(robot.last_action), 10.5)  # type: ignore[arg-type]
+        self.assertEqual(arm_value(second.action), 11.0)
+        self.assertEqual(arm_value(robot.last_action), 11.0)  # type: ignore[arg-type]
 
     def test_sync_runtime_memoizes_single_action_source_and_rejects_later_chunks(self) -> None:
         class InconsistentPolicy:
@@ -598,6 +598,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         scheduler = ChunkScheduler(
             overlap_ratio=0.5,
             use_overlap_blend=True,
+            overlap_current_weight=0.5,
         )
         scheduler._buffer = deque(
             [
@@ -624,16 +625,20 @@ class InferenceRuntimeTests(unittest.TestCase):
                     plan_start_step=1,
                     history_actions=[],
                 ),
-                plan=[arm_action(100.0), arm_action(101.0), arm_action(102.0)],
-                returned_plan_start_step=2,
-                completed_at_s=0.0,
+                prepared_actions=[
+                    arm_action(11.0),
+                    arm_action(56.0),
+                    arm_action(57.0),
+                    arm_action(58.0),
+                ],
+                source_plan_length=3,
             )
         )
 
         self.assertTrue(refreshed)
         self.assertEqual(
             [arm_value(action) for action in scheduler._buffer],
-            [12.0, 57.0, 102.0],
+            [56.0, 57.0, 58.0],
         )
 
     def test_chunk_scheduler_replaces_overlap_when_blending_is_disabled(self) -> None:
@@ -666,9 +671,13 @@ class InferenceRuntimeTests(unittest.TestCase):
                     plan_start_step=1,
                     history_actions=[],
                 ),
-                plan=[arm_action(100.0), arm_action(101.0), arm_action(102.0)],
-                returned_plan_start_step=2,
-                completed_at_s=0.0,
+                prepared_actions=[
+                    arm_action(11.0),
+                    arm_action(100.0),
+                    arm_action(101.0),
+                    arm_action(102.0),
+                ],
+                source_plan_length=3,
             )
         )
 
@@ -699,9 +708,13 @@ class InferenceRuntimeTests(unittest.TestCase):
                     plan_start_step=0,
                     history_actions=[],
                 ),
-                plan=[arm_action(1.0), arm_action(2.0), arm_action(3.0), arm_action(4.0)],
-                returned_plan_start_step=0,
-                completed_at_s=0.0,
+                prepared_actions=[
+                    arm_action(1.0),
+                    arm_action(2.0),
+                    arm_action(3.0),
+                    arm_action(4.0),
+                ],
+                source_plan_length=4,
             )
         )
         scheduler._global_step = 3
@@ -842,6 +855,67 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(first.action), 10.0)
         self.assertEqual(arm_value(second.raw_action), 100.0)
         self.assertEqual(arm_value(second.action), 100.0)
+
+    def test_async_runtime_blends_chunk_handoff_overlap_with_action_ensembler(self) -> None:
+        class FourStepPolicy:
+            def __init__(self) -> None:
+                self.base = 1.0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                base = self.base
+                self.base += 4.0
+                return [
+                    infra.Action.single(
+                        target="arm",
+                        command="cartesian_pose_delta",
+                        value=[base + offset] * 6,
+                    )
+                    for offset in range(4)
+                ]
+
+        robot = RuntimeRobot()
+        policy = FourStepPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            action_optimizers=[infra.ActionEnsembler(current_weight=0.5)],
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(third.action), 3.0)
+        self.assertEqual(arm_value(fourth.raw_action), 5.0)
+        self.assertEqual(arm_value(fourth.action), 5.0)
 
     def test_profile_sync_inference_uses_requested_stable_sample_window(self) -> None:
         robot = RuntimeRobot()

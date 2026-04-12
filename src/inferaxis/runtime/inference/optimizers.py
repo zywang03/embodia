@@ -108,10 +108,14 @@ def _blend_action(left: Action, right: Action, ratio: float) -> Action:
 
 @dataclass(slots=True)
 class ActionEnsembler:
-    """Smooth actions by blending the latest target with the previous output."""
+    """Blend aligned overlap actions across chunk handoff boundaries.
+
+    This object is intentionally lightweight. inferaxis uses it as a runtime
+    configuration hint for chunk overlap fusion rather than as a per-step
+    temporal filter.
+    """
 
     current_weight: float = 0.5
-    _last_action: Action | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate blending configuration."""
@@ -131,29 +135,23 @@ class ActionEnsembler:
             )
 
     def reset(self) -> None:
-        """Clear smoothing history."""
+        """Keep a reset hook for optimizer compatibility."""
 
-        self._last_action = None
+        return None
 
     def __call__(self, action: Action, frame: Frame) -> Action:
-        """Return one smoothed action."""
+        """Return the action unchanged.
+
+        Chunk overlap blending is handled inside ``ChunkScheduler`` using this
+        instance's ``current_weight``. Direct calls remain a no-op so this
+        object still satisfies the optimizer protocol.
+        """
 
         del frame
 
         normalized = as_action(action)
         validate_action(normalized)
-
-        if self._last_action is None:
-            self._last_action = _clone_action(normalized)
-            return _clone_action(normalized)
-
-        if not _compatible_action(self._last_action, normalized):
-            self._last_action = _clone_action(normalized)
-            return _clone_action(normalized)
-
-        blended = _blend_action(self._last_action, normalized, self.current_weight)
-        self._last_action = _clone_action(blended)
-        return blended
+        return _clone_action(normalized)
 
 
 @dataclass(slots=True)

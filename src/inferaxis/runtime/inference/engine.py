@@ -151,7 +151,11 @@ class InferenceRuntime:
                     if self.overlap_ratio is not None
                     else (0.2 if self.mode is InferenceMode.ASYNC else 0.0)
                 )
-                self._chunk_scheduler.use_overlap_blend = self._uses_overlap_blend()
+                ensembler = self._action_ensembler()
+                self._chunk_scheduler.use_overlap_blend = ensembler is not None
+                self._chunk_scheduler.overlap_current_weight = (
+                    ensembler.current_weight if ensembler is not None else 0.5
+                )
                 return self._chunk_scheduler
 
         if act_src_fn is None:
@@ -164,22 +168,26 @@ class InferenceRuntime:
             if self.overlap_ratio is not None
             else (0.2 if self.mode is InferenceMode.ASYNC else 0.0)
         )
+        ensembler = self._action_ensembler()
         scheduler = ChunkScheduler(
             action_source=act_src_fn,
             overlap_ratio=scheduler_overlap_ratio,
-            use_overlap_blend=self._uses_overlap_blend(),
+            use_overlap_blend=ensembler is not None,
+            overlap_current_weight=(
+                ensembler.current_weight if ensembler is not None else 0.5
+            ),
         )
         self._chunk_scheduler = scheduler
         self._chunk_scheduler_key = scheduler_key
         return scheduler
 
-    def _uses_overlap_blend(self) -> bool:
-        """Return whether chunk handoff should blend overlap actions."""
+    def _action_ensembler(self) -> ActionEnsembler | None:
+        """Return the configured chunk-handoff ensembler when present."""
 
         for optimizer in self.action_optimizers:
             if isinstance(optimizer, ActionEnsembler):
-                return True
-        return False
+                return optimizer
+        return None
 
     def _run_step_impl(
         self,
@@ -255,6 +263,8 @@ class InferenceRuntime:
                     reset_if_possible(optimizer)
                 self._optimizer_source_key = source_key
             for index, optimizer in enumerate(self.action_optimizers):
+                if isinstance(optimizer, ActionEnsembler):
+                    continue
                 try:
                     optimized = optimizer(action, normalized_frame)
                 except Exception as exc:

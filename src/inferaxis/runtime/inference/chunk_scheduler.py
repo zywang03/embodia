@@ -21,8 +21,8 @@ action is emitted from the buffer. Wall-clock pacing belongs to
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable, Sequence
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 import math
@@ -31,14 +31,25 @@ import time
 import numpy as np
 
 from ...core.errors import InterfaceValidationError
-from ...core.schema import Action, Command, Frame
+from ...core.schema import Action, BuiltinCommandKind, Command, Frame
 from ...shared.common import as_action, as_frame
 from ..checks import validate_action, validate_frame
+from .optimizers import BlendWeight, _normalize_blend_weight
 from .protocols import (
     ActionPlan,
     ActionSource,
     ActionSourceProtocol,
     ChunkRequest,
+    RtcArgs,
+)
+
+_NON_BLENDABLE_OVERLAP_COMMANDS = frozenset(
+    {
+        BuiltinCommandKind.GRIPPER_POSITION,
+        BuiltinCommandKind.GRIPPER_POSITION_DELTA,
+        BuiltinCommandKind.GRIPPER_VELOCITY,
+        BuiltinCommandKind.GRIPPER_OPEN_CLOSE,
+    }
 )
 
 
@@ -83,7 +94,8 @@ class ChunkScheduler:
     initial_latency_steps: float = 0.0
     max_chunk_size: int | None = None
     use_overlap_blend: bool = False
-    overlap_current_weight: float = 0.5
+    overlap_current_weight: BlendWeight = 0.5
+    enable_rtc: bool = False
     clock: Callable[[], float] = time.perf_counter
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
@@ -156,19 +168,13 @@ class ChunkScheduler:
                     f"{self.max_chunk_size!r}."
                 )
 
-        if isinstance(self.overlap_current_weight, bool) or not isinstance(
+        if not isinstance(self.enable_rtc, bool):
+            raise InterfaceValidationError("enable_rtc must be a bool.")
+
+        self.overlap_current_weight = _normalize_blend_weight(
             self.overlap_current_weight,
-            (int, float),
-        ):
-            raise InterfaceValidationError(
-                "overlap_current_weight must be a real number in [0, 1]."
-            )
-        self.overlap_current_weight = float(self.overlap_current_weight)
-        if not 0.0 <= self.overlap_current_weight <= 1.0:
-            raise InterfaceValidationError(
-                "overlap_current_weight must be in [0, 1], got "
-                f"{self.overlap_current_weight!r}."
-            )
+            field_name="overlap_current_weight",
+        )
 
         self._latency_steps_estimate = self.initial_latency_steps
 
@@ -285,18 +291,32 @@ class ChunkScheduler:
         self,
         old_action: Action,
         new_action: Action,
+        *,
+        overlap_index: int = 0,
+        overlap_count: int = 1,
     ) -> Action:
         """Blend one aligned overlap step from old/new chunks."""
 
         if not self._commands_share_layout(old_action, new_action):
             return self._clone_action(new_action)
 
-        new_weight = self.overlap_current_weight
+        new_weight = self._overlap_new_weight(
+            overlap_index=overlap_index,
+            overlap_count=overlap_count,
+        )
         old_weight = 1.0 - new_weight
 
         blended_commands: dict[str, Command] = {}
         for target, new_command in new_action.commands.items():
             old_command = old_action.commands[target]
+            if new_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS:
+                blended_commands[target] = Command(
+                    command=new_command.command,
+                    value=new_command.value.copy(),
+                    ref_frame=new_command.ref_frame,
+                    meta=dict(new_command.meta),
+                )
+                continue
             blended_commands[target] = Command(
                 command=new_command.command,
                 value=old_command.value * old_weight
@@ -308,6 +328,38 @@ class ChunkScheduler:
             commands=blended_commands,
             meta=dict(new_action.meta),
         )
+
+    def _overlap_new_weight(
+        self,
+        *,
+        overlap_index: int,
+        overlap_count: int,
+    ) -> float:
+        """Return the new-chunk blend weight for one overlap step."""
+
+        if overlap_count <= 0:
+            raise InterfaceValidationError(
+                f"overlap_count must be > 0, got {overlap_count!r}."
+            )
+        if not 0 <= overlap_index < overlap_count:
+            raise InterfaceValidationError(
+                "overlap_index must satisfy "
+                f"0 <= overlap_index < overlap_count, got "
+                f"overlap_index={overlap_index!r}, overlap_count={overlap_count!r}."
+            )
+
+        normalized = _normalize_blend_weight(
+            self.overlap_current_weight,
+            field_name="overlap_current_weight",
+        )
+        if isinstance(normalized, float):
+            return normalized
+
+        low, high = normalized
+        if overlap_count == 1:
+            return low
+        progress = overlap_index / float(overlap_count - 1)
+        return low + (high - low) * progress
 
     def _normalize_plan(self, plan: ActionPlan) -> list[Action]:
         """Coerce and validate one returned chunk."""
@@ -350,6 +402,7 @@ class ChunkScheduler:
         history_count = min(overlap_steps, len(buffer_list))
         history_start = len(buffer_list) - history_count
         history_actions = self._clone_actions(buffer_list[history_start:])
+        latency_steps = self.estimated_latency_steps() if include_latency else 0
         return _RequestJob(
             request=ChunkRequest(
                 request_step=request_step,
@@ -359,15 +412,37 @@ class ChunkScheduler:
                 active_chunk_length=len(buffer_list),
                 remaining_steps=len(buffer_list),
                 overlap_steps=overlap_steps,
-                latency_steps=self.estimated_latency_steps() if include_latency else 0,
+                latency_steps=latency_steps,
                 request_trigger_steps=self.request_trigger_steps(
                     reference_chunk_size,
                     include_latency=include_latency,
                 ),
                 plan_start_step=request_step + history_start,
                 history_actions=history_actions,
+                rtc_args=self._build_rtc_args(
+                    prev_action_chunk=buffer_list,
+                    inference_delay=latency_steps,
+                ),
             ),
             launch_buffer=buffer_list,
+        )
+
+    def _build_rtc_args(
+        self,
+        *,
+        prev_action_chunk: Sequence[Action],
+        inference_delay: int,
+    ) -> RtcArgs | None:
+        """Build optional RTC hints for one policy request."""
+
+        if not self.enable_rtc:
+            return None
+
+        cloned_chunk = self._clone_actions(prev_action_chunk)
+        return RtcArgs(
+            prev_action_chunk=cloned_chunk,
+            inference_delay=max(int(inference_delay), 1),
+            execute_horizon=len(cloned_chunk),
         )
 
     def _execute_request(
@@ -416,6 +491,8 @@ class ChunkScheduler:
                 self._blend_overlap_action(
                     remaining[index],
                     plan[index],
+                    overlap_index=index,
+                    overlap_count=overlap_count,
                 )
                 for index in range(overlap_count)
             ]

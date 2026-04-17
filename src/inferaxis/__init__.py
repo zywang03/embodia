@@ -16,6 +16,7 @@ from .runtime.inference import (
     InferenceMode,
     InferenceRuntime,
     RealtimeController,
+    RtcArgs,
     profile_sync_inference,
     recommend_inference_mode,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "InterfaceValidationError",
     "PolicySpec",
     "RealtimeController",
+    "RtcArgs",
     "RobotSpec",
     "action_to_dict",
     "check_pair",

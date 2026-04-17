@@ -8,6 +8,7 @@ from .inference import (
     InferenceMode,
     InferenceRuntime,
     RealtimeController,
+    RtcArgs,
     profile_sync_inference,
     recommend_inference_mode,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "InferenceRuntime",
     "InterfaceValidationError",
     "RealtimeController",
+    "RtcArgs",
     "check_pair",
     "profile_sync_inference",
     "recommend_inference_mode",

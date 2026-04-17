@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -10,6 +11,50 @@ from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Command, Frame
 from ..checks import validate_action
 from ...shared.common import as_action
+
+BlendWeight = float | tuple[float, float]
+
+
+def _normalize_blend_weight(value: object, *, field_name: str) -> BlendWeight:
+    """Normalize one scalar or ``(low, high)`` blend-weight config."""
+
+    if isinstance(value, bool):
+        raise InterfaceValidationError(
+            f"{field_name} must be a real number in [0, 1] or a pair "
+            "(low, high) with 0 <= low <= high <= 1."
+        )
+
+    if isinstance(value, (int, float)):
+        weight = float(value)
+        if not 0.0 <= weight <= 1.0:
+            raise InterfaceValidationError(
+                f"{field_name} must be in [0, 1], got {weight!r}."
+            )
+        return weight
+
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        items = list(value)
+        if len(items) != 2:
+            raise InterfaceValidationError(
+                f"{field_name} must contain exactly two values when given as a "
+                f"schedule, got {len(items)}."
+            )
+        low, high = (
+            _normalize_blend_weight(item, field_name=f"{field_name}[{index}]")
+            for index, item in enumerate(items)
+        )
+        assert isinstance(low, float)
+        assert isinstance(high, float)
+        if low > high:
+            raise InterfaceValidationError(
+                f"{field_name} must satisfy low <= high, got {(low, high)!r}."
+            )
+        return (low, high)
+
+    raise InterfaceValidationError(
+        f"{field_name} must be a real number in [0, 1] or a pair "
+        "(low, high) with 0 <= low <= high <= 1."
+    )
 
 
 def _clone_command(command: Command) -> Command:
@@ -112,27 +157,20 @@ class ActionEnsembler:
 
     This object is intentionally lightweight. inferaxis uses it as a runtime
     configuration hint for chunk overlap fusion rather than as a per-step
-    temporal filter.
+    temporal filter. ``current_weight`` may be one scalar applied to every
+    overlap step, or a ``(low, high)`` pair that ramps linearly from the
+    earliest overlap step to the latest.
     """
 
-    current_weight: float = 0.5
+    current_weight: BlendWeight = 0.5
 
     def __post_init__(self) -> None:
         """Validate blending configuration."""
 
-        if isinstance(self.current_weight, bool) or not isinstance(
+        self.current_weight = _normalize_blend_weight(
             self.current_weight,
-            (int, float),
-        ):
-            raise InterfaceValidationError(
-                "current_weight must be a real number in [0, 1]."
-            )
-        self.current_weight = float(self.current_weight)
-        if not 0.0 <= self.current_weight <= 1.0:
-            raise InterfaceValidationError(
-                "current_weight must be in [0, 1], got "
-                f"{self.current_weight!r}."
-            )
+            field_name="current_weight",
+        )
 
     def reset(self) -> None:
         """Keep a reset hook for optimizer compatibility."""

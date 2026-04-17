@@ -1,8 +1,8 @@
-"""Example 2: the same ``run_step(...)`` path with a full async runtime preset.
+"""Example 6: async inference with RTC-aware request hints.
 
 Run with:
 
-    PYTHONPATH=src python examples/02_async_inference.py
+    PYTHONPATH=src python examples/06_async_inference_with_rtc.py
 """
 
 from __future__ import annotations
@@ -36,14 +36,16 @@ class YourRobot:
         return self.get_obs()
 
 
-class YourPolicy:
-    """Plain async-capable source object using the same ``infer`` entrypoint."""
+class YourRtcPolicy:
+    """Async-capable source that reads RTC hints directly from ``request``."""
 
     def __init__(self) -> None:
         self.step_index = 0
+        self.last_rtc_summary: dict[str, int] | None = None
 
     def reset(self) -> None:
         self.step_index = 0
+        self.last_rtc_summary = None
 
     def infer(
         self,
@@ -51,11 +53,21 @@ class YourPolicy:
         request: infra.ChunkRequest,
     ) -> list[infra.Action]:
         gripper_pos = float(obs.state["YOUR_OWN_gripper"][0])
-        history_actions = request.history_actions
+        prev_action_chunk = request.prev_action_chunk
+        inference_delay = request.inference_delay
+        execute_horizon = request.execute_horizon
+        assert prev_action_chunk is not None, "enable_rtc=True should populate request.prev_action_chunk"
+        assert inference_delay is not None, "enable_rtc=True should populate request.inference_delay"
+        assert execute_horizon is not None, "enable_rtc=True should populate request.execute_horizon"
+        self.last_rtc_summary = {
+            "prev_action_chunk_len": len(prev_action_chunk),
+            "inference_delay": inference_delay,
+            "execute_horizon": execute_horizon,
+        }
 
         plan: list[infra.Action] = []
-        if history_actions:
-            last_arm = history_actions[-1].get_command("YOUR_OWN_arm")
+        if prev_action_chunk:
+            last_arm = prev_action_chunk[-1].get_command("YOUR_OWN_arm")
             assert last_arm is not None
             next_base = float(last_arm.value[0] + 3.0)
         else:
@@ -63,7 +75,7 @@ class YourPolicy:
             next_base = targets[self.step_index % len(targets)]
             self.step_index += 1
 
-        while len(plan) < 2:
+        while len(plan) < 4:
             plan.append(
                 infra.Action(
                     commands={
@@ -87,14 +99,13 @@ class YourPolicy:
 
 def main() -> None:
     robot = YourRobot()
-    policy = YourPolicy()
+    policy = YourRtcPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
+        enable_rtc=True,
         action_optimizers=[
-            infra.ActionEnsembler(current_weight=0.5),
-            # This is still one runtime step per run_step() call. The
-            # interpolator only changes the action emitted on that call.
+            infra.ActionEnsembler(current_weight=(0.2, 0.8)),
             infra.ActionInterpolator(steps=1),
         ],
         realtime_controller=infra.RealtimeController(hz=50.0),
@@ -116,10 +127,12 @@ def main() -> None:
             result.plan_refreshed,
             "wait:",
             f"{result.control_wait_s:.4f}",
+            "rtc:",
+            policy.last_rtc_summary,
         )
 
     print("native_robot_received:", robot.last_native_action)
-    print("example 2 passed.")
+    print("example 6 passed.")
 
 
 if __name__ == "__main__":

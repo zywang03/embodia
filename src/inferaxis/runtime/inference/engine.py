@@ -26,7 +26,7 @@ from .chunk_scheduler import ChunkScheduler
 from ...shared.common import as_action, reset_if_possible
 from .control import RealtimeController
 from .optimizers import ActionEnsembler
-from .protocols import ActionOptimizer, ActionOptimizerProtocol
+from .protocols import ActionOptimizer, ActionOptimizerProtocol, ChunkRequest, RtcArgs
 
 
 class InferenceMode(StrEnum):
@@ -44,6 +44,7 @@ class InferenceRuntime:
     overlap_ratio: float | None = None
     action_optimizers: Sequence[ActionOptimizerProtocol | ActionOptimizer] = ()
     realtime_controller: RealtimeController | None = None
+    enable_rtc: bool = False
     _chunk_scheduler: ChunkScheduler | None = field(
         default=None,
         init=False,
@@ -90,6 +91,8 @@ class InferenceRuntime:
                     "InferenceRuntime.overlap_ratio must be in the range [0, 1), "
                     f"got {self.overlap_ratio!r}."
                 )
+        if not isinstance(self.enable_rtc, bool):
+            raise InterfaceValidationError("InferenceRuntime.enable_rtc must be a bool.")
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
@@ -166,6 +169,7 @@ class InferenceRuntime:
                 self._chunk_scheduler.overlap_current_weight = (
                     ensembler.current_weight if ensembler is not None else 0.5
                 )
+                self._chunk_scheduler.enable_rtc = self.enable_rtc
                 return self._chunk_scheduler
 
         if act_src_fn is None:
@@ -180,10 +184,36 @@ class InferenceRuntime:
             overlap_current_weight=(
                 ensembler.current_weight if ensembler is not None else 0.5
             ),
+            enable_rtc=self.enable_rtc,
         )
         self._chunk_scheduler = scheduler
         self._chunk_scheduler_key = scheduler_key
         return scheduler
+
+    def _default_request(self) -> ChunkRequest:
+        """Build one direct-call request for non-scheduled action sources."""
+
+        rtc_args = None
+        if self.enable_rtc:
+            rtc_args = RtcArgs(
+                prev_action_chunk=[],
+                inference_delay=1,
+                execute_horizon=0,
+            )
+        return ChunkRequest(
+            request_step=0,
+            request_time_s=0.0,
+            history_start=0,
+            history_end=0,
+            active_chunk_length=0,
+            remaining_steps=0,
+            overlap_steps=0,
+            latency_steps=0,
+            request_trigger_steps=0,
+            plan_start_step=0,
+            history_actions=[],
+            rtc_args=rtc_args,
+        )
 
     def _action_ensembler(self) -> ActionEnsembler | None:
         """Return the configured chunk-handoff ensembler when present."""
@@ -214,6 +244,7 @@ class InferenceRuntime:
             raw_action, plan_length = first_action_and_plan_length_from_action_call(
                 act_src_fn,
                 frame,
+                request=self._default_request(),
             )
             if known_single_step_source and plan_length != 1:
                 raise InterfaceValidationError(

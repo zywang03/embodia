@@ -83,9 +83,16 @@ runtime = infra.InferenceRuntime(
 
 If you use `ASYNC` or `overlap_ratio`, keep the same
 `infer(frame, request)` boundary. Return one action for chunk size `1`, or
-return `list[Action]` when the source can emit a future chunk.
+return `list[Action]` when the source can emit a future chunk. With
+`enable_rtc=True`, read `request.prev_action_chunk`,
+`request.inference_delay`, and `request.execute_horizon` directly; the same
+values are also available under `request.rtc_args`. A complete RTC-aware async
+example lives in `examples/06_async_inference_with_rtc.py`.
 
 For chunked async scheduling, the runtime uses
 `overlap_steps = floor(overlap_ratio * chunk_size)` and
 `trigger_steps = ceil(H_hat) + overlap_steps`, where `H_hat` is an EMA of
-observed request latency in control steps.
+observed request latency in control steps. When overlap blending is enabled,
+`current_weight` can be one scalar or a `(low, high)` pair for a linear
+earliest-to-latest overlap ramp. Built-in gripper commands switch to the new
+chunk directly instead of being averaged across the handoff boundary.

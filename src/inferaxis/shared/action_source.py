@@ -114,24 +114,27 @@ def _first_action_and_plan_length_from_plan(
 def first_action_and_plan_length_from_action_call(
     act_src_fn: ActionSource,
     frame: Frame,
+    *,
+    request: object | None = None,
 ) -> tuple[Action, int]:
     """Call one action source and return the first action plus plan length."""
 
     from ..runtime.inference.protocols import ChunkRequest
 
-    request = ChunkRequest(
-        request_step=0,
-        request_time_s=0.0,
-        history_start=0,
-        history_end=0,
-        active_chunk_length=0,
-        remaining_steps=0,
-        overlap_steps=0,
-        latency_steps=0,
-        request_trigger_steps=0,
-        plan_start_step=0,
-        history_actions=[],
-    )
+    if request is None:
+        request = ChunkRequest(
+            request_step=0,
+            request_time_s=0.0,
+            history_start=0,
+            history_end=0,
+            active_chunk_length=0,
+            remaining_steps=0,
+            overlap_steps=0,
+            latency_steps=0,
+            request_trigger_steps=0,
+            plan_start_step=0,
+            history_actions=[],
+        )
     try:
         raw_plan = act_src_fn(frame, request)
     except Exception as exc:

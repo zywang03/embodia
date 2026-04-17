@@ -217,6 +217,15 @@ This lets the same data interface support:
 - latency profiling against a required target control hz via `profile_sync_inference(...)`
 - mode recommendation via `recommend_inference_mode(...)`
 
+When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
+`request.prev_action_chunk`, `request.inference_delay`, and
+`request.execute_horizon`. The same values are also mirrored on
+`request.rtc_args` for grouped access:
+
+- `prev_action_chunk`: the remaining buffered actions from the request step to the end of the current chunk
+- `inference_delay`: the runtime's estimated action-step delay for this request, clamped to at least `1`
+- `execute_horizon`: the length of `prev_action_chunk`
+
 For chunked async execution, inferaxis uses:
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
@@ -226,7 +235,10 @@ Here `H_hat` is an EMA of observed request latency measured directly in control
 steps. When a reply arrives, inferaxis drops the stale prefix and either
 switches to the aligned new chunk directly or blends the overlap prefix when
 `ActionEnsembler(...)` is enabled. `ActionEnsembler(current_weight=...)` only
-blends aligned old/new chunk overlap actions; it does not apply an extra
+blends aligned old/new chunk overlap actions; `current_weight` may be one scalar
+shared by every overlap step or a `(low, high)` pair that ramps from the
+earliest overlap step to the latest. Built-in gripper commands switch to the
+new chunk directly instead of being averaged. It does not apply an extra
 per-step temporal filter to every emitted action. In practice, this makes
 inferaxis a dynamically latency-adaptive inference system: request timing is
 updated online from measured chunk latency instead of being fixed ahead of time.
@@ -248,6 +260,7 @@ The public examples are fixed to these five paths:
 3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 5. [`examples/05_profile_inference_latency.py`](./examples/05_profile_inference_latency.py)
+6. [`examples/06_async_inference_with_rtc.py`](./examples/06_async_inference_with_rtc.py)
 
 Together they show the intended scope of the system: one shared data interface,
 one outer loop, multiple inference-time use cases.

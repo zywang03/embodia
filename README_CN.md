@@ -214,6 +214,15 @@ result = infra.run_step(
 - `profile_sync_inference(...)` 基于目标控制频率的延迟 profiling
 - `recommend_inference_mode(...)` 模式推荐
 
+当 `enable_rtc=True` 时，传给 `policy.infer(...)` 的请求对象会直接提供
+`request.prev_action_chunk`、`request.inference_delay` 和
+`request.execute_horizon`。同一组值也会镜像到 `request.rtc_args`
+里，方便按对象整体访问：
+
+- `prev_action_chunk`：从这次请求时刻开始，到当前 chunk 结束为止的剩余 action
+- `inference_delay`：runtime 当前估计的推理延迟对应多少个 action step，最小会钳到 `1`
+- `execute_horizon`：`prev_action_chunk` 的长度
+
 对于 chunk 异步执行，inferaxis 现在使用：
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
@@ -222,8 +231,12 @@ result = infra.run_step(
 其中 `H_hat` 是按控制步数直接做 EMA 的请求延迟估计。结果返回后，
 inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(...)`，
 就对 overlap 区段里同一未来时间步的旧/新 action 做融合，否则直接切到
-新的对齐后 chunk。`ActionEnsembler(current_weight=...)` 不会再对每一步
-输出额外做一层 temporal filter。也就是说，inferaxis 不是靠预先写死的
+新的对齐后 chunk。`current_weight` 可以是一个标量，表示整个 overlap 都用
+同一个新 chunk 权重；也可以是 `(low, high)`，表示从最早的 overlap step
+线性过渡到最晚的 overlap step。对内置 gripper command，inferaxis 会直接
+切到新 chunk，不会做数值平均。`ActionEnsembler(current_weight=...)`
+不会再对每一步输出额外做一层 temporal filter。也就是说，inferaxis 不是靠
+预先写死的
 固定时序在跑，而是会根据实际测到的 chunk 延迟在线调整请求时机，因此它本质上
 是一个动态自适应延迟推理系统。
 
@@ -244,6 +257,7 @@ inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(.
 3. [`examples/03_data_collection.py`](./examples/03_data_collection.py)
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 5. [`examples/05_profile_inference_latency.py`](./examples/05_profile_inference_latency.py)
+6. [`examples/06_async_inference_with_rtc.py`](./examples/06_async_inference_with_rtc.py)
 
 这五个例子一起表达的就是这个项目现在的边界：一套统一数据接口，一条统一外层 loop，
 覆盖多种推理时场景。

@@ -219,9 +219,9 @@ result = infra.run_step(
 `request.execute_horizon`。同一组值也会镜像到 `request.rtc_args`
 里，方便按对象整体访问：
 
-- `prev_action_chunk`：从这次请求时刻开始，到当前 chunk 结束为止的剩余 action
-- `inference_delay`：runtime 当前估计的推理延迟对应多少个 action step，最小会钳到 `1`
-- `execute_horizon`：`prev_action_chunk` 的长度
+- `prev_action_chunk`：当前正在执行的完整 active chunk 快照，不会随着 live buffer 变短而缩短
+- `inference_delay`：RTC 应该从这个 chunk 的哪个索引开始生效，计算方式是 `已执行前缀步数 + max(当前估计延迟步数, 1)`
+- `execute_horizon`：`prev_action_chunk` 的长度，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 
 对于 chunk 异步执行，inferaxis 现在使用：
 

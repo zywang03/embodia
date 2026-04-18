@@ -86,8 +86,10 @@ If you use `ASYNC` or `overlap_ratio`, keep the same
 return `list[Action]` when the source can emit a future chunk. With
 `enable_rtc=True`, read `request.prev_action_chunk`,
 `request.inference_delay`, and `request.execute_horizon` directly; the same
-values are also available under `request.rtc_args`. A complete RTC-aware async
-example lives in `examples/06_async_inference_with_rtc.py`.
+values are also available under `request.rtc_args`. `prev_action_chunk` is the
+full active chunk snapshot, while the effective RTC interval is
+`[inference_delay, execute_horizon)`. A complete RTC-aware async example lives
+in `examples/06_async_inference_with_rtc.py`.
 
 For chunked async scheduling, the runtime uses
 `overlap_steps = floor(overlap_ratio * chunk_size)` and

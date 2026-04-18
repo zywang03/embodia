@@ -28,8 +28,8 @@ sustainable control hz directly from measured inference latency and returned
 chunk length, but it always profiles against one required `target_hz` because
 the control rate should already be fixed by the real system or dataset setup.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
-fields so a policy can read the full remaining chunk, estimated delay, and
-execute horizon for RTC-aware planning.
+fields so a policy can read the full active chunk snapshot plus the effective
+RTC interval `[inference_delay, execute_horizon)` for RTC-aware planning.
 The async runtime uses `floor(overlap_ratio * chunk_size)` overlap steps and a
 step-based latency EMA to decide when to request the next chunk.
 For `pi06star`-style setups, a realistic starting point is `chunk_steps=50`

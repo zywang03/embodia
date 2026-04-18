@@ -222,9 +222,9 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.execute_horizon`. The same values are also mirrored on
 `request.rtc_args` for grouped access:
 
-- `prev_action_chunk`: the remaining buffered actions from the request step to the end of the current chunk
-- `inference_delay`: the runtime's estimated action-step delay for this request, clamped to at least `1`
-- `execute_horizon`: the length of `prev_action_chunk`
+- `prev_action_chunk`: the full currently active chunk snapshot, kept at the active chunk length instead of shrinking with the live buffer
+- `inference_delay`: the chunk index where RTC guidance should begin, computed as `executed_prefix_steps + max(estimated_delay_steps, 1)`
+- `execute_horizon`: the length of `prev_action_chunk`, so the effective RTC interval is `[inference_delay, execute_horizon)`
 
 For chunked async execution, inferaxis uses:
 

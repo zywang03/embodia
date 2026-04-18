@@ -64,10 +64,10 @@ class ChunkRequest:
     ``request_step`` instead.
 
     ``rtc_args`` is populated when the owning runtime enables real-time chunk
-    hints. It exposes the full remaining chunk, the estimated delay in control
-    steps, and the chunk execute horizon seen by the request. For easier
-    interoperability with RTC-style policy code, the same values are also
-    mirrored onto ``prev_action_chunk``, ``inference_delay``, and
+    hints. It exposes the full currently active chunk snapshot, the index where
+    RTC guidance should begin inside that snapshot, and the snapshot length.
+    For easier interoperability with RTC-style policy code, the same values
+    are also mirrored onto ``prev_action_chunk``, ``inference_delay``, and
     ``execute_horizon`` directly on this object.
     """
 

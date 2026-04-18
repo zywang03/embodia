@@ -100,6 +100,12 @@ class ChunkScheduler:
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
     _reference_chunk_size: int = field(default=0, init=False, repr=False)
+    _active_chunk_snapshot: list[Action] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+    _active_chunk_consumed_steps: int = field(default=0, init=False, repr=False)
     _active_source_plan_length: int = field(default=0, init=False, repr=False)
     _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
     _pending_future: Future[_CompletedChunk] | None = field(
@@ -184,6 +190,8 @@ class ChunkScheduler:
         self._buffer.clear()
         self._global_step = 0
         self._reference_chunk_size = 0
+        self._active_chunk_snapshot.clear()
+        self._active_chunk_consumed_steps = 0
         self._active_source_plan_length = 0
         if self._pending_future is not None:
             self._pending_future.cancel()
@@ -420,7 +428,7 @@ class ChunkScheduler:
                 plan_start_step=request_step + history_start,
                 history_actions=history_actions,
                 rtc_args=self._build_rtc_args(
-                    prev_action_chunk=buffer_list,
+                    remaining_chunk=buffer_list,
                     inference_delay=latency_steps,
                 ),
             ),
@@ -430,7 +438,7 @@ class ChunkScheduler:
     def _build_rtc_args(
         self,
         *,
-        prev_action_chunk: Sequence[Action],
+        remaining_chunk: Sequence[Action],
         inference_delay: int,
     ) -> RtcArgs | None:
         """Build optional RTC hints for one policy request."""
@@ -438,10 +446,19 @@ class ChunkScheduler:
         if not self.enable_rtc:
             return None
 
-        cloned_chunk = self._clone_actions(prev_action_chunk)
+        if self._active_chunk_snapshot:
+            cloned_chunk = self._clone_actions(self._active_chunk_snapshot)
+            consumed_steps = min(
+                self._active_chunk_consumed_steps,
+                len(cloned_chunk),
+            )
+        else:
+            cloned_chunk = self._clone_actions(remaining_chunk)
+            consumed_steps = 0
+
         return RtcArgs(
             prev_action_chunk=cloned_chunk,
-            inference_delay=max(int(inference_delay), 1),
+            inference_delay=consumed_steps + max(int(inference_delay), 1),
             execute_horizon=len(cloned_chunk),
         )
 
@@ -534,6 +551,8 @@ class ChunkScheduler:
         if stale_steps >= len(completed.prepared_actions):
             return False
 
+        self._active_chunk_snapshot = self._clone_actions(completed.prepared_actions)
+        self._active_chunk_consumed_steps = stale_steps
         self._buffer = deque(completed.prepared_actions[stale_steps:])
         self._reference_chunk_size = completed.source_plan_length
         self._active_source_plan_length = completed.source_plan_length
@@ -559,6 +578,11 @@ class ChunkScheduler:
                 "ChunkScheduler has no buffered action to emit."
             )
         action = self._buffer.popleft()
+        if self._active_chunk_snapshot:
+            self._active_chunk_consumed_steps = min(
+                self._active_chunk_consumed_steps + 1,
+                len(self._active_chunk_snapshot),
+            )
         self._global_step += 1
         return action
 

@@ -226,12 +226,12 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 - `inference_delay`: the chunk index where RTC guidance should begin, computed as `executed_prefix_steps + max(estimated_delay_steps, 1)`
 - `execute_horizon`: the length of `prev_action_chunk`, so the effective RTC interval is `[inference_delay, execute_horizon)`
 
-When `enable_rtc=True`, you must also set `rtc_initial_chunk_length` to a
-positive int. inferaxis then bootstraps the very first RTC request with an
-all-zero `prev_action_chunk` of that length instead of `[]`. The zero action
-layout is built from `policy.get_spec().outputs`, so RTC bootstrap requires
-the source owner to expose `get_spec()`. In practice,
-`rtc_initial_chunk_length` should usually match the policy chunk horizon.
+RTC startup now uses one warmup request instead of a synthetic zero chunk. The
+first request is sent without RTC args, its returned chunk is not executed, and
+that chunk becomes the fixed-length `prev_action_chunk` for the second request.
+After the first real executable chunk is accepted, `prev_action_chunk` tracks
+the full currently active chunk as usual. This avoids needing `robot.get_spec()`
+or any extra bootstrap length config.
 
 For chunked async execution, inferaxis uses:
 

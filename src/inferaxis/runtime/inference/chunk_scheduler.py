@@ -97,7 +97,6 @@ class ChunkScheduler:
     use_overlap_blend: bool = False
     overlap_current_weight: BlendWeight = 0.5
     enable_rtc: bool = False
-    rtc_initial_chunk: list[Action] = field(default_factory=list)
     clock: Callable[[], float] = time.perf_counter
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
@@ -111,6 +110,7 @@ class ChunkScheduler:
     _active_source_plan_length: int = field(default=0, init=False, repr=False)
     _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
     _latency_observation_count: int = field(default=0, init=False, repr=False)
+    _rtc_seed_chunk: list[Action] = field(default_factory=list, init=False, repr=False)
     _pending_future: Future[_CompletedChunk] | None = field(
         default=None,
         init=False,
@@ -196,6 +196,7 @@ class ChunkScheduler:
         self._active_chunk_snapshot.clear()
         self._active_chunk_consumed_steps = 0
         self._active_source_plan_length = 0
+        self._rtc_seed_chunk.clear()
         if self._pending_future is not None:
             self._pending_future.cancel()
         self._pending_future = None
@@ -455,17 +456,20 @@ class ChunkScheduler:
                 self._active_chunk_consumed_steps,
                 len(cloned_chunk),
             )
-        elif self.rtc_initial_chunk and not remaining_chunk:
-            cloned_chunk = self._clone_actions(self.rtc_initial_chunk)
+        elif self._rtc_seed_chunk:
+            cloned_chunk = self._clone_actions(self._rtc_seed_chunk)
             consumed_steps = 0
         else:
-            cloned_chunk = self._clone_actions(remaining_chunk)
-            consumed_steps = 0
+            return None
 
+        execute_horizon = len(cloned_chunk)
         return RtcArgs(
             prev_action_chunk=cloned_chunk,
-            inference_delay=consumed_steps + max(int(inference_delay), 1),
-            execute_horizon=len(cloned_chunk),
+            inference_delay=min(
+                consumed_steps + max(int(inference_delay), 1),
+                execute_horizon,
+            ),
+            execute_horizon=execute_horizon,
         )
 
     def _execute_request(
@@ -550,6 +554,24 @@ class ChunkScheduler:
             + self.latency_ema_beta * float(waited_steps)
         )
 
+    def _capture_rtc_warmup_chunk(self, completed: _CompletedChunk) -> bool:
+        """Capture the first non-RTC reply as RTC seed without executing it."""
+
+        if not self.enable_rtc:
+            return False
+        if completed.request.rtc_args is not None:
+            return False
+        if self._active_chunk_snapshot or self._rtc_seed_chunk or self._buffer:
+            return False
+
+        stale_steps = max(self._global_step - completed.request.request_step, 0)
+        self._update_latency_estimate(stale_steps)
+        if stale_steps >= len(completed.prepared_actions):
+            return False
+
+        self._rtc_seed_chunk = self._clone_actions(completed.prepared_actions)
+        return True
+
     def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
         """Commit one prepared reply by dropping the stale executed prefix."""
 
@@ -565,6 +587,7 @@ class ChunkScheduler:
         self._buffer = deque(completed.prepared_actions[stale_steps:])
         self._reference_chunk_size = completed.source_plan_length
         self._active_source_plan_length = completed.source_plan_length
+        self._rtc_seed_chunk.clear()
         return True
 
     def _accept_pending_chunk(self, *, block: bool) -> bool:
@@ -618,15 +641,18 @@ class ChunkScheduler:
                 )
 
             if not self._buffer:
-                completed = self._execute_request(
-                    normalized_frame,
-                    self._build_request_job(include_latency=prefetch_async),
-                )
-                if not self._integrate_completed_chunk(completed):
-                    raise InterfaceValidationError(
-                        "ChunkScheduler could not produce a usable action chunk."
+                while not self._buffer:
+                    completed = self._execute_request(
+                        normalized_frame,
+                        self._build_request_job(include_latency=prefetch_async),
                     )
-                plan_refreshed = True
+                    if self._capture_rtc_warmup_chunk(completed):
+                        continue
+                    if not self._integrate_completed_chunk(completed):
+                        raise InterfaceValidationError(
+                            "ChunkScheduler could not produce a usable action chunk."
+                        )
+                    plan_refreshed = True
 
         # Once we have executable actions, decide whether it is time to request
         # the next chunk for overlap refresh.

@@ -223,12 +223,11 @@ result = infra.run_step(
 - `inference_delay`：RTC 应该从这个 chunk 的哪个索引开始生效，计算方式是 `已执行前缀步数 + max(当前估计延迟步数, 1)`
 - `execute_horizon`：`prev_action_chunk` 的长度，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 
-只要 `enable_rtc=True`，就必须同时把 `rtc_initial_chunk_length` 设成一个
-正整数。inferaxis 会在第一次 RTC 请求时把 `prev_action_chunk` 初始化成
-对应长度的全 0 chunk，而不是 `[]`。这份全 0 action 的结构来自
-`policy.get_spec().outputs`，所以想启用这个 bootstrap，source owner
-需要暴露 `get_spec()`。实践里 `rtc_initial_chunk_length` 通常应该和
-policy 的 chunk horizon 保持一致。
+现在 RTC 启动改成 warmup 请求，不再依赖额外的全 0 bootstrap chunk。
+第一次请求会先不带 RTC 参数发给 policy，返回的 chunk 不会执行，而是作为
+第二次请求的固定长度 `prev_action_chunk`。等第一份真正可执行的 chunk
+接管之后，`prev_action_chunk` 就会继续按照“当前正在执行的完整 active chunk”
+来维护，因此也不再需要 `robot.get_spec()` 或额外的 bootstrap 长度配置。
 
 对于 chunk 异步执行，inferaxis 现在使用：
 

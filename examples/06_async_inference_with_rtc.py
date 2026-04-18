@@ -41,26 +41,7 @@ class YourRtcPolicy:
 
     def __init__(self) -> None:
         self.step_index = 0
-        self.last_rtc_summary: dict[str, int] | None = None
-
-    def get_spec(self) -> dict[str, object]:
-        return {
-            "name": "your_rtc_policy",
-            "required_image_keys": [],
-            "required_state_keys": ["YOUR_OWN_arm", "YOUR_OWN_gripper"],
-            "outputs": [
-                {
-                    "target": "YOUR_OWN_arm",
-                    "command": infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
-                    "dim": 6,
-                },
-                {
-                    "target": "YOUR_OWN_gripper",
-                    "command": infra.BuiltinCommandKind.GRIPPER_POSITION,
-                    "dim": 1,
-                },
-            ],
-        }
+        self.last_rtc_summary: dict[str, int | bool | None] | None = None
 
     def reset(self) -> None:
         self.step_index = 0
@@ -75,26 +56,22 @@ class YourRtcPolicy:
         prev_action_chunk = request.prev_action_chunk
         inference_delay = request.inference_delay
         execute_horizon = request.execute_horizon
-        assert prev_action_chunk is not None, "enable_rtc=True should populate request.prev_action_chunk"
-        assert inference_delay is not None, "enable_rtc=True should populate request.inference_delay"
-        assert execute_horizon is not None, "enable_rtc=True should populate request.execute_horizon"
         self.last_rtc_summary = {
-            "prev_action_chunk_len": len(prev_action_chunk),
+            "has_rtc_args": request.rtc_args is not None,
+            "prev_action_chunk_len": 0 if prev_action_chunk is None else len(prev_action_chunk),
             "inference_delay": inference_delay,
             "execute_horizon": execute_horizon,
         }
 
-        bootstrap_chunk_is_all_zero = bool(prev_action_chunk) and all(
-            np.allclose(command.value, 0.0)
-            for action in prev_action_chunk
-            for command in action.commands.values()
-        )
         plan: list[infra.Action] = []
-        if prev_action_chunk and not bootstrap_chunk_is_all_zero:
+        if prev_action_chunk:
             last_arm = prev_action_chunk[-1].get_command("YOUR_OWN_arm")
             assert last_arm is not None
             next_base = float(last_arm.value[0] + 3.0)
         else:
+            # The first request is a compile warmup and intentionally carries no
+            # RTC hints. Its returned chunk is discarded by the runtime and used
+            # only as the prev_action_chunk for the next request.
             targets = [0.0, 3.0, 6.0, 9.0, 12.0]
             next_base = targets[self.step_index % len(targets)]
             self.step_index += 1
@@ -128,10 +105,6 @@ def main() -> None:
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
         enable_rtc=True,
-        # When RTC is enabled, rtc_initial_chunk_length must be set and should
-        # usually match the policy chunk horizon so the first bootstrap chunk
-        # has the same shape as later real chunks.
-        rtc_initial_chunk_length=4,
         action_optimizers=[
             infra.ActionEnsembler(current_weight=(0.1, 0.9)),
             # infra.ActionInterpolator(steps=1),

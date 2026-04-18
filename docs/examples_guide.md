@@ -30,9 +30,9 @@ the control rate should already be fixed by the real system or dataset setup.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
 fields so a policy can read the full active chunk snapshot plus the effective
 RTC interval `[inference_delay, execute_horizon)` for RTC-aware planning.
-Because RTC is enabled there, `rtc_initial_chunk_length` is set explicitly to
-bootstrap the first RTC request with a zero chunk shaped from
-`policy.get_spec().outputs`.
+Because RTC is enabled there, the first request is used as a warmup request
+without RTC args; its returned chunk is discarded from execution and reused as
+the `prev_action_chunk` seed for the next request.
 The async runtime uses `floor(overlap_ratio * chunk_size)` overlap steps and a
 step-based latency EMA, with the first three request observations ignored as
 warmup, to decide when to request the next chunk.

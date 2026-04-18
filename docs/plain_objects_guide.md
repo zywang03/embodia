@@ -88,11 +88,10 @@ return `list[Action]` when the source can emit a future chunk. With
 `request.inference_delay`, and `request.execute_horizon` directly; the same
 values are also available under `request.rtc_args`. `prev_action_chunk` is the
 full active chunk snapshot, while the effective RTC interval is
-`[inference_delay, execute_horizon)`. When `enable_rtc=True`, you must set
-`rtc_initial_chunk_length` to a positive int; the first RTC request is then
-bootstrapped with an all-zero chunk built from `policy.get_spec().outputs`.
-This length should usually match the policy chunk horizon. A complete
-RTC-aware async example lives in `examples/06_async_inference_with_rtc.py`.
+`[inference_delay, execute_horizon)`. The first RTC request is sent without RTC
+args, and its returned chunk is used only to seed the next request's
+`prev_action_chunk`; that warmup chunk is not executed. A complete RTC-aware
+async example lives in `examples/06_async_inference_with_rtc.py`.
 
 For chunked async scheduling, the runtime uses
 `overlap_steps = floor(overlap_ratio * chunk_size)` and

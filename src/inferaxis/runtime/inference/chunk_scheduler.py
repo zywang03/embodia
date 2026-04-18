@@ -51,6 +51,7 @@ _NON_BLENDABLE_OVERLAP_COMMANDS = frozenset(
         BuiltinCommandKind.GRIPPER_OPEN_CLOSE,
     }
 )
+_LATENCY_WARMUP_REQUESTS = 3
 
 
 @dataclass(slots=True)
@@ -96,6 +97,7 @@ class ChunkScheduler:
     use_overlap_blend: bool = False
     overlap_current_weight: BlendWeight = 0.5
     enable_rtc: bool = False
+    rtc_initial_chunk: list[Action] = field(default_factory=list)
     clock: Callable[[], float] = time.perf_counter
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
@@ -108,6 +110,7 @@ class ChunkScheduler:
     _active_chunk_consumed_steps: int = field(default=0, init=False, repr=False)
     _active_source_plan_length: int = field(default=0, init=False, repr=False)
     _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
+    _latency_observation_count: int = field(default=0, init=False, repr=False)
     _pending_future: Future[_CompletedChunk] | None = field(
         default=None,
         init=False,
@@ -452,6 +455,9 @@ class ChunkScheduler:
                 self._active_chunk_consumed_steps,
                 len(cloned_chunk),
             )
+        elif self.rtc_initial_chunk and not remaining_chunk:
+            cloned_chunk = self._clone_actions(self.rtc_initial_chunk)
+            consumed_steps = 0
         else:
             cloned_chunk = self._clone_actions(remaining_chunk)
             consumed_steps = 0
@@ -536,6 +542,9 @@ class ChunkScheduler:
     def _update_latency_estimate(self, waited_steps: int) -> None:
         """Update ``H_hat`` using the latest observed request duration."""
 
+        self._latency_observation_count += 1
+        if self._latency_observation_count <= _LATENCY_WARMUP_REQUESTS:
+            return
         self._latency_steps_estimate = (
             (1.0 - self.latency_ema_beta) * self._latency_steps_estimate
             + self.latency_ema_beta * float(waited_steps)

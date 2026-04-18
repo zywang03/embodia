@@ -43,6 +43,25 @@ class YourRtcPolicy:
         self.step_index = 0
         self.last_rtc_summary: dict[str, int] | None = None
 
+    def get_spec(self) -> dict[str, object]:
+        return {
+            "name": "your_rtc_policy",
+            "required_image_keys": [],
+            "required_state_keys": ["YOUR_OWN_arm", "YOUR_OWN_gripper"],
+            "outputs": [
+                {
+                    "target": "YOUR_OWN_arm",
+                    "command": infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                    "dim": 6,
+                },
+                {
+                    "target": "YOUR_OWN_gripper",
+                    "command": infra.BuiltinCommandKind.GRIPPER_POSITION,
+                    "dim": 1,
+                },
+            ],
+        }
+
     def reset(self) -> None:
         self.step_index = 0
         self.last_rtc_summary = None
@@ -65,8 +84,13 @@ class YourRtcPolicy:
             "execute_horizon": execute_horizon,
         }
 
+        bootstrap_chunk_is_all_zero = bool(prev_action_chunk) and all(
+            np.allclose(command.value, 0.0)
+            for action in prev_action_chunk
+            for command in action.commands.values()
+        )
         plan: list[infra.Action] = []
-        if prev_action_chunk:
+        if prev_action_chunk and not bootstrap_chunk_is_all_zero:
             last_arm = prev_action_chunk[-1].get_command("YOUR_OWN_arm")
             assert last_arm is not None
             next_base = float(last_arm.value[0] + 3.0)
@@ -104,9 +128,13 @@ def main() -> None:
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
         enable_rtc=True,
+        # When RTC is enabled, rtc_initial_chunk_length must be set and should
+        # usually match the policy chunk horizon so the first bootstrap chunk
+        # has the same shape as later real chunks.
+        rtc_initial_chunk_length=4,
         action_optimizers=[
-            infra.ActionEnsembler(current_weight=(0.2, 0.8)),
-            infra.ActionInterpolator(steps=1),
+            infra.ActionEnsembler(current_weight=(0.1, 0.9)),
+            # infra.ActionInterpolator(steps=1),
         ],
         realtime_controller=infra.RealtimeController(hz=50.0),
     )

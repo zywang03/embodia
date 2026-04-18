@@ -226,13 +226,21 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 - `inference_delay`: the chunk index where RTC guidance should begin, computed as `executed_prefix_steps + max(estimated_delay_steps, 1)`
 - `execute_horizon`: the length of `prev_action_chunk`, so the effective RTC interval is `[inference_delay, execute_horizon)`
 
+When `enable_rtc=True`, you must also set `rtc_initial_chunk_length` to a
+positive int. inferaxis then bootstraps the very first RTC request with an
+all-zero `prev_action_chunk` of that length instead of `[]`. The zero action
+layout is built from `policy.get_spec().outputs`, so RTC bootstrap requires
+the source owner to expose `get_spec()`. In practice,
+`rtc_initial_chunk_length` should usually match the policy chunk horizon.
+
 For chunked async execution, inferaxis uses:
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
 - `trigger_steps = ceil(H_hat) + overlap_steps`
 
 Here `H_hat` is an EMA of observed request latency measured directly in control
-steps. When a reply arrives, inferaxis drops the stale prefix and either
+steps, but the first three request observations are ignored as warmup. When a
+reply arrives, inferaxis drops the stale prefix and either
 switches to the aligned new chunk directly or blends the overlap prefix when
 `ActionEnsembler(...)` is enabled. `ActionEnsembler(current_weight=...)` only
 blends aligned old/new chunk overlap actions; `current_weight` may be one scalar

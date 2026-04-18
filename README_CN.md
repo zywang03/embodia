@@ -223,12 +223,20 @@ result = infra.run_step(
 - `inference_delay`：RTC 应该从这个 chunk 的哪个索引开始生效，计算方式是 `已执行前缀步数 + max(当前估计延迟步数, 1)`
 - `execute_horizon`：`prev_action_chunk` 的长度，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 
+只要 `enable_rtc=True`，就必须同时把 `rtc_initial_chunk_length` 设成一个
+正整数。inferaxis 会在第一次 RTC 请求时把 `prev_action_chunk` 初始化成
+对应长度的全 0 chunk，而不是 `[]`。这份全 0 action 的结构来自
+`policy.get_spec().outputs`，所以想启用这个 bootstrap，source owner
+需要暴露 `get_spec()`。实践里 `rtc_initial_chunk_length` 通常应该和
+policy 的 chunk horizon 保持一致。
+
 对于 chunk 异步执行，inferaxis 现在使用：
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
 - `trigger_steps = ceil(H_hat) + overlap_steps`
 
-其中 `H_hat` 是按控制步数直接做 EMA 的请求延迟估计。结果返回后，
+其中 `H_hat` 是按控制步数直接做 EMA 的请求延迟估计，但前 3 次请求观测会先作为
+warmup 被忽略。结果返回后，
 inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(...)`，
 就对 overlap 区段里同一未来时间步的旧/新 action 做融合，否则直接切到
 新的对齐后 chunk。`current_weight` 可以是一个标量，表示整个 overlap 都用

@@ -6,8 +6,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+import numpy as np
+
 from ...core.errors import InterfaceValidationError
-from ...core.schema import Action, Frame
+from ...core.schema import Action, Command, Frame, validate_policy_spec
+from ...core.transform import coerce_policy_spec
 from ..checks import validate_action
 from ..flow import (
     StepResult,
@@ -45,6 +48,7 @@ class InferenceRuntime:
     action_optimizers: Sequence[ActionOptimizerProtocol | ActionOptimizer] = ()
     realtime_controller: RealtimeController | None = None
     enable_rtc: bool = False
+    rtc_initial_chunk_length: int | None = None
     _chunk_scheduler: ChunkScheduler | None = field(
         default=None,
         init=False,
@@ -62,6 +66,16 @@ class InferenceRuntime:
     )
     _optimizer_source_key: object | None = field(
         default=None,
+        init=False,
+        repr=False,
+    )
+    _rtc_initial_chunk_key: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _rtc_initial_chunk_template: list[Action] = field(
+        default_factory=list,
         init=False,
         repr=False,
     )
@@ -93,6 +107,25 @@ class InferenceRuntime:
                 )
         if not isinstance(self.enable_rtc, bool):
             raise InterfaceValidationError("InferenceRuntime.enable_rtc must be a bool.")
+        if self.rtc_initial_chunk_length is not None:
+            if isinstance(self.rtc_initial_chunk_length, bool) or not isinstance(
+                self.rtc_initial_chunk_length,
+                int,
+            ):
+                raise InterfaceValidationError(
+                    "InferenceRuntime.rtc_initial_chunk_length must be an int > 0 "
+                    "when provided."
+                )
+            if self.rtc_initial_chunk_length <= 0:
+                raise InterfaceValidationError(
+                    "InferenceRuntime.rtc_initial_chunk_length must be > 0 when "
+                    f"provided, got {self.rtc_initial_chunk_length!r}."
+                )
+        if self.enable_rtc and self.rtc_initial_chunk_length is None:
+            raise InterfaceValidationError(
+                "InferenceRuntime(enable_rtc=True) requires "
+                "rtc_initial_chunk_length=... to be set to a positive int."
+            )
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
@@ -101,6 +134,8 @@ class InferenceRuntime:
         if self._chunk_scheduler is not None:
             self._chunk_scheduler.reset()
         self._chunk_scheduler_key = None
+        self._rtc_initial_chunk_key = None
+        self._rtc_initial_chunk_template.clear()
 
         if self.realtime_controller is not None:
             self.realtime_controller.reset()
@@ -112,6 +147,8 @@ class InferenceRuntime:
             self._chunk_scheduler.close()
             self._chunk_scheduler = None
         self._chunk_scheduler_key = None
+        self._rtc_initial_chunk_key = None
+        self._rtc_initial_chunk_template.clear()
         self._reset_action_optimizers()
 
     def _reset_action_optimizers(self) -> None:
@@ -120,6 +157,91 @@ class InferenceRuntime:
         for optimizer in self.action_optimizers:
             reset_if_possible(optimizer)
         self._optimizer_source_key = None
+
+    def _clone_action(self, action: Action) -> Action:
+        """Return a detached copy of one standardized action."""
+
+        return Action(
+            commands={
+                target: Command(
+                    command=command.command,
+                    value=command.value.copy(),
+                    ref_frame=command.ref_frame,
+                    meta=dict(command.meta),
+                )
+                for target, command in action.commands.items()
+            },
+            meta=dict(action.meta),
+        )
+
+    def _clone_actions(self, actions: Sequence[Action]) -> list[Action]:
+        """Return detached copies for one sequence of standardized actions."""
+
+        return [self._clone_action(action) for action in actions]
+
+    def _zero_action_from_policy_spec(self, act_src_fn: ActionSource) -> Action:
+        """Build one all-zero action from the policy outputs declared by ``get_spec()``."""
+
+        owner = resolve_runtime_owner(act_src_fn)
+        get_spec = getattr(owner, "get_spec", None)
+        if not callable(get_spec):
+            raise InterfaceValidationError(
+                "InferenceRuntime(enable_rtc=True, rtc_initial_chunk_length>0) "
+                "requires the policy/source owner to expose get_spec() so the "
+                "initial zero RTC chunk can be constructed."
+            )
+
+        try:
+            spec = coerce_policy_spec(get_spec())
+        except InterfaceValidationError as exc:
+            raise InterfaceValidationError(
+                "InferenceRuntime could not build the initial zero RTC chunk "
+                f"from get_spec(): {exc}"
+            ) from exc
+        validate_policy_spec(spec)
+
+        return Action(
+            commands={
+                output.target: Command(
+                    command=output.command,
+                    value=np.zeros(output.dim, dtype=np.float64),
+                )
+                for output in spec.outputs
+            }
+        )
+
+    def _rtc_initial_chunk_for_source(
+        self,
+        *,
+        act_src_fn: ActionSource | None,
+    ) -> list[Action]:
+        """Return one detached zero RTC chunk template for the current source."""
+
+        if not self.enable_rtc:
+            return []
+        if self.rtc_initial_chunk_length is None:
+            raise InterfaceValidationError(
+                "InferenceRuntime(enable_rtc=True) requires "
+                "rtc_initial_chunk_length=... to be set to a positive int."
+            )
+        if act_src_fn is None:
+            raise InterfaceValidationError(
+                "InferenceRuntime(enable_rtc=True, rtc_initial_chunk_length>0) "
+                "requires act_src_fn=...."
+            )
+
+        source_key = callable_key(act_src_fn)
+        if self._rtc_initial_chunk_key == source_key:
+            return self._clone_actions(self._rtc_initial_chunk_template)
+
+        zero_action = self._zero_action_from_policy_spec(act_src_fn)
+        template = [
+            self._clone_action(zero_action)
+            for _ in range(self.rtc_initial_chunk_length)
+        ]
+        self._rtc_initial_chunk_key = source_key
+        self._rtc_initial_chunk_template = self._clone_actions(template)
+        return template
 
     def _scheduler_overlap_ratio(self) -> float:
         """Return the effective overlap ratio used by the hidden scheduler."""
@@ -170,6 +292,9 @@ class InferenceRuntime:
                     ensembler.current_weight if ensembler is not None else 0.5
                 )
                 self._chunk_scheduler.enable_rtc = self.enable_rtc
+                self._chunk_scheduler.rtc_initial_chunk = (
+                    self._rtc_initial_chunk_for_source(act_src_fn=act_src_fn)
+                )
                 return self._chunk_scheduler
 
         if act_src_fn is None:
@@ -185,20 +310,26 @@ class InferenceRuntime:
                 ensembler.current_weight if ensembler is not None else 0.5
             ),
             enable_rtc=self.enable_rtc,
+            rtc_initial_chunk=self._rtc_initial_chunk_for_source(act_src_fn=act_src_fn),
         )
         self._chunk_scheduler = scheduler
         self._chunk_scheduler_key = scheduler_key
         return scheduler
 
-    def _default_request(self) -> ChunkRequest:
+    def _default_request(
+        self,
+        *,
+        act_src_fn: ActionSource | None,
+    ) -> ChunkRequest:
         """Build one direct-call request for non-scheduled action sources."""
 
         rtc_args = None
         if self.enable_rtc:
+            initial_chunk = self._rtc_initial_chunk_for_source(act_src_fn=act_src_fn)
             rtc_args = RtcArgs(
-                prev_action_chunk=[],
+                prev_action_chunk=initial_chunk,
                 inference_delay=1,
-                execute_horizon=0,
+                execute_horizon=len(initial_chunk),
             )
         return ChunkRequest(
             request_step=0,
@@ -244,7 +375,7 @@ class InferenceRuntime:
             raw_action, plan_length = first_action_and_plan_length_from_action_call(
                 act_src_fn,
                 frame,
-                request=self._default_request(),
+                request=self._default_request(act_src_fn=act_src_fn),
             )
             if known_single_step_source and plan_length != 1:
                 raise InterfaceValidationError(

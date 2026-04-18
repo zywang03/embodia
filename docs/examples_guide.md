@@ -30,8 +30,12 @@ the control rate should already be fixed by the real system or dataset setup.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
 fields so a policy can read the full active chunk snapshot plus the effective
 RTC interval `[inference_delay, execute_horizon)` for RTC-aware planning.
+Because RTC is enabled there, `rtc_initial_chunk_length` is set explicitly to
+bootstrap the first RTC request with a zero chunk shaped from
+`policy.get_spec().outputs`.
 The async runtime uses `floor(overlap_ratio * chunk_size)` overlap steps and a
-step-based latency EMA to decide when to request the next chunk.
+step-based latency EMA, with the first three request observations ignored as
+warmup, to decide when to request the next chunk.
 For `pi06star`-style setups, a realistic starting point is `chunk_steps=50`
 with `overlap_ratio=0.2`; `32` is also common for Pi0FAST, while smaller
 training-oriented configs often use `16`, `15`, or `10`.

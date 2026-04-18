@@ -462,11 +462,11 @@ class ChunkScheduler:
         else:
             return None
 
-        execute_horizon = len(cloned_chunk)
+        execute_horizon = max(len(cloned_chunk) - consumed_steps, 0)
         return RtcArgs(
             prev_action_chunk=cloned_chunk,
             inference_delay=min(
-                consumed_steps + max(int(inference_delay), 1),
+                max(int(inference_delay), 1),
                 execute_horizon,
             ),
             execute_horizon=execute_horizon,

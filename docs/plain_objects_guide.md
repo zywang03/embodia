@@ -87,7 +87,8 @@ return `list[Action]` when the source can emit a future chunk. With
 `enable_rtc=True`, read `request.prev_action_chunk`,
 `request.inference_delay`, and `request.execute_horizon` directly; the same
 values are also available under `request.rtc_args`. `prev_action_chunk` is the
-full active chunk snapshot, while the effective RTC interval is
+full active chunk snapshot, while `inference_delay` and `execute_horizon` are
+both measured relative to request launch, giving an effective RTC interval of
 `[inference_delay, execute_horizon)`. The first RTC request is sent without RTC
 args, and its returned chunk is used only to seed the next request's
 `prev_action_chunk`; that warmup chunk is not executed. A complete RTC-aware

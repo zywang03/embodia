@@ -1018,14 +1018,14 @@ class InferenceRuntimeTests(unittest.TestCase):
         rtc_args = job.request.rtc_args
         self.assertIsNotNone(rtc_args)
         assert rtc_args is not None
-        self.assertEqual(rtc_args.inference_delay, 3)
-        self.assertEqual(rtc_args.execute_horizon, 4)
+        self.assertEqual(rtc_args.inference_delay, 1)
+        self.assertEqual(rtc_args.execute_horizon, 2)
         self.assertEqual(
             [arm_value(action) for action in rtc_args.prev_action_chunk],
             [1.0, 2.0, 3.0, 4.0],
         )
-        self.assertEqual(job.request.inference_delay, 3)
-        self.assertEqual(job.request.execute_horizon, 4)
+        self.assertEqual(job.request.inference_delay, 1)
+        self.assertEqual(job.request.execute_horizon, 2)
         assert job.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in job.request.prev_action_chunk],
@@ -1111,8 +1111,8 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertIsNone(without_rtc.request.inference_delay)
         self.assertIsNone(without_rtc.request.execute_horizon)
         self.assertIsNone(without_rtc.request.rtc_args)
-        self.assertEqual(with_rtc.request.inference_delay, 3)
-        self.assertEqual(with_rtc.request.execute_horizon, 4)
+        self.assertEqual(with_rtc.request.inference_delay, 2)
+        self.assertEqual(with_rtc.request.execute_horizon, 3)
         assert with_rtc.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in with_rtc.request.prev_action_chunk],
@@ -1304,8 +1304,8 @@ class InferenceRuntimeTests(unittest.TestCase):
             [arm_value(action) for action in policy.requests[2].prev_action_chunk],
             [5.0, 6.0, 7.0, 8.0],
         )
-        self.assertEqual(policy.requests[2].execute_horizon, 4)
-        self.assertLessEqual(policy.requests[2].inference_delay or 0, 4)
+        self.assertEqual(policy.requests[2].execute_horizon, 2)
+        self.assertEqual(policy.requests[2].inference_delay, 1)
 
     def test_async_runtime_requires_action_source(self) -> None:
         robot = RuntimeRobot()

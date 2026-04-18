@@ -220,8 +220,8 @@ result = infra.run_step(
 里，方便按对象整体访问：
 
 - `prev_action_chunk`：当前正在执行的完整 active chunk 快照，不会随着 live buffer 变短而缩短
-- `inference_delay`：RTC 应该从这个 chunk 的哪个索引开始生效，计算方式是 `已执行前缀步数 + max(当前估计延迟步数, 1)`
-- `execute_horizon`：`prev_action_chunk` 的长度，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
+- `inference_delay`：从请求发出到新 chunk 最早可能开始生效，还需要等待的控制步数，计算方式是 `max(当前估计延迟步数, 1)`
+- `execute_horizon`：从请求发出到当前 chunk 结束还剩多少控制步，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 
 现在 RTC 启动改成 warmup 请求，不再依赖额外的全 0 bootstrap chunk。
 第一次请求会先不带 RTC 参数发给 policy，返回的 chunk 不会执行，而是作为

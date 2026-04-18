@@ -223,8 +223,8 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.rtc_args` for grouped access:
 
 - `prev_action_chunk`: the full currently active chunk snapshot, kept at the active chunk length instead of shrinking with the live buffer
-- `inference_delay`: the chunk index where RTC guidance should begin, computed as `executed_prefix_steps + max(estimated_delay_steps, 1)`
-- `execute_horizon`: the length of `prev_action_chunk`, so the effective RTC interval is `[inference_delay, execute_horizon)`
+- `inference_delay`: the estimated number of control steps from request launch until the new chunk can begin taking effect, computed as `max(estimated_delay_steps, 1)`
+- `execute_horizon`: the number of control steps from request launch until the current chunk finishes, so the effective RTC interval is `[inference_delay, execute_horizon)`
 
 RTC startup now uses one warmup request instead of a synthetic zero chunk. The
 first request is sent without RTC args, its returned chunk is not executed, and

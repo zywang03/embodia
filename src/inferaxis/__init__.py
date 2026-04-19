@@ -10,8 +10,6 @@ from .core.transform import action_to_dict, coerce_action, coerce_frame, frame_t
 from .runtime.checks import check_pair
 from .runtime.flow import run_step
 from .runtime.inference import (
-    ActionEnsembler,
-    ActionInterpolator,
     ChunkRequest,
     InferenceMode,
     InferenceRuntime,
@@ -24,8 +22,6 @@ from .runtime.inference import (
 __all__ = [
     "Action",
     "BuiltinCommandKind",
-    "ActionEnsembler",
-    "ActionInterpolator",
     "ChunkRequest",
     "Command",
     "Frame",

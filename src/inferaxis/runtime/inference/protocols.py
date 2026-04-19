@@ -10,19 +10,6 @@ from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
 
 
-@runtime_checkable
-class ActionOptimizerProtocol(Protocol):
-    """Callable optimizer that transforms one standardized action."""
-
-    def __call__(
-        self,
-        action: Action,
-        frame: Frame,
-    ) -> Action:
-        """Return an optimized action."""
-
-
-ActionOptimizer = Callable[[Action, Frame], Action]
 ActionChunk = Sequence[Action]
 ActionPlan = Action | ActionChunk
 
@@ -130,8 +117,6 @@ class ChunkRequest:
 
 __all__ = [
     "ActionChunk",
-    "ActionOptimizer",
-    "ActionOptimizerProtocol",
     "ActionPlan",
     "ActionSource",
     "ActionSourceProtocol",

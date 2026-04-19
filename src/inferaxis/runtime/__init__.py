@@ -3,8 +3,6 @@
 from .checks import InterfaceValidationError, check_pair
 from .flow import run_step
 from .inference import (
-    ActionEnsembler,
-    ActionInterpolator,
     InferenceMode,
     InferenceRuntime,
     RealtimeController,
@@ -14,8 +12,6 @@ from .inference import (
 )
 
 __all__ = [
-    "ActionEnsembler",
-    "ActionInterpolator",
     "InferenceMode",
     "InferenceRuntime",
     "InterfaceValidationError",

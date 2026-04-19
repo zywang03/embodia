@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ...core.errors import InterfaceValidationError
-from ...core.schema import Action, Command, Frame
-from ..checks import validate_action
+from ...core.schema import Action, Frame
 from ..flow import (
     StepResult,
     _execute_step_action,
@@ -23,10 +22,9 @@ from ...shared.action_source import (
     resolve_runtime_owner,
 )
 from .chunk_scheduler import ChunkScheduler
-from ...shared.common import as_action, reset_if_possible
 from .control import RealtimeController
-from .optimizers import ActionEnsembler
-from .protocols import ActionOptimizer, ActionOptimizerProtocol, ChunkRequest
+from .optimizers import BlendWeight, _normalize_blend_weight
+from .protocols import ChunkRequest
 
 
 class InferenceMode(StrEnum):
@@ -42,7 +40,9 @@ class InferenceRuntime:
 
     mode: InferenceMode | str
     overlap_ratio: float | None = None
-    action_optimizers: Sequence[ActionOptimizerProtocol | ActionOptimizer] = ()
+    warmup_requests: int = 1
+    profile_delay_requests: int = 3
+    ensemble_weight: BlendWeight | None = None
     realtime_controller: RealtimeController | None = None
     enable_rtc: bool = False
     _chunk_scheduler: ChunkScheduler | None = field(
@@ -57,11 +57,6 @@ class InferenceRuntime:
     )
     _single_step_source_keys: set[object] = field(
         default_factory=set,
-        init=False,
-        repr=False,
-    )
-    _optimizer_source_key: object | None = field(
-        default=None,
         init=False,
         repr=False,
     )
@@ -91,13 +86,27 @@ class InferenceRuntime:
                     "InferenceRuntime.overlap_ratio must be in the range [0, 1), "
                     f"got {self.overlap_ratio!r}."
                 )
+        for field_name in ("warmup_requests", "profile_delay_requests"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise InterfaceValidationError(
+                    f"InferenceRuntime.{field_name} must be an int >= 0."
+                )
+            if value < 0:
+                raise InterfaceValidationError(
+                    f"InferenceRuntime.{field_name} must be >= 0, got {value!r}."
+                )
+        if self.ensemble_weight is not None:
+            self.ensemble_weight = _normalize_blend_weight(
+                self.ensemble_weight,
+                field_name="ensemble_weight",
+            )
         if not isinstance(self.enable_rtc, bool):
             raise InterfaceValidationError("InferenceRuntime.enable_rtc must be a bool.")
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
 
-        self._reset_action_optimizers()
         if self._chunk_scheduler is not None:
             self._chunk_scheduler.reset()
         self._chunk_scheduler_key = None
@@ -112,35 +121,6 @@ class InferenceRuntime:
             self._chunk_scheduler.close()
             self._chunk_scheduler = None
         self._chunk_scheduler_key = None
-        self._reset_action_optimizers()
-
-    def _reset_action_optimizers(self) -> None:
-        """Reset all configured action optimizers and forget source state."""
-
-        for optimizer in self.action_optimizers:
-            reset_if_possible(optimizer)
-        self._optimizer_source_key = None
-
-    def _clone_action(self, action: Action) -> Action:
-        """Return a detached copy of one standardized action."""
-
-        return Action(
-            commands={
-                target: Command(
-                    command=command.command,
-                    value=command.value.copy(),
-                    ref_frame=command.ref_frame,
-                    meta=dict(command.meta),
-                )
-                for target, command in action.commands.items()
-            },
-            meta=dict(action.meta),
-        )
-
-    def _clone_actions(self, actions: Sequence[Action]) -> list[Action]:
-        """Return detached copies for one sequence of standardized actions."""
-
-        return [self._clone_action(action) for action in actions]
 
     def _scheduler_overlap_ratio(self) -> float:
         """Return the effective overlap ratio used by the hidden scheduler."""
@@ -148,6 +128,22 @@ class InferenceRuntime:
         if self.overlap_ratio is not None:
             return self.overlap_ratio
         return 0.2 if self.mode is InferenceMode.ASYNC else 0.0
+
+    def _scheduler_initial_latency_steps(self) -> float:
+        """Return the startup async latency prior used by the scheduler."""
+
+        if self.mode is not InferenceMode.ASYNC:
+            return 0.0
+        return 1.0
+
+    def _scheduler_control_period_s(self) -> float | None:
+        """Return the control period used for async latency bootstrap."""
+
+        if self.mode is not InferenceMode.ASYNC:
+            return None
+        if self.realtime_controller is None:
+            return None
+        return self.realtime_controller.period_s
 
     def _ensure_chunk_scheduler(
         self,
@@ -171,7 +167,7 @@ class InferenceRuntime:
             )
 
         scheduler_overlap_ratio = self._scheduler_overlap_ratio()
-        ensembler = self._action_ensembler()
+        use_overlap_blend = self.ensemble_weight is not None
         if self._chunk_scheduler is not None:
             if (
                 self._chunk_scheduler_key != scheduler_key
@@ -186,9 +182,19 @@ class InferenceRuntime:
                 self._chunk_scheduler_key = None
             else:
                 self._chunk_scheduler.overlap_ratio = scheduler_overlap_ratio
-                self._chunk_scheduler.use_overlap_blend = ensembler is not None
+                self._chunk_scheduler.use_overlap_blend = use_overlap_blend
                 self._chunk_scheduler.overlap_current_weight = (
-                    ensembler.current_weight if ensembler is not None else 0.5
+                    self.ensemble_weight if self.ensemble_weight is not None else 0.5
+                )
+                self._chunk_scheduler.initial_latency_steps = (
+                    self._scheduler_initial_latency_steps()
+                )
+                self._chunk_scheduler.control_period_s = (
+                    self._scheduler_control_period_s()
+                )
+                self._chunk_scheduler.warmup_requests = self.warmup_requests
+                self._chunk_scheduler.profile_delay_requests = (
+                    self.profile_delay_requests
                 )
                 self._chunk_scheduler.enable_rtc = self.enable_rtc
                 return self._chunk_scheduler
@@ -201,9 +207,13 @@ class InferenceRuntime:
         scheduler = ChunkScheduler(
             action_source=act_src_fn,
             overlap_ratio=scheduler_overlap_ratio,
-            use_overlap_blend=ensembler is not None,
+            initial_latency_steps=self._scheduler_initial_latency_steps(),
+            control_period_s=self._scheduler_control_period_s(),
+            warmup_requests=self.warmup_requests,
+            profile_delay_requests=self.profile_delay_requests,
+            use_overlap_blend=use_overlap_blend,
             overlap_current_weight=(
-                ensembler.current_weight if ensembler is not None else 0.5
+                self.ensemble_weight if self.ensemble_weight is not None else 0.5
             ),
             enable_rtc=self.enable_rtc,
         )
@@ -228,17 +238,17 @@ class InferenceRuntime:
             history_actions=[],
         )
 
-    def _action_ensembler(self) -> ActionEnsembler | None:
-        """Return the configured chunk-handoff ensembler when present."""
+    def _bootstrap_chunk_scheduler(
+        self,
+        *,
+        frame: Frame,
+        chunk_scheduler: ChunkScheduler,
+    ) -> bool:
+        """Run async startup warmup/profile outside of ``next_action()``."""
 
-        return next(
-            (
-                optimizer
-                for optimizer in self.action_optimizers
-                if isinstance(optimizer, ActionEnsembler)
-            ),
-            None,
-        )
+        if self.mode is not InferenceMode.ASYNC:
+            return False
+        return chunk_scheduler.bootstrap(frame)
 
     def _resolve_raw_action(
         self,
@@ -270,10 +280,15 @@ class InferenceRuntime:
                 self._single_step_source_keys.add(source_key)
             return raw_action, True, plan_length
 
-        raw_action, plan_refreshed = chunk_scheduler.next_action(
+        plan_refreshed = self._bootstrap_chunk_scheduler(
+            frame=frame,
+            chunk_scheduler=chunk_scheduler,
+        )
+        raw_action, next_plan_refreshed = chunk_scheduler.next_action(
             frame,
             prefetch_async=self.mode is InferenceMode.ASYNC,
         )
+        plan_refreshed = plan_refreshed or next_plan_refreshed
         plan_length = chunk_scheduler.active_source_plan_length
         if plan_length == 1 and source_key is not None:
             self._single_step_source_keys.add(source_key)
@@ -287,37 +302,53 @@ class InferenceRuntime:
                 )
         return raw_action, plan_refreshed, plan_length
 
-    def _optimize_action(
+    def bootstrap_async(
         self,
-        action: Action,
         *,
-        frame: Frame,
-        source_key: object | None,
-        enabled: bool,
-    ) -> Action:
-        """Run per-step action optimizers when this source emits real chunks."""
+        observe_fn: FrameSource | None = None,
+        act_src_fn: ActionSource | None = None,
+        frame: Frame | Mapping[str, object] | None = None,
+    ) -> bool:
+        """Explicitly run async startup warmup/profile before the first step."""
 
-        if not enabled:
-            self._reset_action_optimizers()
-            return action
+        if self.mode is not InferenceMode.ASYNC:
+            raise InterfaceValidationError(
+                "InferenceRuntime.bootstrap_async() requires mode=ASYNC."
+            )
 
-        if self._optimizer_source_key != source_key:
-            self._reset_action_optimizers()
-            self._optimizer_source_key = source_key
+        metadata_owner = resolve_runtime_owner(
+            observe_fn,
+            act_src_fn,
+        )
+        normalized_frame = _resolve_step_frame(
+            observe_fn,
+            frame,
+            owner=metadata_owner,
+        )
+        chunk_scheduler = self._ensure_chunk_scheduler(
+            act_src_fn=act_src_fn,
+        )
+        if chunk_scheduler is None:
+            raise InterfaceValidationError(
+                "InferenceRuntime.bootstrap_async() requires async chunk scheduling."
+            )
 
-        current = action
-        for index, optimizer in enumerate(self.action_optimizers):
-            if isinstance(optimizer, ActionEnsembler):
-                continue
-            try:
-                optimized = optimizer(current, frame)
-            except Exception as exc:
-                raise InterfaceValidationError(
-                    f"action optimizer #{index} raised {type(exc).__name__}: {exc}"
-                ) from exc
-            current = as_action(optimized)
-            validate_action(current)
-        return current
+        bootstrapped = self._bootstrap_chunk_scheduler(
+            frame=normalized_frame,
+            chunk_scheduler=chunk_scheduler,
+        )
+        plan_length = chunk_scheduler.active_source_plan_length
+        source_key = callable_key(act_src_fn)
+        if plan_length == 1 and source_key is not None:
+            self._single_step_source_keys.add(source_key)
+            chunk_scheduler.close()
+            self._chunk_scheduler = None
+            self._chunk_scheduler_key = None
+            raise InterfaceValidationError(
+                "InferenceRuntime(mode=ASYNC) requires act_src_fn=... "
+                "to return a chunk with more than one action."
+            )
+        return bootstrapped
 
     def _run_step_impl(
         self,
@@ -349,12 +380,7 @@ class InferenceRuntime:
             act_src_fn=act_src_fn,
             source_key=source_key,
         )
-        action = self._optimize_action(
-            raw_action,
-            frame=normalized_frame,
-            source_key=source_key,
-            enabled=plan_length > 1,
-        )
+        action = raw_action
 
         should_execute = True if execute_action is None else execute_action
         if should_execute:

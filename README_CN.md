@@ -40,8 +40,6 @@ pip install .
 - `Command`
 - `run_step(...)`
 - `InferenceRuntime(...)`
-- `ActionEnsembler`
-- `ActionInterpolator`
 - `RealtimeController`
 
 运行时调用边界是：
@@ -189,10 +187,9 @@ action = infra.Action(
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
     overlap_ratio=0.5,
-    action_optimizers=[
-        infra.ActionEnsembler(current_weight=0.5),
-        infra.ActionInterpolator(steps=1),
-    ],
+    warmup_requests=1,
+    profile_delay_requests=3,
+    ensemble_weight=0.5,
     realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
@@ -204,12 +201,22 @@ result = infra.run_step(
 )
 ```
 
+当 `mode=ASYNC` 时，不再需要手动给延迟 seed。如果同时挂了
+`RealtimeController(...)`，inferaxis 会先按 `warmup_requests`
+做一段“只请求、不执行”的 warmup，再按 `profile_delay_requests`
+做 delay profiling，把真实请求耗时换算成控制步延迟，然后再开始把动作发给机械臂。
+这段 bootstrap 会在第一次 `run_step(...)` 且已经拿到 `observe_fn` /
+`act_src_fn` 之后自动触发。
+因此 `policy.infer(...)` 最好根据 `frame` 和 `request` 来生成 chunk，
+不要依赖“被调用了第几次”这种可变计数状态。
+如果你希望 startup warmup/profile 不放在第一次 `run_step(...)` 里，
+可以在进主循环前显式调用一次 `runtime.bootstrap_async(...)`。
+
 这样同一套数据接口就能支持：
 
 - 同步或异步的 chunk 执行
 - 基于 overlap 的异步 chunk 调度
-- 通过 `ActionEnsembler(...)` 做 chunk handoff 融合
-- 通过 `ActionInterpolator(...)` 做逐步插值
+- 通过 `ensemble_weight=...` 做 chunk handoff 融合
 - 带节拍控制的闭环执行
 - `profile_sync_inference(...)` 基于目标控制频率的延迟 profiling
 - `recommend_inference_mode(...)` 模式推荐
@@ -223,26 +230,27 @@ result = infra.run_step(
 - `inference_delay`：从请求发出到新 chunk 最早可能开始生效，还需要等待的控制步数，计算方式是 `max(当前估计延迟步数, 1)`
 - `execute_horizon`：从请求发出到当前 chunk 结束还剩多少控制步，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 
-现在 RTC 启动改成 warmup 请求，不再依赖额外的全 0 bootstrap chunk。
-第一次请求会先不带 RTC 参数发给 policy，返回的 chunk 不会执行，而是作为
-第二次请求的固定长度 `prev_action_chunk`。等第一份真正可执行的 chunk
-接管之后，`prev_action_chunk` 就会继续按照“当前正在执行的完整 active chunk”
-来维护，因此也不再需要 `robot.get_spec()` 或额外的 bootstrap 长度配置。
+现在 RTC 冷启动时，第一条 bootstrap 请求仍然不带 RTC 参数，用来先 seed 出
+一份完整的 `prev_action_chunk`；后面的 warmup/profile 请求就会开始带
+`prev_action_chunk`，让服务端在真正开始执行前把这条路径也热起来。如果最后
+一条带 `prev_action_chunk` 的 RTC warmup 请求超过 `500ms`，inferaxis 会先告警，
+再询问是否继续启动。这样仍然不需要 `robot.get_spec()`，也不需要额外的
+bootstrap 长度配置。
 
 对于 chunk 异步执行，inferaxis 现在使用：
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
 - `trigger_steps = ceil(H_hat) + overlap_steps`
 
-其中 `H_hat` 是按控制步数直接做 EMA 的请求延迟估计，但前 3 次请求观测会先作为
-warmup 被忽略。结果返回后，
-inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(...)`，
+其中 `H_hat` 会先用 `profile_delay_requests` 次 startup profiling 得到初始值，
+然后再按控制步数直接做 EMA 在线更新。结果返回后，
+inferaxis 会先丢掉已经过期的前缀；如果设置了 `ensemble_weight=...`，
 就对 overlap 区段里同一未来时间步的旧/新 action 做融合，否则直接切到
-新的对齐后 chunk。`current_weight` 可以是一个标量，表示整个 overlap 都用
+新的对齐后 chunk。`ensemble_weight` 可以是一个标量，表示整个 overlap 都用
 同一个新 chunk 权重；也可以是 `(low, high)`，表示从最早的 overlap step
 线性过渡到最晚的 overlap step。对内置 gripper command，inferaxis 会直接
-切到新 chunk，不会做数值平均。`ActionEnsembler(current_weight=...)`
-不会再对每一步输出额外做一层 temporal filter。也就是说，inferaxis 不是靠
+切到新 chunk，不会做数值平均，也不会再对每一步输出额外做一层 temporal
+filter。也就是说，inferaxis 不是靠
 预先写死的
 固定时序在跑，而是会根据实际测到的 chunk 延迟在线调整请求时机，因此它本质上
 是一个动态自适应延迟推理系统。
@@ -257,7 +265,7 @@ inferaxis 会先丢掉已经过期的前缀；如果启用了 `ActionEnsembler(.
 
 ## 示例
 
-公开示例固定为以下五个：
+公开示例固定为以下六个：
 
 1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)

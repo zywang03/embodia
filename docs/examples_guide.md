@@ -30,12 +30,12 @@ the control rate should already be fixed by the real system or dataset setup.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
 fields so a policy can read the full active chunk snapshot plus the effective
 RTC interval `[inference_delay, execute_horizon)` for RTC-aware planning.
-Because RTC is enabled there, the first request is used as a warmup request
-without RTC args; its returned chunk is discarded from execution and reused as
-the `prev_action_chunk` seed for the next request.
+Because RTC is enabled there, the very first bootstrap request still has no
+RTC args, while later warmup/profile requests already exercise
+`prev_action_chunk`.
 The async runtime uses `floor(overlap_ratio * chunk_size)` overlap steps and a
-step-based latency EMA, with the first three request observations ignored as
-warmup, to decide when to request the next chunk.
+step-based latency EMA. It starts from the delay profiled over
+`profile_delay_requests` startup requests and then keeps updating online.
 For `pi06star`-style setups, a realistic starting point is `chunk_steps=50`
 with `overlap_ratio=0.2`; `32` is also common for Pi0FAST, while smaller
 training-oriented configs often use `16`, `15`, or `10`.

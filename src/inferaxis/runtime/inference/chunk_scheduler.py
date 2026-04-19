@@ -27,6 +27,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 import math
 import time
+import warnings
 
 import numpy as np
 
@@ -51,7 +52,7 @@ _NON_BLENDABLE_OVERLAP_COMMANDS = frozenset(
         BuiltinCommandKind.GRIPPER_OPEN_CLOSE,
     }
 )
-_LATENCY_WARMUP_REQUESTS = 3
+_SLOW_RTC_WARMUP_THRESHOLD_S = 0.5
 
 
 @dataclass(slots=True)
@@ -93,6 +94,9 @@ class ChunkScheduler:
     overlap_ratio: float = 0.2
     latency_ema_beta: float = 0.5
     initial_latency_steps: float = 0.0
+    control_period_s: float | None = None
+    warmup_requests: int = 3
+    profile_delay_requests: int = 0
     max_chunk_size: int | None = None
     use_overlap_blend: bool = False
     overlap_current_weight: BlendWeight = 0.5
@@ -111,6 +115,11 @@ class ChunkScheduler:
     _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
     _latency_observation_count: int = field(default=0, init=False, repr=False)
     _rtc_seed_chunk: list[Action] = field(default_factory=list, init=False, repr=False)
+    _startup_latency_bootstrap_complete: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+    )
     _pending_future: Future[_CompletedChunk] | None = field(
         default=None,
         init=False,
@@ -163,6 +172,32 @@ class ChunkScheduler:
                 f"{self.initial_latency_steps!r}."
             )
 
+        if self.control_period_s is not None:
+            if isinstance(self.control_period_s, bool) or not isinstance(
+                self.control_period_s,
+                (int, float),
+            ):
+                raise InterfaceValidationError(
+                    "control_period_s must be a real number > 0 when provided."
+                )
+            self.control_period_s = float(self.control_period_s)
+            if self.control_period_s <= 0.0:
+                raise InterfaceValidationError(
+                    "control_period_s must be > 0 when provided, got "
+                    f"{self.control_period_s!r}."
+                )
+
+        for field_name in ("warmup_requests", "profile_delay_requests"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise InterfaceValidationError(
+                    f"{field_name} must be an int >= 0."
+                )
+            if value < 0:
+                raise InterfaceValidationError(
+                    f"{field_name} must be >= 0, got {value!r}."
+                )
+
         if self.max_chunk_size is not None:
             if isinstance(self.max_chunk_size, bool) or not isinstance(
                 self.max_chunk_size,
@@ -186,6 +221,10 @@ class ChunkScheduler:
         )
 
         self._latency_steps_estimate = self.initial_latency_steps
+        self._startup_latency_bootstrap_complete = (
+            self.control_period_s is None
+            or (self.warmup_requests + self.profile_delay_requests) == 0
+        )
 
     def reset(self) -> None:
         """Discard buffered and in-flight chunks but keep learned latency."""
@@ -219,6 +258,11 @@ class ChunkScheduler:
         """Return the current step-latency estimate used for triggering."""
 
         return max(int(math.ceil(self._latency_steps_estimate)), 0)
+
+    def latency_estimate_ready(self) -> bool:
+        """Return whether async execution can trust the current latency estimate."""
+
+        return self._startup_latency_bootstrap_complete
 
     def overlap_steps_for_chunk(self, chunk_length: int) -> int:
         """Return ``floor(overlap_ratio * chunk_length)``."""
@@ -547,15 +591,30 @@ class ChunkScheduler:
         """Update ``H_hat`` using the latest observed request duration."""
 
         self._latency_observation_count += 1
-        if self._latency_observation_count <= _LATENCY_WARMUP_REQUESTS:
+        if self._latency_observation_count <= self.warmup_requests:
+            return
+        if (
+            self._latency_observation_count == self.warmup_requests + 1
+            and self._latency_steps_estimate <= 0.0
+        ):
+            self._latency_steps_estimate = float(waited_steps)
             return
         self._latency_steps_estimate = (
             (1.0 - self.latency_ema_beta) * self._latency_steps_estimate
             + self.latency_ema_beta * float(waited_steps)
         )
 
-    def _capture_rtc_warmup_chunk(self, completed: _CompletedChunk) -> bool:
-        """Capture the first non-RTC reply as RTC seed without executing it."""
+    def _observed_latency_steps_from_duration(self, inference_time_s: float) -> int:
+        """Convert one measured request duration into control-step latency."""
+
+        if self.control_period_s is None:
+            return 1
+        if inference_time_s <= 0.0:
+            return 1
+        return max(int(math.ceil(inference_time_s / self.control_period_s)), 1)
+
+    def _should_capture_rtc_seed_chunk(self, completed: _CompletedChunk) -> bool:
+        """Return whether one completed request should seed RTC context."""
 
         if not self.enable_rtc:
             return False
@@ -563,13 +622,135 @@ class ChunkScheduler:
             return False
         if self._active_chunk_snapshot or self._rtc_seed_chunk or self._buffer:
             return False
+        return True
+
+    def _set_rtc_seed_chunk(self, actions: Sequence[Action]) -> None:
+        """Store one full chunk snapshot for the next RTC request."""
+
+        self._rtc_seed_chunk = self._clone_actions(actions)
+
+    def _refresh_bootstrap_rtc_seed_chunk(self, completed: _CompletedChunk) -> None:
+        """Keep RTC bootstrap requests chained through the latest full chunk."""
+
+        if not self.enable_rtc:
+            return
+        if self._active_chunk_snapshot or self._buffer:
+            return
+        self._set_rtc_seed_chunk(completed.prepared_actions)
+
+    def _confirm_slow_rtc_bootstrap_request(
+        self,
+        *,
+        inference_time_s: float,
+    ) -> None:
+        """Warn and require confirmation after a slow RTC bootstrap request."""
+
+        if inference_time_s <= _SLOW_RTC_WARMUP_THRESHOLD_S:
+            return
+
+        threshold_ms = _SLOW_RTC_WARMUP_THRESHOLD_S * 1000.0
+        duration_ms = inference_time_s * 1000.0
+        message = (
+            "The last RTC warmup request carrying prev_action_chunk took "
+            f"{duration_ms:.1f} ms, exceeding the {threshold_ms:.1f} ms "
+            "startup threshold."
+        )
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+        try:
+            response = input(f"{message} Continue startup anyway? [y/N]: ")
+        except EOFError as exc:
+            self._rtc_seed_chunk.clear()
+            raise InterfaceValidationError(
+                "RTC startup warmup needs confirmation after a slow "
+                "prev_action_chunk request, but stdin is not interactive."
+            ) from exc
+
+        if response.strip().lower() not in {"y", "yes"}:
+            self._rtc_seed_chunk.clear()
+            raise InterfaceValidationError(
+                "RTC startup warmup aborted after a slow prev_action_chunk request."
+            )
+
+    def _capture_rtc_warmup_chunk(self, completed: _CompletedChunk) -> bool:
+        """Capture the first non-RTC reply as RTC seed without executing it."""
+
+        if not self._should_capture_rtc_seed_chunk(completed):
+            return False
 
         stale_steps = max(self._global_step - completed.request.request_step, 0)
         self._update_latency_estimate(stale_steps)
         if stale_steps >= len(completed.prepared_actions):
             return False
 
-        self._rtc_seed_chunk = self._clone_actions(completed.prepared_actions)
+        self._set_rtc_seed_chunk(completed.prepared_actions)
+        return True
+
+    def _bootstrap_async_latency(
+        self,
+        frame: Frame,
+    ) -> _CompletedChunk | None:
+        """Warm up async latency estimation with request-only probes."""
+
+        if self.control_period_s is None or self.latency_estimate_ready():
+            return None
+
+        total_requests = self.warmup_requests + self.profile_delay_requests
+        if total_requests <= 0:
+            self._startup_latency_bootstrap_complete = True
+            return None
+
+        reusable_completed: _CompletedChunk | None = None
+        profiled_steps: list[int] = []
+        last_rtc_bootstrap_duration_s: float | None = None
+        for request_index in range(total_requests):
+            job = self._build_request_job(include_latency=False)
+            request_start = float(self.clock())
+            completed = self._execute_request(frame, job)
+            inference_time_s = max(float(self.clock()) - request_start, 0.0)
+            self._refresh_bootstrap_rtc_seed_chunk(completed)
+            if completed.request.rtc_args is not None:
+                last_rtc_bootstrap_duration_s = inference_time_s
+            observed_steps = self._observed_latency_steps_from_duration(
+                inference_time_s,
+            )
+            if request_index >= self.warmup_requests:
+                profiled_steps.append(observed_steps)
+            reusable_completed = completed
+
+        if last_rtc_bootstrap_duration_s is not None:
+            self._confirm_slow_rtc_bootstrap_request(
+                inference_time_s=last_rtc_bootstrap_duration_s,
+            )
+
+        if profiled_steps:
+            self._latency_steps_estimate = float(
+                sum(profiled_steps) / len(profiled_steps)
+            )
+        else:
+            self._latency_steps_estimate = max(self._latency_steps_estimate, 1.0)
+        self._latency_observation_count = self.warmup_requests
+        self._startup_latency_bootstrap_complete = True
+
+        return reusable_completed
+
+    def bootstrap(self, frame: Frame) -> bool:
+        """Run startup warmup/profile requests and seed the first executable chunk."""
+
+        normalized_frame = as_frame(frame)
+        validate_frame(normalized_frame)
+
+        if self.control_period_s is None or self.latency_estimate_ready():
+            return False
+        if self._buffer or self._pending_future is not None:
+            return False
+
+        bootstrapped_chunk = self._bootstrap_async_latency(normalized_frame)
+        if bootstrapped_chunk is None:
+            return False
+        if not self._integrate_completed_chunk(bootstrapped_chunk):
+            raise InterfaceValidationError(
+                "ChunkScheduler could not produce a usable warmup chunk."
+            )
         return True
 
     def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:

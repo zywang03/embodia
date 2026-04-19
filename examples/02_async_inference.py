@@ -39,12 +39,6 @@ class YourRobot:
 class YourPolicy:
     """Plain async-capable source object using the same ``infer`` entrypoint."""
 
-    def __init__(self) -> None:
-        self.step_index = 0
-
-    def reset(self) -> None:
-        self.step_index = 0
-
     def infer(
         self,
         obs: infra.Frame,
@@ -59,9 +53,7 @@ class YourPolicy:
             assert last_arm is not None
             next_base = float(last_arm.value[0] + 3.0)
         else:
-            targets = [0.0, 3.0, 6.0, 9.0, 12.0]
-            next_base = targets[self.step_index % len(targets)]
-            self.step_index += 1
+            next_base = float(request.request_step * 3.0)
 
         while len(plan) < 2:
             plan.append(
@@ -91,12 +83,12 @@ def main() -> None:
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
-        action_optimizers=[
-            infra.ActionEnsembler(current_weight=0.5),
-            # This is still one runtime step per run_step() call. The
-            # interpolator only changes the action emitted on that call.
-            infra.ActionInterpolator(steps=1),
-        ],
+        warmup_requests=3,
+        profile_delay_requests=3,
+        # Async startup first warms up a few requests, then profiles delay on a
+        # few more requests before the first action is sent to the robot. The
+        # first run_step() call triggers that bootstrap automatically.
+        ensemble_weight=0.5,
         realtime_controller=infra.RealtimeController(hz=50.0),
     )
 

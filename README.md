@@ -43,8 +43,6 @@ The public surface is intentionally small:
 - `Command`
 - `run_step(...)`
 - `InferenceRuntime(...)`
-- `ActionEnsembler`
-- `ActionInterpolator`
 - `RealtimeController`
 
 The runtime call boundary is:
@@ -192,10 +190,9 @@ adds optimization and scheduling without changing that outer call style.
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
     overlap_ratio=0.5,
-    action_optimizers=[
-        infra.ActionEnsembler(current_weight=0.5),
-        infra.ActionInterpolator(steps=1),
-    ],
+    warmup_requests=1,
+    profile_delay_requests=3,
+    ensemble_weight=0.5,
     realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
@@ -211,11 +208,21 @@ This lets the same data interface support:
 
 - sync and async chunk execution
 - async overlap-based chunk scheduling
-- chunk handoff blending via `ActionEnsembler(...)`
-- per-step interpolation via `ActionInterpolator(...)`
+- chunk handoff blending via `ensemble_weight=...`
 - paced closed-loop execution
 - latency profiling against a required target control hz via `profile_sync_inference(...)`
 - mode recommendation via `recommend_inference_mode(...)`
+
+When `mode=ASYNC`, no manual latency seed is needed anymore. If you attach a
+`RealtimeController(...)`, inferaxis first issues request-only warmup calls for
+`warmup_requests`, then profiles delay across `profile_delay_requests`
+requests, converts that to control-step latency, and only then starts sending
+actions to the robot. This bootstrap happens automatically on the first
+`run_step(...)` call once `observe_fn` and `act_src_fn` are available.
+Because of that startup warmup, `policy.infer(...)` should derive chunks from
+`frame` and `request` instead of relying on mutable call-count state.
+If you want startup warmup/profile to happen outside the first `run_step(...)`
+call, use `runtime.bootstrap_async(...)` once before entering the loop.
 
 When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.prev_action_chunk`, `request.inference_delay`, and
@@ -226,25 +233,26 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 - `inference_delay`: the estimated number of control steps from request launch until the new chunk can begin taking effect, computed as `max(estimated_delay_steps, 1)`
 - `execute_horizon`: the number of control steps from request launch until the current chunk finishes, so the effective RTC interval is `[inference_delay, execute_horizon)`
 
-RTC startup now uses one warmup request instead of a synthetic zero chunk. The
-first request is sent without RTC args, its returned chunk is not executed, and
-that chunk becomes the fixed-length `prev_action_chunk` for the second request.
-After the first real executable chunk is accepted, `prev_action_chunk` tracks
-the full currently active chunk as usual. This avoids needing `robot.get_spec()`
-or any extra bootstrap length config.
+During cold start, the very first RTC bootstrap request is sent without RTC
+args so inferaxis can seed one full previous chunk. Later warmup/profile
+requests already send `prev_action_chunk`, letting the server warm up that
+path before the first executable chunk is accepted. If that last RTC warmup
+request takes more than `500ms`, inferaxis warns and asks whether startup
+should continue. This still avoids needing `robot.get_spec()` or any extra
+bootstrap length config.
 
 For chunked async execution, inferaxis uses:
 
 - `overlap_steps = floor(overlap_ratio * chunk_size)`
 - `trigger_steps = ceil(H_hat) + overlap_steps`
 
-Here `H_hat` is an EMA of observed request latency measured directly in control
-steps, but the first three request observations are ignored as warmup. When a
-reply arrives, inferaxis drops the stale prefix and either
+Here `H_hat` starts from the startup delay profiled over
+`profile_delay_requests` requests and is then updated online as an EMA of
+observed request latency measured directly in control steps. When a reply
+arrives, inferaxis drops the stale prefix and either
 switches to the aligned new chunk directly or blends the overlap prefix when
-`ActionEnsembler(...)` is enabled. `ActionEnsembler(current_weight=...)` only
-blends aligned old/new chunk overlap actions; `current_weight` may be one scalar
-shared by every overlap step or a `(low, high)` pair that ramps from the
+`ensemble_weight=...` is set. `ensemble_weight` may be one scalar shared by
+every overlap step or a `(low, high)` pair that ramps from the
 earliest overlap step to the latest. Built-in gripper commands switch to the
 new chunk directly instead of being averaged. It does not apply an extra
 per-step temporal filter to every emitted action. In practice, this makes
@@ -261,7 +269,7 @@ updated online from measured chunk latency instead of being fixed ahead of time.
 
 ## Examples
 
-The public examples are fixed to these five paths:
+The public examples are fixed to these six paths:
 
 1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)

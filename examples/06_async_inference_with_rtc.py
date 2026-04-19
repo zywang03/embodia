@@ -40,11 +40,9 @@ class YourRtcPolicy:
     """Async-capable source that reads RTC hints directly from ``request``."""
 
     def __init__(self) -> None:
-        self.step_index = 0
         self.last_rtc_summary: dict[str, int | bool | None] | None = None
 
     def reset(self) -> None:
-        self.step_index = 0
         self.last_rtc_summary = None
 
     def infer(
@@ -69,12 +67,11 @@ class YourRtcPolicy:
             assert last_arm is not None
             next_base = float(last_arm.value[0] + 3.0)
         else:
-            # The first request is a compile warmup and intentionally carries no
-            # RTC hints. Its returned chunk is discarded by the runtime and used
-            # only as the prev_action_chunk for the next request.
-            targets = [0.0, 3.0, 6.0, 9.0, 12.0]
-            next_base = targets[self.step_index % len(targets)]
-            self.step_index += 1
+            # The very first bootstrap request still has no RTC hints, so
+            # derive the initial chunk from request metadata rather than
+            # mutable call-count state. Later warmup/profile requests already
+            # exercise prev_action_chunk.
+            next_base = float(request.request_step * 3.0)
 
         while len(plan) < 4:
             plan.append(
@@ -104,11 +101,13 @@ def main() -> None:
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
+        warmup_requests=1,
+        profile_delay_requests=3,
+        # Async startup first warms up a few requests, then profiles delay on a
+        # few more requests before the first action is sent to the robot. The
+        # first run_step() call triggers that bootstrap automatically.
         enable_rtc=True,
-        action_optimizers=[
-            infra.ActionEnsembler(current_weight=(0.1, 0.9)),
-            # infra.ActionInterpolator(steps=1),
-        ],
+        ensemble_weight=(0.1, 0.9),
         realtime_controller=infra.RealtimeController(hz=50.0),
     )
 

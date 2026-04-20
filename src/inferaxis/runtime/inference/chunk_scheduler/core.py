@@ -45,6 +45,7 @@ class ChunkScheduler(
     overlap_ratio: float = 0.2
     latency_ema_beta: float = 0.5
     initial_latency_steps: float = 0.0
+    fixed_latency_steps: float | None = None
     control_period_s: float | None = None
     warmup_requests: int = 3
     profile_delay_requests: int = 0
@@ -145,6 +146,20 @@ class ChunkScheduler(
                 "initial_latency_steps must be >= 0, got "
                 f"{self.initial_latency_steps!r}."
             )
+        if self.fixed_latency_steps is not None:
+            if isinstance(self.fixed_latency_steps, bool) or not isinstance(
+                self.fixed_latency_steps,
+                (int, float),
+            ):
+                raise InterfaceValidationError(
+                    "fixed_latency_steps must be a real number >= 0 when provided."
+                )
+            self.fixed_latency_steps = float(self.fixed_latency_steps)
+            if self.fixed_latency_steps < 0.0:
+                raise InterfaceValidationError(
+                    "fixed_latency_steps must be >= 0, got "
+                    f"{self.fixed_latency_steps!r}."
+                )
 
         if self.control_period_s is not None:
             if isinstance(self.control_period_s, bool) or not isinstance(
@@ -206,6 +221,16 @@ class ChunkScheduler(
             self.overlap_current_weight,
             field_name="overlap_current_weight",
         )
+
+        self.refresh_latency_mode()
+
+    def refresh_latency_mode(self) -> None:
+        """Recompute latency-estimate mode after runtime config changes."""
+
+        if self.fixed_latency_steps is not None:
+            self._latency_steps_estimate = self.fixed_latency_steps
+            self._startup_latency_bootstrap_complete = True
+            return
 
         self._latency_steps_estimate = self.initial_latency_steps
         self._startup_latency_bootstrap_complete = (

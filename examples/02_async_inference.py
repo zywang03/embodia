@@ -83,15 +83,14 @@ def main() -> None:
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
         overlap_ratio=0.1,
-        warmup_requests=3,
-        profile_delay_requests=3,
+        latency_steps=4.0,
         interpolation_steps=2,
         enable_mismatch_bridge=True,
+        # Use a fixed request-latency estimate measured in control steps.
+        # When this is provided, async startup skips warmup/profile and uses
+        # the manual value directly for request triggering.
         # These are execution-only smoothing controls. They do not change the
         # raw chunk semantics seen by the policy.
-        # Async startup first warms up a few requests, then profiles delay on a
-        # few more requests before the first action is sent to the robot. The
-        # first run_step() call triggers that bootstrap automatically.
         realtime_controller=infra.RealtimeController(hz=50.0),
     )
 

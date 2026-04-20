@@ -284,6 +284,10 @@ class ChunkSchedulerRequestOpsMixin:
     def _update_latency_estimate(self, waited_steps: int) -> None:
         """Update ``H_hat`` using the latest observed control-step delay."""
 
+        if self.fixed_latency_steps is not None:
+            self._latency_steps_estimate = self.fixed_latency_steps
+            return
+
         self._latency_observation_count += 1
         if self._latency_observation_count <= self.warmup_requests:
             return

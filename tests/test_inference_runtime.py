@@ -541,6 +541,24 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.warmup_requests, 2)
         self.assertEqual(runtime.profile_delay_requests, 4)
 
+    def test_async_runtime_accepts_manual_latency_steps(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            latency_steps=4,
+        )
+
+        self.assertEqual(runtime.latency_steps, 4.0)
+
+    def test_runtime_rejects_invalid_manual_latency_steps(self) -> None:
+        for invalid in (-1, True, "4"):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.ASYNC,
+                    overlap_ratio=0.5,
+                    latency_steps=invalid,  # type: ignore[arg-type]
+                )
+
     def test_async_runtime_with_realtime_controller_warms_then_profiles_latency_before_execute(self) -> None:
         class CountingRobot(RuntimeRobot):
             def __init__(self) -> None:
@@ -587,6 +605,73 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(runtime._chunk_scheduler)
         self.assertTrue(runtime._chunk_scheduler.latency_estimate_ready())  # type: ignore[union-attr]
         self.assertGreaterEqual(runtime._chunk_scheduler.estimated_latency_steps(), 1)  # type: ignore[union-attr]
+
+    def test_async_runtime_manual_latency_steps_skips_bootstrap_and_uses_fixed_estimate(self) -> None:
+        class CountingRobot(RuntimeRobot):
+            def __init__(self) -> None:
+                super().__init__()
+                self.send_count = 0
+
+            def send_action(self, action: infra.Action) -> None:
+                self.send_count += 1
+                super().send_action(action)
+
+        class ConstantChunkPolicy:
+            def __init__(self) -> None:
+                self.request_count = 0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                self.request_count += 1
+                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
+
+        robot = CountingRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            latency_steps=4,
+            warmup_requests=2,
+            profile_delay_requests=2,
+            realtime_controller=infra.RealtimeController(hz=50.0),
+        )
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 7.0)
+        self.assertEqual(robot.send_count, 1)
+        self.assertEqual(policy.request_count, 2)
+        self.assertIsNotNone(runtime._chunk_scheduler)
+        self.assertTrue(runtime._chunk_scheduler.latency_estimate_ready())  # type: ignore[union-attr]
+        self.assertEqual(runtime._chunk_scheduler.estimated_latency_steps(), 4)  # type: ignore[union-attr]
+
+    def test_async_runtime_bootstrap_async_returns_false_when_manual_latency_steps_are_fixed(self) -> None:
+        robot = RuntimeRobot()
+        policy = PlanningSource()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            latency_steps=3,
+            warmup_requests=2,
+            profile_delay_requests=2,
+            realtime_controller=infra.RealtimeController(hz=50.0),
+        )
+
+        bootstrapped = runtime.bootstrap_async(
+            observe_fn=robot.get_obs,
+            act_src_fn=policy.infer,
+        )
+
+        self.assertFalse(bootstrapped)
 
     def test_async_runtime_bootstrap_async_can_be_called_explicitly(self) -> None:
         class CountingRobot(RuntimeRobot):
@@ -1211,6 +1296,21 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(scheduler.estimated_latency_steps(), 1)
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=True), 2)
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=False), 1)
+
+    def test_chunk_scheduler_fixed_latency_steps_override_blocks_ema_updates(self) -> None:
+        scheduler = ChunkScheduler(
+            overlap_ratio=0.25,
+            initial_latency_steps=1.0,
+            fixed_latency_steps=4.0,
+            warmup_requests=3,
+            profile_delay_requests=3,
+        )
+
+        scheduler._update_latency_estimate(100)
+
+        self.assertTrue(scheduler.latency_estimate_ready())
+        self.assertEqual(scheduler.estimated_latency_steps(), 4)
+        self.assertEqual(scheduler.request_trigger_steps(4, include_latency=True), 5)
 
     def test_chunk_scheduler_interpolation_expands_execution_sequence(self) -> None:
         scheduler = ChunkScheduler(

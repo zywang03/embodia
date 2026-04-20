@@ -40,6 +40,7 @@ class InferenceRuntime:
 
     mode: InferenceMode | str
     overlap_ratio: float | None = None
+    latency_steps: float | None = None
     warmup_requests: int = 1
     profile_delay_requests: int = 3
     interpolation_steps: int = 0
@@ -87,6 +88,21 @@ class InferenceRuntime:
                 raise InterfaceValidationError(
                     "InferenceRuntime.overlap_ratio must be in the range [0, 1), "
                     f"got {self.overlap_ratio!r}."
+                )
+        if self.latency_steps is not None:
+            if isinstance(self.latency_steps, bool) or not isinstance(
+                self.latency_steps,
+                (int, float),
+            ):
+                raise InterfaceValidationError(
+                    "InferenceRuntime.latency_steps must be a real number >= 0 "
+                    "when provided."
+                )
+            self.latency_steps = float(self.latency_steps)
+            if self.latency_steps < 0.0:
+                raise InterfaceValidationError(
+                    "InferenceRuntime.latency_steps must be >= 0, got "
+                    f"{self.latency_steps!r}."
                 )
         for field_name in ("warmup_requests", "profile_delay_requests"):
             value = getattr(self, field_name)
@@ -150,6 +166,8 @@ class InferenceRuntime:
     def _scheduler_initial_latency_steps(self) -> float:
         """Return the startup async latency prior used by the scheduler."""
 
+        if self.latency_steps is not None:
+            return self.latency_steps
         if self.mode is not InferenceMode.ASYNC:
             return 0.0
         return 1.0
@@ -189,6 +207,7 @@ class InferenceRuntime:
         if self._chunk_scheduler is not None:
             if (
                 self._chunk_scheduler_key != scheduler_key
+                or self._chunk_scheduler.fixed_latency_steps != self.latency_steps
                 or (
                     self.mode is not InferenceMode.ASYNC
                     and self.overlap_ratio is None
@@ -207,6 +226,7 @@ class InferenceRuntime:
                 self._chunk_scheduler.initial_latency_steps = (
                     self._scheduler_initial_latency_steps()
                 )
+                self._chunk_scheduler.fixed_latency_steps = self.latency_steps
                 self._chunk_scheduler.control_period_s = (
                     self._scheduler_control_period_s()
                 )
@@ -230,6 +250,7 @@ class InferenceRuntime:
             action_source=act_src_fn,
             overlap_ratio=scheduler_overlap_ratio,
             initial_latency_steps=self._scheduler_initial_latency_steps(),
+            fixed_latency_steps=self.latency_steps,
             control_period_s=self._scheduler_control_period_s(),
             warmup_requests=self.warmup_requests,
             profile_delay_requests=self.profile_delay_requests,

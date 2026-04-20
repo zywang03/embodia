@@ -42,6 +42,8 @@ class InferenceRuntime:
     overlap_ratio: float | None = None
     warmup_requests: int = 1
     profile_delay_requests: int = 3
+    interpolation_steps: int = 0
+    enable_mismatch_bridge: bool = True
     ensemble_weight: BlendWeight | None = None
     realtime_controller: RealtimeController | None = None
     enable_rtc: bool = False
@@ -96,6 +98,22 @@ class InferenceRuntime:
                 raise InterfaceValidationError(
                     f"InferenceRuntime.{field_name} must be >= 0, got {value!r}."
                 )
+        if isinstance(self.interpolation_steps, bool) or not isinstance(
+            self.interpolation_steps,
+            int,
+        ):
+            raise InterfaceValidationError(
+                "InferenceRuntime.interpolation_steps must be an int >= 0."
+            )
+        if self.interpolation_steps < 0:
+            raise InterfaceValidationError(
+                "InferenceRuntime.interpolation_steps must be >= 0, got "
+                f"{self.interpolation_steps!r}."
+            )
+        if not isinstance(self.enable_mismatch_bridge, bool):
+            raise InterfaceValidationError(
+                "InferenceRuntime.enable_mismatch_bridge must be a bool."
+            )
         if self.ensemble_weight is not None:
             self.ensemble_weight = _normalize_blend_weight(
                 self.ensemble_weight,
@@ -196,6 +214,10 @@ class InferenceRuntime:
                 self._chunk_scheduler.profile_delay_requests = (
                     self.profile_delay_requests
                 )
+                self._chunk_scheduler.interpolation_steps = self.interpolation_steps
+                self._chunk_scheduler.enable_mismatch_bridge = (
+                    self.enable_mismatch_bridge
+                )
                 self._chunk_scheduler.enable_rtc = self.enable_rtc
                 return self._chunk_scheduler
 
@@ -211,6 +233,8 @@ class InferenceRuntime:
             control_period_s=self._scheduler_control_period_s(),
             warmup_requests=self.warmup_requests,
             profile_delay_requests=self.profile_delay_requests,
+            interpolation_steps=self.interpolation_steps,
+            enable_mismatch_bridge=self.enable_mismatch_bridge,
             use_overlap_blend=use_overlap_blend,
             overlap_current_weight=(
                 self.ensemble_weight if self.ensemble_weight is not None else 0.5

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import Future
 import json
 import tempfile
 import threading
@@ -344,6 +345,67 @@ class InferenceRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(runtime.ensemble_weight, (0.2, 0.8))
+
+    def test_runtime_defaults_to_no_ensemble_weight(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+        )
+
+        self.assertIsNone(runtime.ensemble_weight)
+
+    def test_runtime_accepts_interpolation_steps(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            interpolation_steps=2,
+        )
+
+        self.assertEqual(runtime.interpolation_steps, 2)
+
+    def test_runtime_rejects_invalid_interpolation_steps(self) -> None:
+        for invalid in (-1, 1.5, True):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    interpolation_steps=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_accepts_enable_mismatch_bridge(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            enable_mismatch_bridge=False,
+        )
+
+        self.assertFalse(runtime.enable_mismatch_bridge)
+
+    def test_runtime_rejects_invalid_enable_mismatch_bridge(self) -> None:
+        for invalid in (1, 0.0, "yes"):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    enable_mismatch_bridge=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_no_longer_accepts_removed_transition_bridge_configuration(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                transition_bridge_steps=2,  # type: ignore[call-arg]
+            )
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                transition_bridge_mismatch_threshold=1.5,  # type: ignore[call-arg]
+            )
+
+    def test_chunk_scheduler_no_longer_accepts_removed_transition_bridge_configuration(self) -> None:
+        with self.assertRaises(TypeError):
+            ChunkScheduler(
+                transition_bridge_steps=2,  # type: ignore[call-arg]
+            )
+        with self.assertRaises(TypeError):
+            ChunkScheduler(
+                transition_bridge_mismatch_threshold=1.5,  # type: ignore[call-arg]
+            )
 
     def test_chunk_scheduler_blends_arm_but_not_gripper_overlap(self) -> None:
         scheduler = ChunkScheduler(
@@ -903,8 +965,8 @@ class InferenceRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(arm_value(first.action), 1.0)
-        self.assertEqual(arm_value(second.action), 3.0)
-        self.assertEqual(arm_value(third.action), 5.0)
+        self.assertAlmostEqual(arm_value(second.action), 1.875)
+        self.assertEqual(arm_value(third.action), 3.0)
 
     def test_async_runtime_can_use_internal_scheduler(self) -> None:
         robot = RuntimeRobot()
@@ -934,6 +996,58 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(first.action), 1.0)
         self.assertEqual(arm_value(second.action), 4.0)
         self.assertEqual(arm_value(third.action), 6.0)
+
+    def test_async_runtime_without_ensemble_weight_replaces_overlap_with_new_chunk(self) -> None:
+        class FourStepPolicy:
+            def __init__(self) -> None:
+                self.base = 1.0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                base = self.base
+                self.base += 4.0
+                return [arm_action(base + float(offset)) for offset in range(4)]
+
+        robot = RuntimeRobot()
+        policy = FourStepPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertAlmostEqual(arm_value(third.action), 2.71875)
+        self.assertEqual(arm_value(fourth.action), 4.0)
 
     def test_chunk_scheduler_merges_ready_response_into_current_buffer(self) -> None:
         scheduler = ChunkScheduler(
@@ -1097,6 +1211,573 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(scheduler.estimated_latency_steps(), 1)
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=True), 2)
         self.assertEqual(scheduler.request_trigger_steps(4, include_latency=False), 1)
+
+    def test_chunk_scheduler_interpolation_expands_execution_sequence(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(0.0),
+                    arm_action(3.0),
+                    arm_action(6.0),
+                ],
+                source_plan_length=3,
+            )
+        )
+
+        emitted: list[float] = []
+        while scheduler._buffer or scheduler._execution_buffer:
+            emitted.append(arm_value(scheduler._pop_next_action()))
+
+        self.assertEqual(emitted, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+
+    def test_chunk_scheduler_interpolation_count_matches_formula(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[arm_action(float(index)) for index in range(50)],
+                source_plan_length=50,
+            )
+        )
+
+        emitted_count = 0
+        while scheduler._buffer or scheduler._execution_buffer:
+            scheduler._pop_next_action()
+            emitted_count += 1
+
+        self.assertEqual(emitted_count, 50 + 49 * 2)
+
+    def test_chunk_scheduler_interpolation_keeps_gripper_stepwise(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_and_gripper_action(arm=0.0, gripper=0.0),
+                    arm_and_gripper_action(arm=3.0, gripper=1.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        emitted: list[infra.Action] = []
+        while scheduler._buffer or scheduler._execution_buffer:
+            emitted.append(scheduler._pop_next_action())
+
+        self.assertEqual([arm_value(action) for action in emitted], [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(
+            [gripper_value(action) for action in emitted],
+            [0.0, 0.0, 0.0, 1.0],
+        )
+
+    def test_chunk_scheduler_transition_bridge_uses_local_context_mean_and_hermite_smoothing(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(2.0),
+                arm_action(4.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(10.0),
+                    arm_action(12.0),
+                    arm_action(14.0),
+                ],
+                source_plan_length=3,
+            )
+        )
+
+        emitted: list[float] = []
+        while (
+            scheduler._buffer
+            or scheduler._execution_buffer
+            or scheduler._transition_bridge_buffer
+        ):
+            emitted.append(arm_value(scheduler._pop_next_action()))
+
+        self.assertAlmostEqual(emitted[0], 5.703703703703703)
+        self.assertAlmostEqual(emitted[1], 8.296296296296298)
+        self.assertEqual(emitted[2:], [10.0, 12.0, 14.0])
+
+    def test_chunk_scheduler_transition_bridge_uses_ema_to_size_bridge(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._avg_continuous_step_length_ema = float(np.sqrt(6.0) * 2.0)
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(4.0),
+                arm_action(8.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(14.0),
+                    arm_action(18.0),
+                    arm_action(22.0),
+                ],
+                source_plan_length=3,
+            )
+        )
+
+        self.assertEqual(len(scheduler._transition_bridge_buffer), 2)
+
+    def test_chunk_scheduler_transition_bridge_skips_when_distance_within_average_step(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._avg_continuous_step_length_ema = float(np.sqrt(6.0) * 10.0)
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(2.0),
+                arm_action(4.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(10.0),
+                    arm_action(12.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        self.assertEqual(len(scheduler._transition_bridge_buffer), 0)
+
+    def test_chunk_scheduler_transition_bridge_skips_without_step_length_reference(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._recent_executed_raw_actions.append(arm_action(4.0))
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[arm_action(10.0)],
+                source_plan_length=1,
+            )
+        )
+
+        self.assertEqual(len(scheduler._transition_bridge_buffer), 0)
+
+    def test_chunk_scheduler_can_disable_mismatch_bridge(self) -> None:
+        scheduler = ChunkScheduler(
+            enable_mismatch_bridge=False,
+        )
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(2.0),
+                arm_action(4.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(10.0),
+                    arm_action(12.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        self.assertEqual(len(scheduler._transition_bridge_buffer), 0)
+
+    def test_chunk_scheduler_transition_bridge_keeps_gripper_stepwise(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_and_gripper_action(arm=0.0, gripper=0.0),
+                arm_and_gripper_action(arm=2.0, gripper=0.0),
+                arm_and_gripper_action(arm=4.0, gripper=0.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_and_gripper_action(arm=10.0, gripper=1.0),
+                    arm_and_gripper_action(arm=12.0, gripper=1.0),
+                    arm_and_gripper_action(arm=14.0, gripper=1.0),
+                ],
+                source_plan_length=3,
+            )
+        )
+
+        emitted: list[infra.Action] = []
+        while (
+            scheduler._buffer
+            or scheduler._execution_buffer
+            or scheduler._transition_bridge_buffer
+        ):
+            emitted.append(scheduler._pop_next_action())
+
+        self.assertAlmostEqual(arm_value(emitted[0]), 5.703703703703703)
+        self.assertAlmostEqual(arm_value(emitted[1]), 8.296296296296298)
+        self.assertEqual([arm_value(action) for action in emitted[2:]], [10.0, 12.0, 14.0])
+        self.assertEqual(
+            [gripper_value(action) for action in emitted],
+            [0.0, 0.0, 1.0, 1.0, 1.0],
+        )
+
+    def test_chunk_scheduler_transition_bridge_ignores_gripper_only_handoffs(self) -> None:
+        scheduler = ChunkScheduler()
+        scheduler._avg_continuous_step_length_ema = 1.0
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_and_gripper_action(arm=0.0, gripper=0.0),
+                arm_and_gripper_action(arm=0.0, gripper=0.0),
+                arm_and_gripper_action(arm=0.0, gripper=0.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_and_gripper_action(arm=0.0, gripper=1.0),
+                    arm_and_gripper_action(arm=1.0, gripper=1.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        self.assertEqual(len(scheduler._transition_bridge_buffer), 0)
+
+    def test_chunk_scheduler_transition_bridge_counts_as_control_step_horizon(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+        )
+        scheduler._avg_continuous_step_length_ema = float(np.sqrt(6.0) * 2.0)
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(2.0),
+                arm_action(4.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(10.0),
+                    arm_action(12.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        self.assertEqual(scheduler._remaining_control_steps(), 6)
+
+    def test_chunk_scheduler_interpolation_keeps_rtc_in_raw_steps_mid_segment(self) -> None:
+        scheduler = ChunkScheduler(
+            overlap_ratio=0.5,
+            interpolation_steps=2,
+            enable_rtc=True,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(1.0),
+                    arm_action(4.0),
+                    arm_action(7.0),
+                    arm_action(10.0),
+                ],
+                source_plan_length=4,
+            )
+        )
+
+        self.assertEqual(arm_value(scheduler._pop_next_action()), 1.0)
+        self.assertEqual(arm_value(scheduler._pop_next_action()), 2.0)
+        self.assertEqual(scheduler._global_step, 0)
+        scheduler._latency_steps_estimate = 1.0
+
+        mid_segment_job = scheduler._build_request_job(include_latency=True)
+        assert mid_segment_job.request.prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in mid_segment_job.request.prev_action_chunk],
+            [1.0, 4.0, 7.0, 10.0],
+        )
+        self.assertEqual(mid_segment_job.request.execute_horizon, 4)
+        self.assertEqual(mid_segment_job.request.inference_delay, 1)
+
+        self.assertEqual(arm_value(scheduler._pop_next_action()), 3.0)
+        self.assertEqual(scheduler._global_step, 1)
+        boundary_job = scheduler._build_request_job(include_latency=True)
+        self.assertEqual(boundary_job.request.execute_horizon, 3)
+
+    def test_chunk_scheduler_transition_bridge_keeps_rtc_raw_chunk_semantics(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+            enable_rtc=True,
+        )
+        scheduler._avg_continuous_step_length_ema = float(np.sqrt(6.0) * 2.0)
+        scheduler._recent_executed_raw_actions.extend(
+            [
+                arm_action(0.0),
+                arm_action(2.0),
+                arm_action(4.0),
+            ]
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(10.0),
+                    arm_action(12.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+        scheduler._latency_steps_estimate = 2.0
+
+        job = scheduler._build_request_job(include_latency=True)
+
+        self.assertEqual(job.request.latency_steps, 2)
+        self.assertEqual(job.request.execute_horizon, 2)
+        self.assertEqual(job.request.inference_delay, 1)
+        assert job.request.prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in job.request.prev_action_chunk],
+            [10.0, 12.0],
+        )
+
+    def test_chunk_scheduler_interpolated_execution_only_refreshes_on_raw_boundary(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+            overlap_ratio=0.0,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(0.0),
+                    arm_action(3.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+
+        frame = infra.Frame(images={}, state={})
+        first_action, first_refreshed = scheduler.next_action(frame, prefetch_async=True)
+        self.assertEqual(arm_value(first_action), 0.0)
+        self.assertFalse(first_refreshed)
+
+        future: Future[_CompletedChunk] = Future()
+        future.set_result(
+            _CompletedChunk(
+                request=infra.ChunkRequest(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[
+                    arm_action(50.0),
+                    arm_action(100.0),
+                ],
+                source_plan_length=2,
+            )
+        )
+        scheduler._pending_future = future
+
+        second_action, second_refreshed = scheduler.next_action(frame, prefetch_async=True)
+        third_action, third_refreshed = scheduler.next_action(frame, prefetch_async=True)
+        fourth_action, fourth_refreshed = scheduler.next_action(frame, prefetch_async=True)
+
+        self.assertEqual(arm_value(second_action), 1.0)
+        self.assertFalse(second_refreshed)
+        self.assertEqual(arm_value(third_action), 2.0)
+        self.assertFalse(third_refreshed)
+        self.assertEqual(arm_value(fourth_action), 100.0)
+        self.assertTrue(fourth_refreshed)
 
     def test_chunk_scheduler_enable_rtc_exposes_full_active_chunk_and_guidance_window(self) -> None:
         scheduler = ChunkScheduler(
@@ -1401,11 +2082,13 @@ class InferenceRuntimeTests(unittest.TestCase):
         next_action, refreshed = scheduler.next_action(frame, prefetch_async=True)
 
         self.assertTrue(refreshed)
-        self.assertEqual(arm_value(next_action), 105.0)
+        self.assertGreater(arm_value(next_action), 9.0)
+        self.assertLess(arm_value(next_action), 105.0)
         self.assertEqual(
             [arm_value(action) for action in scheduler._buffer],
-            [106.0, 107.0, 108.0, 109.0],
+            [105.0, 106.0, 107.0, 108.0, 109.0],
         )
+        self.assertGreater(len(scheduler._transition_bridge_buffer), 0)
         self.assertEqual(scheduler.estimated_latency_steps(), 0)
 
     def test_async_runtime_enable_rtc_first_request_has_no_rtc_args_and_is_discarded(self) -> None:
@@ -1518,6 +2201,107 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(policy.requests[2].execute_horizon, 3)
         self.assertEqual(policy.requests[2].inference_delay, 1)
 
+    def test_async_runtime_interpolation_executes_smoothed_actions_but_rtc_stays_raw(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            interpolation_steps=2,
+            enable_rtc=True,
+        )
+
+        emitted: list[float] = []
+        for _ in range(6):
+            result = infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            emitted.append(arm_value(result.action))
+
+        self.assertTrue(policy.second_request_seen.wait(timeout=1.0))
+        self.assertEqual(emitted[0], 5.0)
+        self.assertAlmostEqual(emitted[1], 16.0 / 3.0)
+        self.assertAlmostEqual(emitted[2], 17.0 / 3.0)
+        self.assertEqual(emitted[3], 6.0)
+        assert policy.requests[1].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[1].prev_action_chunk],
+            [1.0, 2.0, 3.0, 4.0],
+        )
+        self.assertEqual(policy.requests[1].execute_horizon, 4)
+        self.assertEqual(policy.requests[1].inference_delay, 1)
+
+    def test_async_runtime_transition_bridge_executes_smooth_handoff_but_rtc_stays_raw(self) -> None:
+        class BridgeRtcPolicy:
+            def __init__(self) -> None:
+                self.requests: list[infra.ChunkRequest] = []
+                self.third_request_seen = threading.Event()
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs
+                self.requests.append(request)
+                if len(self.requests) == 1:
+                    return [arm_action(1.0 + float(offset)) for offset in range(4)]
+                if len(self.requests) == 2:
+                    return [arm_action(10.0 + 10.0 * float(offset)) for offset in range(4)]
+                self.third_request_seen.set()
+                return [arm_action(60.0 + 10.0 * float(offset)) for offset in range(4)]
+
+        robot = RuntimeRobot()
+        policy = BridgeRtcPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            overlap_ratio=0.5,
+            interpolation_steps=2,
+            enable_rtc=True,
+        )
+
+        emitted: list[float] = []
+        for _ in range(6):
+            result = infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            emitted.append(arm_value(result.action))
+
+        self.assertTrue(policy.third_request_seen.wait(timeout=1.0))
+        for _ in range(5):
+            result = infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            emitted.append(arm_value(result.action))
+
+        self.assertEqual(emitted[0], 10.0)
+        self.assertAlmostEqual(emitted[1], 40.0 / 3.0)
+        self.assertAlmostEqual(emitted[2], 50.0 / 3.0)
+        self.assertEqual(emitted[3], 20.0)
+        self.assertAlmostEqual(emitted[4], 70.0 / 3.0)
+        self.assertAlmostEqual(emitted[5], 80.0 / 3.0)
+        self.assertAlmostEqual(emitted[6], 26.16)
+        self.assertAlmostEqual(emitted[7], 38.08)
+        self.assertAlmostEqual(emitted[8], 51.92)
+        self.assertAlmostEqual(emitted[9], 63.84)
+        self.assertEqual(emitted[10], 70.0)
+        assert policy.requests[2].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[2].prev_action_chunk],
+            [10.0, 20.0, 30.0, 40.0],
+        )
+        self.assertEqual(policy.requests[2].execute_horizon, 3)
+        self.assertEqual(policy.requests[2].inference_delay, 1)
+
     def test_async_runtime_requires_action_source(self) -> None:
         robot = RuntimeRobot()
         runtime = infra.InferenceRuntime(
@@ -1584,9 +2368,9 @@ class InferenceRuntimeTests(unittest.TestCase):
         )
 
         self.assertEqual(arm_value(first.action), 10.0)
-        self.assertEqual(arm_value(second.action), 20.0)
-        self.assertEqual(arm_value(third.action), 30.0)
-        self.assertEqual(arm_value(fourth.action), 40.0)
+        self.assertAlmostEqual(arm_value(second.action), 10.270999999999999)
+        self.assertAlmostEqual(arm_value(third.action), 11.008000000000001)
+        self.assertAlmostEqual(arm_value(fourth.action), 12.097)
 
     def test_runtime_closes_old_scheduler_when_source_changes(self) -> None:
         robot = RuntimeRobot()
@@ -1708,9 +2492,9 @@ class InferenceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(arm_value(first.action), 1.0)
         self.assertEqual(arm_value(second.action), 2.0)
-        self.assertEqual(arm_value(third.action), 4.5)
-        self.assertEqual(arm_value(fourth.raw_action), 5.5)
-        self.assertEqual(arm_value(fourth.action), 5.5)
+        self.assertAlmostEqual(arm_value(third.action), 2.666666666666666)
+        self.assertAlmostEqual(arm_value(fourth.raw_action), 3.6666666666666665)
+        self.assertAlmostEqual(arm_value(fourth.action), 3.6666666666666665)
 
     def test_profile_sync_inference_uses_requested_stable_sample_window(self) -> None:
         robot = RuntimeRobot()

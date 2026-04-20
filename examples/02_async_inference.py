@@ -85,10 +85,13 @@ def main() -> None:
         overlap_ratio=0.1,
         warmup_requests=3,
         profile_delay_requests=3,
+        interpolation_steps=2,
+        enable_mismatch_bridge=True,
+        # These are execution-only smoothing controls. They do not change the
+        # raw chunk semantics seen by the policy.
         # Async startup first warms up a few requests, then profiles delay on a
         # few more requests before the first action is sent to the robot. The
         # first run_step() call triggers that bootstrap automatically.
-        ensemble_weight=0.5,
         realtime_controller=infra.RealtimeController(hz=50.0),
     )
 

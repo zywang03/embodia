@@ -192,7 +192,6 @@ runtime = infra.InferenceRuntime(
     overlap_ratio=0.5,
     warmup_requests=1,
     profile_delay_requests=3,
-    ensemble_weight=0.5,
     realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
@@ -258,6 +257,9 @@ new chunk directly instead of being averaged. It does not apply an extra
 per-step temporal filter to every emitted action. In practice, this makes
 inferaxis a dynamically latency-adaptive inference system: request timing is
 updated online from measured chunk latency instead of being fixed ahead of time.
+`ensemble_weight` defaults to `None`. If it is omitted, inferaxis does not
+blend overlap actions and
+simply switches to the aligned new chunk.
 
 ## Validation
 

@@ -75,7 +75,6 @@ runtime = infra.InferenceRuntime(
     overlap_ratio=0.5,
     warmup_requests=1,
     profile_delay_requests=3,
-    ensemble_weight=0.5,
     realtime_controller=infra.RealtimeController(hz=50.0),
 )
 ```
@@ -116,3 +115,5 @@ up to date as an EMA of observed request latency in control steps. When overlap 
 `ensemble_weight=...`, the weight can be one scalar or a `(low, high)` pair for a linear
 earliest-to-latest overlap ramp. Built-in gripper commands switch to the new
 chunk directly instead of being averaged across the handoff boundary.
+`ensemble_weight` defaults to `None`. If it is omitted, overlap steps are not blended and the aligned new
+chunk replaces the old one directly.

@@ -189,7 +189,6 @@ runtime = infra.InferenceRuntime(
     overlap_ratio=0.5,
     warmup_requests=1,
     profile_delay_requests=3,
-    ensemble_weight=0.5,
     realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
@@ -254,6 +253,8 @@ filter。也就是说，inferaxis 不是靠
 预先写死的
 固定时序在跑，而是会根据实际测到的 chunk 延迟在线调整请求时机，因此它本质上
 是一个动态自适应延迟推理系统。
+`ensemble_weight` 默认就是 `None`。如果不传，inferaxis 就不会做 overlap 融合，而是直接切到
+对齐后的新 chunk。
 
 ## 校验
 

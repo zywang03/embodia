@@ -103,11 +103,14 @@ def main() -> None:
         overlap_ratio=0.1,
         warmup_requests=1,
         profile_delay_requests=3,
+        interpolation_steps=2,
+        enable_mismatch_bridge=True,
+        # These are execution-only smoothing controls. RTC hints still stay in
+        # raw chunk units and are passed to the policy unchanged.
         # Async startup first warms up a few requests, then profiles delay on a
         # few more requests before the first action is sent to the robot. The
         # first run_step() call triggers that bootstrap automatically.
         enable_rtc=True,
-        ensemble_weight=(0.1, 0.9),
         realtime_controller=infra.RealtimeController(hz=50.0),
     )
 

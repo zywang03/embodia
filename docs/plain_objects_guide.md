@@ -72,7 +72,7 @@ policy implementation:
 ```python
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
-    overlap_ratio=0.5,
+    steps_before_request=0,
     warmup_requests=1,
     profile_delay_requests=3,
     realtime_controller=infra.RealtimeController(hz=50.0),
@@ -91,29 +91,33 @@ from `frame` and `request` instead of relying on mutable "call count" state.
 If you want startup warmup/profile to happen outside the first `run_step(...)`
 call, invoke `runtime.bootstrap_async(...)` once before entering the loop.
 
-If you use `ASYNC` or `overlap_ratio`, keep the same
+If you use `ASYNC` or `steps_before_request`, keep the same
 `infer(frame, request)` boundary. Return one action for chunk size `1`, or
 return `list[Action]` when the source can emit a future chunk. With
 `enable_rtc=True`, read `request.prev_action_chunk`,
 `request.inference_delay`, and `request.execute_horizon` directly; the same
 values are also available under `request.rtc_args`. `prev_action_chunk` is the
-full active chunk snapshot, while `inference_delay` and `execute_horizon` are
-both measured relative to request launch, giving an effective RTC interval of
-`[inference_delay, execute_horizon)`. During cold start, the first RTC
-bootstrap request still has no RTC args so inferaxis can seed a full
-`prev_action_chunk`, and the later warmup/profile requests already send that
-RTC context before the first executable chunk is accepted. If the last RTC
-warmup request takes more than `500ms`, inferaxis warns and asks whether
-startup should continue. A complete RTC-aware async example lives in
+fixed-length raw chunk built from the current live buffer head and padded on
+the left to the locked source chunk length, while `inference_delay` and
+`execute_horizon` are both measured relative to request launch, giving an
+effective RTC interval of `[inference_delay, execute_horizon)`. During cold
+start, the first RTC bootstrap request still has no RTC args so inferaxis can
+lock that chunk length and seed the first RTC context, and the later
+warmup/profile requests already send that RTC context before the first
+executable chunk is accepted. If the last RTC warmup request takes more than
+`500ms`, inferaxis warns and asks whether startup should continue. A complete
+RTC-aware async example lives in
 `examples/06_async_inference_with_rtc.py`.
 
-For chunked async scheduling, the runtime uses
-`overlap_steps = floor(overlap_ratio * chunk_size)` and
-`trigger_steps = ceil(H_hat) + overlap_steps`, where `H_hat` starts from the
-startup delay profiled over `profile_delay_requests` requests and is then kept
-up to date as an EMA of observed request latency in control steps. When overlap blending is enabled via
-`ensemble_weight=...`, the weight can be one scalar or a `(low, high)` pair for a linear
-earliest-to-latest overlap ramp. Built-in gripper commands switch to the new
-chunk directly instead of being averaged across the handoff boundary.
-`ensemble_weight` defaults to `None`. If it is omitted, overlap steps are not blended and the aligned new
-chunk replaces the old one directly.
+For chunked async scheduling, the runtime waits until `steps_before_request` raw steps
+from the currently active chunk have been executed, then launches the next
+request. `steps_before_request=0` means request immediately when a chunk is accepted.
+`H_hat` still starts from the startup delay profiled over
+`profile_delay_requests` requests and is then kept up to date as an EMA of
+observed request latency in control steps. When handoff blending is enabled via
+`ensemble_weight=...`, the weight can be one scalar or a `(low, high)` pair for
+a linear earliest-to-latest ramp across the aligned handoff prefix. Built-in
+gripper commands switch to the new chunk directly instead of being averaged
+across the handoff boundary. `ensemble_weight` defaults to `None`. If it is
+omitted, aligned handoff steps are not blended and the new chunk replaces the
+old one directly.

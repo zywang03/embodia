@@ -28,17 +28,21 @@ sustainable control hz directly from measured inference latency and returned
 chunk length, but it always profiles against one required `target_hz` because
 the control rate should already be fixed by the real system or dataset setup.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
-fields so a policy can read the full active chunk snapshot plus the effective
-RTC interval `[inference_delay, execute_horizon)` for RTC-aware planning.
+fields so a policy can read the fixed-length padded `prev_action_chunk` plus
+the effective RTC interval `[inference_delay, execute_horizon)` for RTC-aware
+planning.
 Because RTC is enabled there, the very first bootstrap request still has no
 RTC args, while later warmup/profile requests already exercise
 `prev_action_chunk`.
-The async runtime uses `floor(overlap_ratio * chunk_size)` overlap steps and a
-step-based latency EMA. It starts from the delay profiled over
-`profile_delay_requests` startup requests and then keeps updating online.
-For `pi06star`-style setups, a realistic starting point is `chunk_steps=50`
-with `overlap_ratio=0.2`; `32` is also common for Pi0FAST, while smaller
-training-oriented configs often use `16`, `15`, or `10`.
+The async runtime now uses `steps_before_request` to decide when to launch the next
+request after a chunk is accepted. `steps_before_request=0` starts immediately, while
+larger values wait for that many raw chunk steps to execute first. Latency is
+still tracked with a step-based EMA seeded from
+`profile_delay_requests` startup requests and then updated online. For
+`pi06star`-style setups, a realistic starting point is `chunk_steps=50` with
+`steps_before_request` chosen from the expected raw handoff timing; `32` is also
+common for Pi0FAST, while smaller training-oriented configs often use `16`,
+`15`, or `10`.
 
 If you want the plain-object method contract, read
 [`docs/plain_objects_guide.md`](./plain_objects_guide.md).

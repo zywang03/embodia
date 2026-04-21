@@ -1,10 +1,9 @@
-"""Action normalization, overlap blending, interpolation, and bridge helpers."""
+"""Action normalization, overlap blending, and interpolation helpers."""
 
 from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-import math
 
 import numpy as np
 
@@ -14,10 +13,7 @@ from ....shared.common import as_action
 from ...checks import validate_action
 from ..optimizers import _normalize_blend_weight
 from ..protocols import ActionPlan
-from .shared import (
-    _CONTINUOUS_STEP_LENGTH_EMA_BETA,
-    _NON_BLENDABLE_OVERLAP_COMMANDS,
-)
+from .shared import _NON_BLENDABLE_OVERLAP_COMMANDS
 
 
 class ChunkSchedulerActionOpsMixin:
@@ -204,281 +200,6 @@ class ChunkSchedulerActionOpsMixin:
             meta=dict(left_action.meta),
         )
 
-    def _continuous_distance_l2(
-        self,
-        left_action: Action,
-        right_action: Action,
-    ) -> float | None:
-        """Return the global L2 distance over comparable continuous commands."""
-
-        squared_norm = 0.0
-        comparable_target_found = False
-        for target, left_command in left_action.commands.items():
-            if left_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS:
-                continue
-            right_command = right_action.commands.get(target)
-            if right_command is None:
-                continue
-            if not self._commands_share_target_layout(left_command, right_command):
-                continue
-            diff = np.asarray(
-                right_command.value - left_command.value,
-                dtype=np.float64,
-            ).reshape(-1)
-            squared_norm += float(np.dot(diff, diff))
-            comparable_target_found = True
-
-        if not comparable_target_found:
-            return None
-        return math.sqrt(squared_norm)
-
-    def _update_avg_continuous_step_length_ema(
-        self,
-        observed_length: float,
-    ) -> None:
-        """Update the execution-scale EMA from one raw-step distance."""
-
-        observed = max(float(observed_length), 0.0)
-        if self._avg_continuous_step_length_ema is None:
-            self._avg_continuous_step_length_ema = observed
-            return
-
-        beta = _CONTINUOUS_STEP_LENGTH_EMA_BETA
-        self._avg_continuous_step_length_ema = (
-            (1.0 - beta) * self._avg_continuous_step_length_ema
-            + beta * observed
-        )
-
-    def _record_executed_raw_action(
-        self,
-        action: Action,
-    ) -> None:
-        """Append one executed raw action and update bridge-scale statistics."""
-
-        cloned_action = self._clone_action(action)
-        if self._recent_executed_raw_actions:
-            observed_length = self._continuous_distance_l2(
-                self._recent_executed_raw_actions[-1],
-                cloned_action,
-            )
-            if observed_length is not None:
-                self._update_avg_continuous_step_length_ema(observed_length)
-        self._recent_executed_raw_actions.append(cloned_action)
-
-    def _consecutive_continuous_step_lengths(
-        self,
-        actions: Sequence[Action],
-    ) -> list[float]:
-        """Return comparable continuous L2 lengths for consecutive raw actions."""
-
-        lengths: list[float] = []
-        for index in range(1, len(actions)):
-            length = self._continuous_distance_l2(
-                actions[index - 1],
-                actions[index],
-            )
-            if length is not None:
-                lengths.append(length)
-        return lengths
-
-    def _local_avg_continuous_step_length(
-        self,
-        *,
-        old_context: Sequence[Action],
-        new_context: Sequence[Action],
-    ) -> float | None:
-        """Estimate one local step scale from bridge-side raw contexts."""
-
-        lengths = self._consecutive_continuous_step_lengths(old_context)
-        lengths.extend(self._consecutive_continuous_step_lengths(new_context))
-        if not lengths:
-            return None
-        return float(sum(lengths) / len(lengths))
-
-    def _bridge_step_length_reference(
-        self,
-        *,
-        old_context: Sequence[Action],
-        new_context: Sequence[Action],
-    ) -> float | None:
-        """Return the distance scale used to size one adaptive bridge."""
-
-        if (
-            self._avg_continuous_step_length_ema is not None
-            and self._avg_continuous_step_length_ema > 0.0
-        ):
-            return float(self._avg_continuous_step_length_ema)
-
-        local_mean = self._local_avg_continuous_step_length(
-            old_context=old_context,
-            new_context=new_context,
-        )
-        if local_mean is None or local_mean <= 0.0:
-            return None
-        return local_mean
-
-    def _continuous_target_deltas(
-        self,
-        actions: Sequence[Action],
-        *,
-        target: str,
-        reference_command: Command,
-    ) -> list[np.ndarray]:
-        """Return comparable raw deltas for one target across one context."""
-
-        deltas: list[np.ndarray] = []
-        for index in range(1, len(actions)):
-            prev_command = actions[index - 1].commands.get(target)
-            next_command = actions[index].commands.get(target)
-            if prev_command is None or next_command is None:
-                continue
-            if prev_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS:
-                continue
-            if next_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS:
-                continue
-            if not self._commands_share_target_layout(prev_command, next_command):
-                continue
-            if not self._commands_share_target_layout(next_command, reference_command):
-                continue
-            deltas.append(
-                np.asarray(
-                    next_command.value - prev_command.value,
-                    dtype=np.float64,
-                )
-            )
-        return deltas
-
-    def _estimate_target_tangent(
-        self,
-        actions: Sequence[Action],
-        *,
-        target: str,
-        reference_command: Command,
-        use_tail: bool,
-    ) -> np.ndarray:
-        """Estimate one Hermite tangent from up to two neighboring raw deltas."""
-
-        deltas = self._continuous_target_deltas(
-            actions,
-            target=target,
-            reference_command=reference_command,
-        )
-        if not deltas:
-            return np.zeros_like(reference_command.value, dtype=np.float64)
-
-        selected = deltas[-2:] if use_tail else deltas[:2]
-        return np.mean(np.stack(selected, axis=0), axis=0)
-
-    def _hermite_interpolate_action(
-        self,
-        left_action: Action,
-        right_action: Action,
-        *,
-        old_context: Sequence[Action],
-        new_context: Sequence[Action],
-        right_weight: float,
-    ) -> Action:
-        """Return one context-aware Hermite bridge action between raw chunks."""
-
-        if right_weight <= 0.0:
-            return self._clone_action(left_action)
-        if right_weight >= 1.0:
-            return self._clone_action(right_action)
-
-        t = float(right_weight)
-        t2 = t * t
-        t3 = t2 * t
-        h00 = 2.0 * t3 - 3.0 * t2 + 1.0
-        h10 = t3 - 2.0 * t2 + t
-        h01 = -2.0 * t3 + 3.0 * t2
-        h11 = t3 - t2
-
-        interpolated_commands: dict[str, Command] = {}
-        for target, left_command in left_action.commands.items():
-            right_command = right_action.commands.get(target)
-            if (
-                right_command is None
-                or not self._commands_share_target_layout(left_command, right_command)
-                or left_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS
-            ):
-                interpolated_commands[target] = self._clone_command(left_command)
-                continue
-
-            left_tangent = self._estimate_target_tangent(
-                old_context,
-                target=target,
-                reference_command=left_command,
-                use_tail=True,
-            )
-            right_tangent = self._estimate_target_tangent(
-                new_context,
-                target=target,
-                reference_command=right_command,
-                use_tail=False,
-            )
-            interpolated_commands[target] = Command(
-                command=left_command.command,
-                value=(
-                    h00 * left_command.value
-                    + h10 * left_tangent
-                    + h01 * right_command.value
-                    + h11 * right_tangent
-                ),
-                ref_frame=left_command.ref_frame,
-                meta=dict(left_command.meta),
-            )
-
-        return Action(
-            commands=interpolated_commands,
-            meta=dict(left_action.meta),
-        )
-
-    def _build_transition_bridge(
-        self,
-        *,
-        old_context: Sequence[Action],
-        new_context: Sequence[Action],
-    ) -> deque[Action]:
-        """Return adaptive execution-only bridge steps for one chunk handoff."""
-
-        if not old_context or not new_context:
-            return deque()
-
-        left_action = old_context[-1]
-        right_action = new_context[0]
-        mismatch_l2 = self._continuous_distance_l2(left_action, right_action)
-        if mismatch_l2 is None or mismatch_l2 <= 0.0:
-            return deque()
-
-        step_length_reference = self._bridge_step_length_reference(
-            old_context=old_context,
-            new_context=new_context,
-        )
-        if step_length_reference is None or step_length_reference <= 0.0:
-            return deque()
-
-        distance_ratio = mismatch_l2 / step_length_reference
-        bridge_step_count = max(
-            int(math.ceil(distance_ratio - 1e-9)) - 1,
-            0,
-        )
-        if bridge_step_count <= 0:
-            return deque()
-
-        bridge_actions: list[Action] = []
-        for bridge_index in range(1, bridge_step_count + 1):
-            right_weight = bridge_index / float(bridge_step_count + 1)
-            bridge_actions.append(
-                self._hermite_interpolate_action(
-                    left_action,
-                    right_action,
-                    old_context=old_context,
-                    new_context=new_context,
-                    right_weight=right_weight,
-                )
-            )
-        return deque(bridge_actions)
-
     def _build_execution_segment(self) -> deque[Action]:
         """Expand the current raw step into execution actions."""
 
@@ -506,7 +227,7 @@ class ChunkSchedulerActionOpsMixin:
     def _ensure_execution_buffer(self) -> None:
         """Populate one execution segment for the current raw step."""
 
-        if self._transition_bridge_buffer or self._execution_buffer or not self._buffer:
+        if self._execution_buffer or not self._buffer:
             return
         self._execution_buffer = self._build_execution_segment()
 
@@ -515,13 +236,13 @@ class ChunkSchedulerActionOpsMixin:
 
         if not self._buffer:
             return
-        self._record_executed_raw_action(self._buffer[0])
         self._buffer.popleft()
         if self._active_chunk_snapshot:
             self._active_chunk_consumed_steps = min(
                 self._active_chunk_consumed_steps + 1,
                 len(self._active_chunk_snapshot),
             )
+        self._active_chunk_waited_raw_steps += 1
         self._global_step += 1
 
     def _normalize_plan(self, plan: ActionPlan) -> list[Action]:

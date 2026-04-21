@@ -82,7 +82,7 @@ def main() -> None:
 
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.SYNC,
-        realtime_controller=infra.RealtimeController(hz=20.0),
+        control_hz=20.0,
     )
 
     for step_index in range(5):

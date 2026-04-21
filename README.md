@@ -52,7 +52,7 @@ The runtime call boundary is:
 - `act_src_fn(frame, request) -> Action | list[Action]`
 
 Returning one `Action` means chunk size `1`. Returning `list[Action]` lets the
-same source participate in overlap-aware async scheduling.
+same source participate in async chunk scheduling.
 
 ## Quickstart
 
@@ -189,7 +189,7 @@ adds optimization and scheduling without changing that outer call style.
 ```python
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
-    overlap_ratio=0.5,
+    steps_before_request=0,
     warmup_requests=1,
     profile_delay_requests=3,
     realtime_controller=infra.RealtimeController(hz=50.0),
@@ -206,7 +206,7 @@ result = infra.run_step(
 This lets the same data interface support:
 
 - sync and async chunk execution
-- async overlap-based chunk scheduling
+- async chunk scheduling with front-triggered `steps_before_request`
 - chunk handoff blending via `ensemble_weight=...`
 - paced closed-loop execution
 - latency profiling against a required target control hz via `profile_sync_inference(...)`
@@ -228,38 +228,44 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.execute_horizon`. The same values are also mirrored on
 `request.rtc_args` for grouped access:
 
-- `prev_action_chunk`: the full currently active chunk snapshot, kept at the active chunk length instead of shrinking with the live buffer
-- `inference_delay`: the estimated number of control steps from request launch until the new chunk can begin taking effect, computed as `max(estimated_delay_steps, 1)`
-- `execute_horizon`: the number of control steps from request launch until the current chunk finishes, so the effective RTC interval is `[inference_delay, execute_horizon)`
+- `prev_action_chunk`: a fixed-length raw chunk built from the current live buffer head, left-padded with the first live action until it reaches the locked source chunk length
+- `inference_delay`: the estimated number of raw chunk steps from request launch until the new chunk can begin taking effect, clamped into the current RTC execution horizon
+- `execute_horizon`: the fixed raw-step RTC execution window (`execution_steps`), so the effective RTC interval is `[inference_delay, execute_horizon)`
+
+If you need to manually nudge the async latency hint carried on requests, set
+`latency_steps_offset=...`. This applies a signed raw-step offset to the
+request-facing latency hint (`request.latency_steps` and, with `enable_rtc=True`,
+`request.inference_delay`). This does not change `steps_before_request`,
+stale-prefix drop, or execution smoothing.
 
 During cold start, the very first RTC bootstrap request is sent without RTC
-args so inferaxis can seed one full previous chunk. Later warmup/profile
-requests already send `prev_action_chunk`, letting the server warm up that
-path before the first executable chunk is accepted. If that last RTC warmup
-request takes more than `500ms`, inferaxis warns and asks whether startup
-should continue. This still avoids needing `robot.get_spec()` or any extra
-bootstrap length config.
+args so inferaxis can lock the source chunk length and seed the first RTC
+context. Later warmup/profile requests already send `prev_action_chunk`,
+letting the server warm up that path before the first executable chunk is
+accepted. If that last RTC warmup request takes more than `500ms`, inferaxis
+warns and asks whether startup should continue. This still avoids needing
+`robot.get_spec()` or any extra bootstrap length config.
 
-For chunked async execution, inferaxis uses:
+For chunked async execution, inferaxis now starts the next request from the
+front of the currently active raw chunk. Once a new chunk is accepted, the
+runtime waits until `steps_before_request` raw actions from that chunk have been
+executed, then launches the next request. `steps_before_request=0` means the next
+request starts immediately when the chunk is integrated.
 
-- `overlap_steps = floor(overlap_ratio * chunk_size)`
-- `trigger_steps = ceil(H_hat) + overlap_steps`
-
-Here `H_hat` starts from the startup delay profiled over
+`H_hat` still starts from the startup delay profiled over
 `profile_delay_requests` requests and is then updated online as an EMA of
 observed request latency measured directly in control steps. When a reply
-arrives, inferaxis drops the stale prefix and either
-switches to the aligned new chunk directly or blends the overlap prefix when
+arrives, inferaxis drops the stale prefix and either switches to the aligned
+new chunk directly or blends the aligned handoff prefix when
 `ensemble_weight=...` is set. `ensemble_weight` may be one scalar shared by
-every overlap step or a `(low, high)` pair that ramps from the
-earliest overlap step to the latest. Built-in gripper commands switch to the
-new chunk directly instead of being averaged. It does not apply an extra
-per-step temporal filter to every emitted action. In practice, this makes
-inferaxis a dynamically latency-adaptive inference system: request timing is
-updated online from measured chunk latency instead of being fixed ahead of time.
+every aligned handoff step or a `(low, high)` pair that ramps from the
+earliest step to the latest. Built-in gripper commands switch to the new chunk
+directly instead of being averaged. It does not apply an extra per-step
+temporal filter to every emitted action. In practice, this makes inferaxis a
+dynamically latency-adaptive inference system: request timing is updated online
+from measured chunk latency instead of being fixed ahead of time.
 `ensemble_weight` defaults to `None`. If it is omitted, inferaxis does not
-blend overlap actions and
-simply switches to the aligned new chunk.
+blend aligned handoff actions and simply switches to the aligned new chunk.
 
 ## Validation
 

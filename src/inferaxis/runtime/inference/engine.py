@@ -17,14 +17,24 @@ from ...shared.action_source import (
     ActionSink,
     ActionSource,
     FrameSource,
-    first_action_and_plan_length_from_action_call,
     callable_key,
     resolve_runtime_owner,
 )
 from .chunk_scheduler import ChunkScheduler
 from .control import RealtimeController
-from .optimizers import BlendWeight, _normalize_blend_weight
+from .optimizers import BlendWeight
 from .protocols import ChunkRequest
+from ._engine_config import (
+    scheduler_control_period_s,
+    scheduler_initial_latency_steps,
+    validate_runtime_config,
+)
+from ._engine_scheduler import (
+    bootstrap_chunk_scheduler,
+    default_request,
+    ensure_chunk_scheduler,
+    resolve_raw_action,
+)
 
 
 class InferenceMode(StrEnum):
@@ -39,15 +49,21 @@ class InferenceRuntime:
     """Composable runtime configuration for optimized :func:`run_step` calls."""
 
     mode: InferenceMode | str
-    overlap_ratio: float | None = None
+    steps_before_request: int = 0
+    execution_steps: int | None = None
     latency_steps: float | None = None
     warmup_requests: int = 1
     profile_delay_requests: int = 3
     interpolation_steps: int = 0
-    enable_mismatch_bridge: bool = True
     ensemble_weight: BlendWeight | None = None
-    realtime_controller: RealtimeController | None = None
+    control_hz: float | None = None
     enable_rtc: bool = False
+    latency_steps_offset: int = 0
+    realtime_controller: RealtimeController | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _chunk_scheduler: ChunkScheduler | None = field(
         default=None,
         init=False,
@@ -67,76 +83,7 @@ class InferenceRuntime:
     def __post_init__(self) -> None:
         """Validate mode-specific runtime configuration."""
 
-        try:
-            self.mode = InferenceMode(str(self.mode))
-        except ValueError as exc:
-            raise InterfaceValidationError(
-                "InferenceRuntime.mode must be InferenceMode.SYNC or "
-                f"InferenceMode.ASYNC, got {self.mode!r}."
-            ) from exc
-        if self.overlap_ratio is not None:
-            if isinstance(self.overlap_ratio, bool) or not isinstance(
-                self.overlap_ratio,
-                (int, float),
-            ):
-                raise InterfaceValidationError(
-                    "InferenceRuntime.overlap_ratio must be a real number in "
-                    "the range [0, 1)."
-                )
-            self.overlap_ratio = float(self.overlap_ratio)
-            if not 0.0 <= self.overlap_ratio < 1.0:
-                raise InterfaceValidationError(
-                    "InferenceRuntime.overlap_ratio must be in the range [0, 1), "
-                    f"got {self.overlap_ratio!r}."
-                )
-        if self.latency_steps is not None:
-            if isinstance(self.latency_steps, bool) or not isinstance(
-                self.latency_steps,
-                (int, float),
-            ):
-                raise InterfaceValidationError(
-                    "InferenceRuntime.latency_steps must be a real number >= 0 "
-                    "when provided."
-                )
-            self.latency_steps = float(self.latency_steps)
-            if self.latency_steps < 0.0:
-                raise InterfaceValidationError(
-                    "InferenceRuntime.latency_steps must be >= 0, got "
-                    f"{self.latency_steps!r}."
-                )
-        for field_name in ("warmup_requests", "profile_delay_requests"):
-            value = getattr(self, field_name)
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise InterfaceValidationError(
-                    f"InferenceRuntime.{field_name} must be an int >= 0."
-                )
-            if value < 0:
-                raise InterfaceValidationError(
-                    f"InferenceRuntime.{field_name} must be >= 0, got {value!r}."
-                )
-        if isinstance(self.interpolation_steps, bool) or not isinstance(
-            self.interpolation_steps,
-            int,
-        ):
-            raise InterfaceValidationError(
-                "InferenceRuntime.interpolation_steps must be an int >= 0."
-            )
-        if self.interpolation_steps < 0:
-            raise InterfaceValidationError(
-                "InferenceRuntime.interpolation_steps must be >= 0, got "
-                f"{self.interpolation_steps!r}."
-            )
-        if not isinstance(self.enable_mismatch_bridge, bool):
-            raise InterfaceValidationError(
-                "InferenceRuntime.enable_mismatch_bridge must be a bool."
-            )
-        if self.ensemble_weight is not None:
-            self.ensemble_weight = _normalize_blend_weight(
-                self.ensemble_weight,
-                field_name="ensemble_weight",
-            )
-        if not isinstance(self.enable_rtc, bool):
-            raise InterfaceValidationError("InferenceRuntime.enable_rtc must be a bool.")
+        validate_runtime_config(self, mode_enum=InferenceMode)
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
@@ -156,30 +103,15 @@ class InferenceRuntime:
             self._chunk_scheduler = None
         self._chunk_scheduler_key = None
 
-    def _scheduler_overlap_ratio(self) -> float:
-        """Return the effective overlap ratio used by the hidden scheduler."""
-
-        if self.overlap_ratio is not None:
-            return self.overlap_ratio
-        return 0.2 if self.mode is InferenceMode.ASYNC else 0.0
-
     def _scheduler_initial_latency_steps(self) -> float:
         """Return the startup async latency prior used by the scheduler."""
 
-        if self.latency_steps is not None:
-            return self.latency_steps
-        if self.mode is not InferenceMode.ASYNC:
-            return 0.0
-        return 1.0
+        return scheduler_initial_latency_steps(self)
 
     def _scheduler_control_period_s(self) -> float | None:
         """Return the control period used for async latency bootstrap."""
 
-        if self.mode is not InferenceMode.ASYNC:
-            return None
-        if self.realtime_controller is None:
-            return None
-        return self.realtime_controller.period_s
+        return scheduler_control_period_s(self)
 
     def _ensure_chunk_scheduler(
         self,
@@ -188,100 +120,12 @@ class InferenceRuntime:
     ) -> ChunkScheduler | None:
         """Create one hidden chunk scheduler lazily when runtime mode needs it."""
 
-        scheduler_key = callable_key(act_src_fn)
-        source_is_single_step = scheduler_key in self._single_step_source_keys
-        if (
-            self.mode is not InferenceMode.ASYNC
-            and self.overlap_ratio is None
-            and source_is_single_step
-        ):
-            return None
-        if self.mode is InferenceMode.ASYNC and source_is_single_step:
-            raise InterfaceValidationError(
-                "InferenceRuntime(mode=ASYNC) requires act_src_fn=... to return "
-                "a chunk with more than one action."
-            )
-
-        scheduler_overlap_ratio = self._scheduler_overlap_ratio()
-        use_overlap_blend = self.ensemble_weight is not None
-        if self._chunk_scheduler is not None:
-            if (
-                self._chunk_scheduler_key != scheduler_key
-                or self._chunk_scheduler.fixed_latency_steps != self.latency_steps
-                or (
-                    self.mode is not InferenceMode.ASYNC
-                    and self.overlap_ratio is None
-                    and source_is_single_step
-                )
-            ):
-                self._chunk_scheduler.close()
-                self._chunk_scheduler = None
-                self._chunk_scheduler_key = None
-            else:
-                self._chunk_scheduler.overlap_ratio = scheduler_overlap_ratio
-                self._chunk_scheduler.use_overlap_blend = use_overlap_blend
-                self._chunk_scheduler.overlap_current_weight = (
-                    self.ensemble_weight if self.ensemble_weight is not None else 0.5
-                )
-                self._chunk_scheduler.initial_latency_steps = (
-                    self._scheduler_initial_latency_steps()
-                )
-                self._chunk_scheduler.fixed_latency_steps = self.latency_steps
-                self._chunk_scheduler.control_period_s = (
-                    self._scheduler_control_period_s()
-                )
-                self._chunk_scheduler.warmup_requests = self.warmup_requests
-                self._chunk_scheduler.profile_delay_requests = (
-                    self.profile_delay_requests
-                )
-                self._chunk_scheduler.interpolation_steps = self.interpolation_steps
-                self._chunk_scheduler.enable_mismatch_bridge = (
-                    self.enable_mismatch_bridge
-                )
-                self._chunk_scheduler.enable_rtc = self.enable_rtc
-                return self._chunk_scheduler
-
-        if act_src_fn is None:
-            raise InterfaceValidationError(
-                "InferenceRuntime async/overlap scheduling requires act_src_fn=...."
-            )
-
-        scheduler = ChunkScheduler(
-            action_source=act_src_fn,
-            overlap_ratio=scheduler_overlap_ratio,
-            initial_latency_steps=self._scheduler_initial_latency_steps(),
-            fixed_latency_steps=self.latency_steps,
-            control_period_s=self._scheduler_control_period_s(),
-            warmup_requests=self.warmup_requests,
-            profile_delay_requests=self.profile_delay_requests,
-            interpolation_steps=self.interpolation_steps,
-            enable_mismatch_bridge=self.enable_mismatch_bridge,
-            use_overlap_blend=use_overlap_blend,
-            overlap_current_weight=(
-                self.ensemble_weight if self.ensemble_weight is not None else 0.5
-            ),
-            enable_rtc=self.enable_rtc,
-        )
-        self._chunk_scheduler = scheduler
-        self._chunk_scheduler_key = scheduler_key
-        return scheduler
+        return ensure_chunk_scheduler(self, act_src_fn=act_src_fn)
 
     def _default_request(self) -> ChunkRequest:
         """Build one direct-call request for non-scheduled action sources."""
 
-        return ChunkRequest(
-            request_step=0,
-            request_time_s=0.0,
-            history_start=0,
-            history_end=0,
-            active_chunk_length=0,
-            remaining_steps=0,
-            overlap_steps=0,
-            latency_steps=0,
-            request_trigger_steps=0,
-            plan_start_step=0,
-            history_actions=[],
-        )
+        return default_request()
 
     def _bootstrap_chunk_scheduler(
         self,
@@ -291,9 +135,11 @@ class InferenceRuntime:
     ) -> bool:
         """Run async startup warmup/profile outside of ``next_action()``."""
 
-        if self.mode is not InferenceMode.ASYNC:
-            return False
-        return chunk_scheduler.bootstrap(frame)
+        return bootstrap_chunk_scheduler(
+            self,
+            frame=frame,
+            chunk_scheduler=chunk_scheduler,
+        )
 
     def _resolve_raw_action(
         self,
@@ -304,48 +150,12 @@ class InferenceRuntime:
     ) -> tuple[Action, bool, int]:
         """Resolve one raw action plus its plan metadata from the configured source."""
 
-        known_single_step_source = source_key in self._single_step_source_keys
-        chunk_scheduler = self._ensure_chunk_scheduler(
-            act_src_fn=act_src_fn,
-        )
-        if chunk_scheduler is None:
-            if act_src_fn is None:
-                raise InterfaceValidationError("run_step() requires act_src_fn=....")
-            raw_action, plan_length = first_action_and_plan_length_from_action_call(
-                act_src_fn,
-                frame,
-                request=self._default_request(),
-            )
-            if known_single_step_source and plan_length != 1:
-                raise InterfaceValidationError(
-                    "act_src_fn was previously classified as single-step for "
-                    f"this runtime, but returned chunk length {plan_length}."
-                )
-            if source_key is not None and plan_length == 1:
-                self._single_step_source_keys.add(source_key)
-            return raw_action, True, plan_length
-
-        plan_refreshed = self._bootstrap_chunk_scheduler(
+        return resolve_raw_action(
+            self,
             frame=frame,
-            chunk_scheduler=chunk_scheduler,
+            act_src_fn=act_src_fn,
+            source_key=source_key,
         )
-        raw_action, next_plan_refreshed = chunk_scheduler.next_action(
-            frame,
-            prefetch_async=self.mode is InferenceMode.ASYNC,
-        )
-        plan_refreshed = plan_refreshed or next_plan_refreshed
-        plan_length = chunk_scheduler.active_source_plan_length
-        if plan_length == 1 and source_key is not None:
-            self._single_step_source_keys.add(source_key)
-            chunk_scheduler.close()
-            self._chunk_scheduler = None
-            self._chunk_scheduler_key = None
-            if self.mode is InferenceMode.ASYNC:
-                raise InterfaceValidationError(
-                    "InferenceRuntime(mode=ASYNC) requires act_src_fn=... "
-                    "to return a chunk with more than one action."
-                )
-        return raw_action, plan_refreshed, plan_length
 
     def bootstrap_async(
         self,

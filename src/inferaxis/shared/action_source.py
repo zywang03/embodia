@@ -125,15 +125,9 @@ def first_action_and_plan_length_from_action_call(
         request = ChunkRequest(
             request_step=0,
             request_time_s=0.0,
-            history_start=0,
-            history_end=0,
             active_chunk_length=0,
             remaining_steps=0,
-            overlap_steps=0,
             latency_steps=0,
-            request_trigger_steps=0,
-            plan_start_step=0,
-            history_actions=[],
         )
     try:
         raw_plan = act_src_fn(frame, request)

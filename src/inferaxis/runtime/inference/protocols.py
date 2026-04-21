@@ -40,35 +40,23 @@ class RtcArgs:
 
 @dataclass(slots=True)
 class ChunkRequest:
-    """Runtime context for one overlap-aware action request.
-
-    ``history_actions`` contains the overlap tail from the currently active
-    chunk. Sources can use it as conditioning context when producing the next
-    future actions.
-
-    ``plan_start_step`` marks where an overlap-prefixed response would begin in
-    global-step coordinates. Future-only responses typically begin at
-    ``request_step`` instead.
+    """Runtime context for one action request.
 
     ``rtc_args`` is populated when the owning runtime enables real-time chunk
-    hints. It exposes the full currently active chunk snapshot, the index where
-    RTC guidance should begin inside that snapshot, and the snapshot length.
-    For easier interoperability with RTC-style policy code, the same values
-    are also mirrored onto ``prev_action_chunk``, ``inference_delay``, and
-    ``execute_horizon`` directly on this object.
+    hints. In async RTC mode, it exposes a fixed-length raw
+    ``prev_action_chunk`` derived from the current live buffer head, padded on
+    the left to the locked source raw chunk length, together with the raw-step
+    ``inference_delay`` hint and the fixed raw-step ``execute_horizon`` used
+    by the runtime. For easier interoperability with RTC-style policy code,
+    the same values are also mirrored onto ``prev_action_chunk``,
+    ``inference_delay``, and ``execute_horizon`` directly on this object.
     """
 
     request_step: int
     request_time_s: float
-    history_start: int
-    history_end: int
     active_chunk_length: int
     remaining_steps: int
-    overlap_steps: int
     latency_steps: int
-    request_trigger_steps: int
-    plan_start_step: int
-    history_actions: list[Action] = field(default_factory=list)
     prev_action_chunk: list[Action] | None = None
     inference_delay: int | None = None
     execute_horizon: int | None = None

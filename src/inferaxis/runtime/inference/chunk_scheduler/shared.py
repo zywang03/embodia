@@ -16,8 +16,6 @@ _NON_BLENDABLE_OVERLAP_COMMANDS = frozenset(
     }
 )
 _SLOW_RTC_WARMUP_THRESHOLD_S = 0.5
-_BRIDGE_CONTEXT_WINDOW = 3
-_CONTINUOUS_STEP_LENGTH_EMA_BETA = 0.2
 
 
 @dataclass(slots=True)
@@ -40,8 +38,6 @@ class _RequestJob:
 
 
 __all__ = [
-    "_BRIDGE_CONTEXT_WINDOW",
-    "_CONTINUOUS_STEP_LENGTH_EMA_BETA",
     "_CompletedChunk",
     "_NON_BLENDABLE_OVERLAP_COMMANDS",
     "_RequestJob",

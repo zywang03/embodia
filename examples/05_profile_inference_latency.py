@@ -113,10 +113,10 @@ def parse_args() -> argparse.Namespace:
         help="Fake policy chunk length used only by this example. Default 50 matches the most common pi06star deployment/default setting.",
     )
     parser.add_argument(
-        "--overlap-ratio",
-        type=float,
-        default=0.2,
-        help="Overlap ratio used by the profiler when estimating overlap-safe throughput. Default 0.2 is a practical starting point for chunked inference.",
+        "--steps-before-request",
+        type=int,
+        default=0,
+        help="Number of raw chunk steps to execute after a chunk is accepted before starting the next request.",
     )
     parser.add_argument(
         "--execute-action",
@@ -157,7 +157,7 @@ def main() -> None:
         execute_action=args.execute_action,
         startup_ignore_inference_samples=args.startup_ignore_samples,
         stable_inference_sample_count=args.stable_sample_count,
-        overlap_ratio=args.overlap_ratio,
+        steps_before_request=args.steps_before_request,
         output_path=(output_dir / "profile.json") if output_dir is not None else None,
         request_log_fn=print if args.print_requests else None,
     )
@@ -173,7 +173,7 @@ def main() -> None:
         execute_action=args.execute_action,
         startup_ignore_inference_samples=args.startup_ignore_samples,
         stable_inference_sample_count=args.stable_sample_count,
-        overlap_ratio=args.overlap_ratio,
+        steps_before_request=args.steps_before_request,
         output_path=(output_dir / "recommendation.json") if output_dir is not None else None,
         request_log_fn=print if args.print_requests else None,
     )
@@ -191,9 +191,9 @@ def main() -> None:
     )
     print("  fake_policy_chunk_steps:", args.chunk_steps)
     print("  fake_policy_latency_ms:", args.policy_latency_ms)
+    print("  steps_before_request:", args.steps_before_request)
     print("  estimated_chunk_steps:", profile.estimated_chunk_steps)
     print("  estimated_max_buffered_hz:", profile.estimated_max_buffered_hz)
-    print("  estimated_max_overlap_safe_hz:", profile.estimated_max_overlap_safe_hz)
     print("  target_hz:", args.target_hz)
     print("  recommended_mode:", recommendation.recommended_mode)
     print("  reason:", recommendation.reason)

@@ -62,16 +62,7 @@ class YourRtcPolicy:
         }
 
         plan: list[infra.Action] = []
-        if prev_action_chunk:
-            last_arm = prev_action_chunk[-1].get_command("YOUR_OWN_arm")
-            assert last_arm is not None
-            next_base = float(last_arm.value[0] + 3.0)
-        else:
-            # The very first bootstrap request still has no RTC hints, so
-            # derive the initial chunk from request metadata rather than
-            # mutable call-count state. Later warmup/profile requests already
-            # exercise prev_action_chunk.
-            next_base = float(request.request_step * 3.0)
+        next_base = float(request.request_step * 3.0)
 
         while len(plan) < 4:
             plan.append(
@@ -100,18 +91,28 @@ def main() -> None:
     policy = YourRtcPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
-        overlap_ratio=0.1,
+        steps_before_request=0,
+        execution_steps=3,
         warmup_requests=1,
         profile_delay_requests=3,
+        latency_steps_offset=0,
         interpolation_steps=2,
-        enable_mismatch_bridge=True,
+        # execution_steps is the fixed raw-step RTC window and becomes
+        # execute_horizon. The runtime builds prev_action_chunk from the
+        # current live buffer head, pads it on the left to execution_steps,
+        # then pads further to the locked full raw chunk length so the server
+        # always sees one stable tensor shape.
         # These are execution-only smoothing controls. RTC hints still stay in
         # raw chunk units and are passed to the policy unchanged.
+        # latency_steps_offset lets you nudge the raw-step latency hint carried
+        # on requests. With RTC enabled, request.inference_delay follows that
+        # same raw-step hint after RTC clamping, while
+        # prev_action_chunk and execute_horizon stay unchanged.
         # Async startup first warms up a few requests, then profiles delay on a
         # few more requests before the first action is sent to the robot. The
         # first run_step() call triggers that bootstrap automatically.
         enable_rtc=True,
-        realtime_controller=infra.RealtimeController(hz=50.0),
+        control_hz=50.0,
     )
 
     for step_index in range(5):

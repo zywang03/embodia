@@ -45,15 +45,9 @@ class YourPolicy:
         request: infra.ChunkRequest,
     ) -> list[infra.Action]:
         gripper_pos = float(obs.state["YOUR_OWN_gripper"][0])
-        history_actions = request.history_actions
 
         plan: list[infra.Action] = []
-        if history_actions:
-            last_arm = history_actions[-1].get_command("YOUR_OWN_arm")
-            assert last_arm is not None
-            next_base = float(last_arm.value[0] + 3.0)
-        else:
-            next_base = float(request.request_step * 3.0)
+        next_base = float(request.request_step * 3.0)
 
         while len(plan) < 2:
             plan.append(
@@ -82,16 +76,20 @@ def main() -> None:
     policy = YourPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
-        overlap_ratio=0.1,
-        latency_steps=4.0,
+        steps_before_request=0,
+        latency_steps=1.0,
+        latency_steps_offset=0,
         interpolation_steps=2,
-        enable_mismatch_bridge=True,
-        # Use a fixed request-latency estimate measured in control steps.
+        # Use a fixed request-latency estimate measured internally, then send
+        # a raw-step latency hint to the policy/server.
         # When this is provided, async startup skips warmup/profile and uses
-        # the manual value directly for request triggering.
+        # the manual value directly as the internal base latency estimate.
+        # latency_steps_offset lets you nudge the request-facing raw-step
+        # latency hint sent to the policy/server without changing
+        # steps_before_request.
         # These are execution-only smoothing controls. They do not change the
         # raw chunk semantics seen by the policy.
-        realtime_controller=infra.RealtimeController(hz=50.0),
+        control_hz=50.0,
     )
 
     for step_index in range(5):

@@ -20,16 +20,15 @@ from ...shared.action_source import (
     callable_key,
     resolve_runtime_owner,
 )
-from .chunk_scheduler import ChunkScheduler
+from .contracts import ChunkRequest
 from .control import RealtimeController
 from .optimizers import BlendWeight
-from .protocols import ChunkRequest
-from ._engine_config import (
+from .scheduler import ChunkScheduler
+from .engine_config import (
     scheduler_control_period_s,
-    scheduler_initial_latency_steps,
     validate_runtime_config,
 )
-from ._engine_scheduler import (
+from .engine_scheduler import (
     bootstrap_chunk_scheduler,
     default_request,
     ensure_chunk_scheduler,
@@ -51,7 +50,6 @@ class InferenceRuntime:
     mode: InferenceMode | str
     steps_before_request: int = 0
     execution_steps: int | None = None
-    latency_steps: float | None = None
     warmup_requests: int = 1
     profile_delay_requests: int = 3
     interpolation_steps: int = 0
@@ -59,6 +57,7 @@ class InferenceRuntime:
     control_hz: float | None = None
     enable_rtc: bool = False
     latency_steps_offset: int = 0
+    startup_validation_only: bool = True
     realtime_controller: RealtimeController | None = field(
         default=None,
         init=False,
@@ -103,11 +102,6 @@ class InferenceRuntime:
             self._chunk_scheduler = None
         self._chunk_scheduler_key = None
 
-    def _scheduler_initial_latency_steps(self) -> float:
-        """Return the startup async latency prior used by the scheduler."""
-
-        return scheduler_initial_latency_steps(self)
-
     def _scheduler_control_period_s(self) -> float | None:
         """Return the control period used for async latency bootstrap."""
 
@@ -126,6 +120,18 @@ class InferenceRuntime:
         """Build one direct-call request for non-scheduled action sources."""
 
         return default_request()
+
+    def _step_validation_enabled(self, *, source_key: object | None) -> bool:
+        """Return whether the current runtime step should do full validation."""
+
+        if not self.startup_validation_only:
+            return True
+        scheduler = self._chunk_scheduler
+        if scheduler is None:
+            return True
+        if source_key is not None and self._chunk_scheduler_key != source_key:
+            return True
+        return scheduler.runtime_validation_enabled()
 
     def _bootstrap_chunk_scheduler(
         self,
@@ -175,10 +181,12 @@ class InferenceRuntime:
             observe_fn,
             act_src_fn,
         )
+        source_key = callable_key(act_src_fn)
         normalized_frame = _resolve_step_frame(
             observe_fn,
             frame,
             owner=metadata_owner,
+            validate=self._step_validation_enabled(source_key=source_key),
         )
         chunk_scheduler = self._ensure_chunk_scheduler(
             act_src_fn=act_src_fn,
@@ -219,6 +227,7 @@ class InferenceRuntime:
         """Internal implementation for runtime-managed local execution."""
 
         source_key = callable_key(act_src_fn)
+        validate_step_values = self._step_validation_enabled(source_key=source_key)
         frame_owner = (
             metadata_owner
             if metadata_owner is not None
@@ -228,6 +237,7 @@ class InferenceRuntime:
             observe_fn,
             frame,
             owner=frame_owner,
+            validate=validate_step_values,
         )
 
         raw_action, plan_refreshed, plan_length = self._resolve_raw_action(
@@ -239,7 +249,11 @@ class InferenceRuntime:
 
         should_execute = True if execute_action is None else execute_action
         if should_execute:
-            action = _execute_step_action(act_fn, action)
+            action = _execute_step_action(
+                act_fn,
+                action,
+                validate=validate_step_values,
+            )
 
         control_wait_s = 0.0
         if pace_control and self.realtime_controller is not None:

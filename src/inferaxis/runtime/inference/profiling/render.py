@@ -6,7 +6,7 @@ from html import escape
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._profile_models import AsyncBufferTrace
+    from .models import AsyncBufferTrace
 
 
 def _step_plot_points(

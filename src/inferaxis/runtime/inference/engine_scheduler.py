@@ -1,4 +1,4 @@
-"""Internal scheduler lifecycle helpers for :mod:`.engine`."""
+"""Scheduler lifecycle helpers for :mod:`inferaxis.runtime.inference.engine`."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from ...shared.action_source import (
     callable_key,
     first_action_and_plan_length_from_action_call,
 )
-from .chunk_scheduler import ChunkScheduler
-from .protocols import ChunkRequest
-from ._engine_config import (
+from .contracts import ChunkRequest
+from .engine_config import (
     build_chunk_scheduler_kwargs,
     sync_chunk_scheduler_config,
     should_replace_chunk_scheduler,
 )
+from .scheduler import ChunkScheduler
 
 if TYPE_CHECKING:
     from .engine import InferenceRuntime
@@ -93,7 +93,7 @@ def bootstrap_chunk_scheduler(
 
     if runtime.mode != "async":
         return False
-    return chunk_scheduler.bootstrap(frame)
+    return chunk_scheduler.bootstrap(frame, validate_frame_input=False)
 
 
 def resolve_raw_action(
@@ -132,6 +132,7 @@ def resolve_raw_action(
     raw_action, next_plan_refreshed = chunk_scheduler.next_action(
         frame,
         prefetch_async=runtime.mode == "async",
+        validate_frame_input=False,
     )
     plan_refreshed = plan_refreshed or next_plan_refreshed
     plan_length = chunk_scheduler.active_source_plan_length

@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from ...core.schema import Frame
+from ....core.schema import Frame
 
 
 def _summarize_array(

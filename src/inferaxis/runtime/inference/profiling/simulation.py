@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 import math
 
-from ._profile_models import (
+from .models import (
     _ProfiledRequestSample,
     AsyncBufferTrace,
     AsyncBufferTraceRequest,

@@ -16,8 +16,8 @@ from ..shared.action_source import (
     first_action_from_action_call,
     resolve_runtime_owner,
 )
-from ..shared.coerce import as_frame as _as_frame
-from ..shared.coerce import maybe_as_action as _maybe_as_action
+from ..shared.coerce import as_frame_fast as _as_frame_fast
+from ..shared.coerce import maybe_as_action_fast as _maybe_as_action_fast
 from ..shared.sequence import attach_runtime_frame_metadata
 
 
@@ -37,6 +37,7 @@ def _resolve_step_frame(
     frame: Frame | Mapping[str, Any] | None,
     *,
     owner: object | None,
+    validate: bool = True,
 ) -> Frame:
     """Normalize one input frame from either ``observe_fn`` or ``frame=...``."""
 
@@ -63,18 +64,27 @@ def _resolve_step_frame(
         raw_frame = frame
 
     normalized_frame = attach_runtime_frame_metadata(
-        _as_frame(raw_frame),
+        _as_frame_fast(raw_frame),
         owner=owner,
+        copy_arrays=False,
     )
-    validate_frame(normalized_frame)
+    if validate:
+        validate_frame(normalized_frame)
     return normalized_frame
 
 
 def _execute_step_action(
     act_fn: ActionSink | None,
     action: Action,
+    *,
+    validate: bool = True,
 ) -> Action:
-    """Execute one action locally when a send callback is available."""
+    """Execute one action locally when a send callback is available.
+
+    Runtime hot paths may pass shared read-only action objects here. Local
+    sinks should treat the received action as immutable and return a separate
+    action only when they need to report a different accepted command.
+    """
 
     if not callable(act_fn):
         raise InterfaceValidationError(
@@ -97,11 +107,12 @@ def _execute_step_action(
             f"{caller} raised {type(exc).__name__}: {exc}"
         ) from exc
 
-    executed_action = _maybe_as_action(raw_executed_action)
+    executed_action = _maybe_as_action_fast(raw_executed_action)
     if executed_action is None:
         return action
 
-    validate_action(executed_action)
+    if validate:
+        validate_action(executed_action)
     return executed_action
 
 

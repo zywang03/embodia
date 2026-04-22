@@ -91,26 +91,10 @@ def main() -> None:
     policy = YourRtcPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
-        steps_before_request=0,
         execution_steps=3,
         warmup_requests=1,
         profile_delay_requests=3,
-        latency_steps_offset=0,
-        interpolation_steps=2,
-        # execution_steps is the fixed raw-step RTC window and becomes
-        # execute_horizon. The runtime builds prev_action_chunk from the
-        # current live buffer head, pads it on the left to execution_steps,
-        # then pads further to the locked full raw chunk length so the server
-        # always sees one stable tensor shape.
-        # These are execution-only smoothing controls. RTC hints still stay in
-        # raw chunk units and are passed to the policy unchanged.
-        # latency_steps_offset lets you nudge the raw-step latency hint carried
-        # on requests. With RTC enabled, request.inference_delay follows that
-        # same raw-step hint after RTC clamping, while
-        # prev_action_chunk and execute_horizon stay unchanged.
-        # Async startup first warms up a few requests, then profiles delay on a
-        # few more requests before the first action is sent to the robot. The
-        # first run_step() call triggers that bootstrap automatically.
+        interpolation_steps=0,
         enable_rtc=True,
         control_hz=50.0,
     )

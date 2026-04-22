@@ -74,15 +74,23 @@ def attach_runtime_frame_metadata(
     *,
     owner: object | None,
     reset: bool = False,
+    copy_arrays: bool = True,
 ) -> Frame:
     """Return ``frame`` with inferaxis-managed timestamp and sequence metadata."""
 
-    updated = Frame(
-        images={key: value.copy() for key, value in frame.images.items()},
-        state={key: value.copy() for key, value in frame.state.items()},
-        task=dict(frame.task),
-        meta=dict(frame.meta),
-    )
+    if copy_arrays:
+        updated = Frame(
+            images={key: value.copy() for key, value in frame.images.items()},
+            state={key: value.copy() for key, value in frame.state.items()},
+            task=dict(frame.task),
+            meta=dict(frame.meta),
+        )
+    else:
+        updated = object.__new__(Frame)
+        updated.images = dict(frame.images)
+        updated.state = dict(frame.state)
+        updated.task = dict(frame.task)
+        updated.meta = dict(frame.meta)
     updated.timestamp_ns = time.time_ns()
     if frame.sequence_id is not None:
         updated.sequence_id = frame.sequence_id

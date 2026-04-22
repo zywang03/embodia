@@ -1,4 +1,4 @@
-"""Public profiling entrypoints built on top of private profiling helpers."""
+"""Public profiling entrypoints."""
 
 from __future__ import annotations
 
@@ -7,25 +7,25 @@ import math
 from os import PathLike
 import time
 
-from ...core.errors import InterfaceValidationError
-from ..flow import _execute_step_action, _resolve_step_frame
-from ...shared.action_source import (
+from ....core.errors import InterfaceValidationError
+from ...flow import _execute_step_action, _resolve_step_frame
+from ....shared.action_source import (
     ActionSink,
     ActionSource,
     FrameSource,
     first_action_and_plan_length_from_action_call,
     resolve_runtime_owner,
 )
-from ...shared.common import validate_positive_number
-from .engine import InferenceMode
-from ._profile_logging import _emit_profile_request_trace
-from ._profile_models import (
+from ....shared.common import validate_positive_number
+from ..engine import InferenceMode
+from .logging import _emit_profile_request_trace
+from .models import (
     _ProfiledRequestSample,
     _RobustMeanEstimator,
     InferenceModeRecommendation,
     SyncInferenceProfile,
 )
-from ._profile_trace import _build_async_buffer_trace, _observed_latency_steps
+from .simulation import _build_async_buffer_trace, _observed_latency_steps
 
 
 def profile_sync_inference(

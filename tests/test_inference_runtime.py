@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from concurrent.futures import Future
+import math
 import json
 import tempfile
 import threading
@@ -17,11 +18,11 @@ import inferaxis as infra
 import numpy as np
 from inferaxis.core.schema import ComponentSpec
 
-from inferaxis.runtime.inference.chunk_scheduler import ChunkScheduler, _CompletedChunk
-from inferaxis.runtime.inference.profile import (
+from inferaxis.runtime.inference.profiling import (
     _ProfiledRequestSample,
     _build_async_buffer_trace,
 )
+from inferaxis.runtime.inference.scheduler import ChunkScheduler, _CompletedChunk
 
 from helpers import assert_array_equal, demo_image
 
@@ -429,11 +430,11 @@ class InferenceRuntimeTests(unittest.TestCase):
                 transition_bridge_mismatch_threshold=1.5,  # type: ignore[call-arg]
             )
 
-    def test_profile_module_reexports_existing_trace_helpers(self) -> None:
-        import inferaxis.runtime.inference.profile as profile_module
+    def test_profiling_package_reexports_existing_trace_helpers(self) -> None:
+        import inferaxis.runtime.inference.profiling as profiling_module
 
-        self.assertIs(profile_module._ProfiledRequestSample, _ProfiledRequestSample)
-        self.assertIs(profile_module._build_async_buffer_trace, _build_async_buffer_trace)
+        self.assertIs(profiling_module._ProfiledRequestSample, _ProfiledRequestSample)
+        self.assertIs(profiling_module._build_async_buffer_trace, _build_async_buffer_trace)
 
     def test_chunk_scheduler_blends_arm_but_not_gripper_overlap(self) -> None:
         scheduler = ChunkScheduler(
@@ -579,12 +580,38 @@ class InferenceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(runtime.latency_steps_offset, -2)
 
+    def test_runtime_accepts_startup_validation_only(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=True,
+        )
+
+        self.assertTrue(runtime.startup_validation_only)
+
+    def test_runtime_defaults_zeroed_async_tuning_knobs(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+        )
+
+        self.assertEqual(runtime.steps_before_request, 0)
+        self.assertEqual(runtime.latency_steps_offset, 0)
+        self.assertEqual(runtime.interpolation_steps, 0)
+        self.assertTrue(runtime.startup_validation_only)
+
     def test_runtime_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
             with self.assertRaises(infra.InterfaceValidationError):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.SYNC,
                     latency_steps_offset=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_rejects_invalid_startup_validation_only(self) -> None:
+        for invalid in (1, "yes", None):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    startup_validation_only=invalid,  # type: ignore[arg-type]
                 )
 
     def test_runtime_no_longer_accepts_legacy_rtc_delay_offset_keyword(self) -> None:
@@ -644,25 +671,14 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.warmup_requests, 2)
         self.assertEqual(runtime.profile_delay_requests, 4)
 
-    def test_async_runtime_accepts_manual_latency_steps(self) -> None:
-        runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            steps_before_request=0,
-            execution_steps=1,
-            latency_steps=4,
-        )
-
-        self.assertEqual(runtime.latency_steps, 4.0)
-
-    def test_runtime_rejects_invalid_manual_latency_steps(self) -> None:
-        for invalid in (-1, True, "4"):
-            with self.assertRaises(infra.InterfaceValidationError):
-                infra.InferenceRuntime(
-                    mode=infra.InferenceMode.ASYNC,
-                    steps_before_request=0,
-                    execution_steps=1,
-                    latency_steps=invalid,  # type: ignore[arg-type]
-                )
+    def test_runtime_no_longer_accepts_legacy_latency_steps_keyword(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                steps_before_request=0,
+                execution_steps=1,
+                latency_steps=4,  # type: ignore[call-arg]
+            )
 
     def test_async_runtime_with_control_hz_warms_then_profiles_latency_before_execute(self) -> None:
         class CountingRobot(RuntimeRobot):
@@ -711,75 +727,6 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(runtime._chunk_scheduler)
         self.assertTrue(runtime._chunk_scheduler.latency_estimate_ready())  # type: ignore[union-attr]
         self.assertGreaterEqual(runtime._chunk_scheduler.estimated_latency_steps(), 1)  # type: ignore[union-attr]
-
-    def test_async_runtime_manual_latency_steps_skips_bootstrap_and_uses_fixed_estimate(self) -> None:
-        class CountingRobot(RuntimeRobot):
-            def __init__(self) -> None:
-                super().__init__()
-                self.send_count = 0
-
-            def send_action(self, action: infra.Action) -> None:
-                self.send_count += 1
-                super().send_action(action)
-
-        class ConstantChunkPolicy:
-            def __init__(self) -> None:
-                self.request_count = 0
-
-            def infer(
-                self,
-                obs: infra.Frame,
-                request: infra.ChunkRequest,
-            ) -> list[infra.Action]:
-                del obs, request
-                self.request_count += 1
-                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
-
-        robot = CountingRobot()
-        policy = ConstantChunkPolicy()
-        runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            steps_before_request=0,
-            execution_steps=3,
-            latency_steps=3,
-            warmup_requests=2,
-            profile_delay_requests=2,
-            control_hz=50.0,
-        )
-
-        result = infra.run_step(
-            observe_fn=robot.get_obs,
-            act_fn=robot.send_action,
-            act_src_fn=policy.infer,
-            runtime=runtime,
-        )
-
-        self.assertEqual(arm_value(result.action), 7.0)
-        self.assertEqual(robot.send_count, 1)
-        self.assertEqual(policy.request_count, 2)
-        self.assertIsNotNone(runtime._chunk_scheduler)
-        self.assertTrue(runtime._chunk_scheduler.latency_estimate_ready())  # type: ignore[union-attr]
-        self.assertEqual(runtime._chunk_scheduler.estimated_latency_steps(), 3)  # type: ignore[union-attr]
-
-    def test_async_runtime_bootstrap_async_returns_false_when_manual_latency_steps_are_fixed(self) -> None:
-        robot = RuntimeRobot()
-        policy = PlanningSource()
-        runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            steps_before_request=0,
-            execution_steps=1,
-            latency_steps=3,
-            warmup_requests=2,
-            profile_delay_requests=2,
-            control_hz=50.0,
-        )
-
-        bootstrapped = runtime.bootstrap_async(
-            observe_fn=robot.get_obs,
-            act_src_fn=policy.infer,
-        )
-
-        self.assertFalse(bootstrapped)
 
     def test_async_runtime_bootstrap_async_can_be_called_explicitly(self) -> None:
         class CountingRobot(RuntimeRobot):
@@ -861,13 +808,13 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert policy.requests[1].prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in policy.requests[1].prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
         self.assertEqual(policy.requests[1].execute_horizon, 3)
         assert policy.requests[2].prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in policy.requests[2].prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
         self.assertEqual(policy.requests[2].execute_horizon, 3)
 
@@ -906,6 +853,46 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(policy.requests[2].latency_steps, 0)
         self.assertEqual(policy.requests[1].inference_delay, 1)
         self.assertEqual(policy.requests[2].inference_delay, 1)
+
+    def test_async_runtime_startup_validation_only_skips_steady_state_frame_validation(self) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=True,
+        )
+
+        first = infra.run_step(
+            frame=robot.get_obs(),
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        bad_frame = robot.get_obs()
+        bad_frame.timestamp_ns = -1
+        second = infra.run_step(
+            frame=bad_frame,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        assert runtime._chunk_scheduler is not None
+        self.assertTrue(runtime._chunk_scheduler._startup_validation_complete)
 
     def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
         executor = PlainRuntimeExecutor()
@@ -1370,6 +1357,53 @@ class InferenceRuntimeTests(unittest.TestCase):
             [100.0, 101.0, 102.0],
         )
 
+    def test_chunk_scheduler_execute_request_reuses_source_plan_actions_without_blending(self) -> None:
+        plan = [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        scheduler = ChunkScheduler(
+            action_source=lambda obs, request: plan,
+            use_overlap_blend=False,
+        )
+
+        completed = scheduler._execute_request(
+            infra.Frame(images={}, state={}),
+            scheduler._build_request_job(include_latency=False),
+        )
+
+        self.assertIs(completed.prepared_actions[0], plan[0])
+        self.assertIs(completed.prepared_actions[1], plan[1])
+        self.assertIs(completed.prepared_actions[2], plan[2])
+
+    def test_chunk_scheduler_execute_request_blends_prefix_and_reuses_suffix(self) -> None:
+        plan = [
+            arm_action(50.0),
+            arm_action(60.0),
+            arm_action(70.0),
+            arm_action(80.0),
+        ]
+        scheduler = ChunkScheduler(
+            action_source=lambda obs, request: plan,
+            use_overlap_blend=True,
+            overlap_current_weight=0.5,
+        )
+        scheduler._buffer = deque(
+            [
+                arm_action(10.0),
+                arm_action(20.0),
+                arm_action(30.0),
+            ]
+        )
+
+        completed = scheduler._execute_request(
+            infra.Frame(images={}, state={}),
+            scheduler._build_request_job(include_latency=False),
+        )
+
+        self.assertIsNot(completed.prepared_actions[0], plan[0])
+        self.assertIsNot(completed.prepared_actions[1], plan[1])
+        self.assertIsNot(completed.prepared_actions[2], plan[2])
+        self.assertIs(completed.prepared_actions[3], plan[3])
+
     def test_chunk_scheduler_prepared_overlap_keeps_new_gripper_values(self) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
@@ -1493,6 +1527,29 @@ class InferenceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(emitted, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 
+    def test_chunk_scheduler_pop_next_action_reuses_buffer_action_without_interpolation(self) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=0,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=make_chunk_request(
+                    request_step=0,
+                    request_time_s=0.0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    latency_steps=0,
+                ),
+                prepared_actions=[arm_action(1.0), arm_action(2.0)],
+                source_plan_length=2,
+            )
+        )
+
+        first_buffer_action = scheduler._buffer[0]
+        emitted = scheduler._pop_next_action()
+
+        self.assertIs(emitted, first_buffer_action)
+
     def test_chunk_scheduler_interpolation_count_matches_formula(self) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,
@@ -1602,7 +1659,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert mid_segment_job.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in mid_segment_job.request.prev_action_chunk],
-            [1.0, 1.0, 4.0, 7.0],
+            [1.0, 4.0, 7.0, 7.0],
         )
         self.assertEqual(mid_segment_job.request.execute_horizon, 3)
         self.assertEqual(mid_segment_job.request.inference_delay, 1)
@@ -1614,7 +1671,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert boundary_job.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in boundary_job.request.prev_action_chunk],
-            [4.0, 4.0, 7.0, 10.0],
+            [4.0, 7.0, 10.0, 10.0],
         )
 
     def test_chunk_scheduler_interpolated_execution_only_refreshes_on_raw_boundary(self) -> None:
@@ -1729,15 +1786,49 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(rtc_args.execute_horizon, 3)
         self.assertEqual(
             [arm_value(action) for action in rtc_args.prev_action_chunk],
-            [3.0, 3.0, 3.0, 4.0],
+            [3.0, 4.0, 4.0, 4.0],
         )
         self.assertEqual(job.request.inference_delay, 1)
         self.assertEqual(job.request.execute_horizon, 3)
         assert job.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in job.request.prev_action_chunk],
-            [3.0, 3.0, 3.0, 4.0],
+            [3.0, 4.0, 4.0, 4.0],
         )
+
+    def test_chunk_scheduler_enable_rtc_prev_chunk_reuses_live_buffer_actions(self) -> None:
+        scheduler = ChunkScheduler(
+            steps_before_request=0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=make_chunk_request(
+                    request_step=0,
+                    request_time_s=0.0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    latency_steps=0,
+                ),
+                prepared_actions=[
+                    arm_action(1.0),
+                    arm_action(2.0),
+                    arm_action(3.0),
+                    arm_action(4.0),
+                ],
+                source_plan_length=4,
+            )
+        )
+        scheduler._latency_steps_estimate = 1.0
+
+        job = scheduler._build_request_job(include_latency=True)
+
+        assert job.request.prev_action_chunk is not None
+        self.assertIs(job.request.prev_action_chunk[0], scheduler._buffer[0])
+        self.assertIs(job.request.prev_action_chunk[1], scheduler._buffer[1])
+        self.assertIs(job.request.prev_action_chunk[2], scheduler._buffer[2])
+        self.assertIs(job.request.prev_action_chunk[3], scheduler._buffer[2])
 
     def test_chunk_scheduler_accepts_signed_latency_steps_offset(self) -> None:
         scheduler = ChunkScheduler(
@@ -1748,6 +1839,13 @@ class InferenceRuntimeTests(unittest.TestCase):
 
         self.assertEqual(scheduler.latency_steps_offset, -3)
 
+    def test_chunk_scheduler_accepts_startup_validation_only(self) -> None:
+        scheduler = ChunkScheduler(
+            startup_validation_only=True,
+        )
+
+        self.assertTrue(scheduler.startup_validation_only)
+
     def test_chunk_scheduler_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
             with self.assertRaises(infra.InterfaceValidationError):
@@ -1755,6 +1853,13 @@ class InferenceRuntimeTests(unittest.TestCase):
                     enable_rtc=True,
                     execution_steps=1,
                     latency_steps_offset=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_chunk_scheduler_rejects_invalid_startup_validation_only(self) -> None:
+        for invalid in (1, "yes", None):
+            with self.assertRaises(infra.InterfaceValidationError):
+                ChunkScheduler(
+                    startup_validation_only=invalid,  # type: ignore[arg-type]
                 )
 
     def test_chunk_scheduler_no_longer_accepts_legacy_rtc_delay_offset_keyword(self) -> None:
@@ -1910,7 +2015,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert with_rtc.request.prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in with_rtc.request.prev_action_chunk],
-            [3.0, 3.0, 4.0, 5.0],
+            [3.0, 4.0, 5.0, 5.0],
         )
         self.assertIsNotNone(with_rtc.request.rtc_args)
 
@@ -2041,6 +2146,62 @@ class InferenceRuntimeTests(unittest.TestCase):
                 for warning in caught
             )
         )
+
+    def test_chunk_scheduler_startup_validation_only_still_validates_startup_frame(self) -> None:
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            return [arm_action(1.0), arm_action(2.0)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            startup_validation_only=True,
+        )
+        bad_frame = infra.Frame(images={}, state={})
+        bad_frame.timestamp_ns = -1
+
+        with self.assertRaises(infra.InterfaceValidationError):
+            scheduler.next_action(bad_frame, prefetch_async=False)
+
+    def test_chunk_scheduler_startup_validation_only_skips_steady_state_plan_validation(self) -> None:
+        request_count = 0
+
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                return [arm_action(1.0), arm_action(2.0)]
+            return [
+                infra.Action.single(
+                    target="arm",
+                    command="cartesian_pose_delta",
+                    value=[np.nan] * 6,
+                ),
+                arm_action(4.0),
+            ]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            steps_before_request=0,
+            startup_validation_only=True,
+            clock=lambda: 123.0,
+        )
+
+        action, refreshed = scheduler.next_action(
+            infra.Frame(images={}, state={}),
+            prefetch_async=False,
+        )
+
+        self.assertTrue(refreshed)
+        self.assertEqual(request_count, 2)
+        self.assertTrue(scheduler._startup_validation_complete)
+        self.assertTrue(math.isnan(arm_value(action)))
 
     def test_chunk_scheduler_bootstrap_aborts_when_slow_rtc_request_is_rejected(self) -> None:
         def action_source(
@@ -2203,7 +2364,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(rtc_args.execute_horizon, 3)
         self.assertEqual(
             [arm_value(action) for action in rtc_args.prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
 
     def test_async_scheduler_drops_only_executed_steps_after_wall_clock_wait(self) -> None:
@@ -2318,14 +2479,14 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(first_rtc_args.execute_horizon, 3)
         self.assertEqual(
             [arm_value(action) for action in first_rtc_args.prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
         self.assertEqual(policy.requests[1].inference_delay, 1)
         self.assertEqual(policy.requests[1].execute_horizon, 3)
         assert policy.requests[1].prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in policy.requests[1].prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
 
     def test_async_runtime_enable_rtc_prev_chunk_tracks_current_active_chunk(self) -> None:
@@ -2352,7 +2513,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert policy.requests[1].prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in policy.requests[1].prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
         tracked_request = policy.requests[-1]
         assert tracked_request.prev_action_chunk is not None
@@ -2392,7 +2553,7 @@ class InferenceRuntimeTests(unittest.TestCase):
         assert policy.requests[1].prev_action_chunk is not None
         self.assertEqual(
             [arm_value(action) for action in policy.requests[1].prev_action_chunk],
-            [1.0, 1.0, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 3.0],
         )
         self.assertEqual(policy.requests[1].execute_horizon, 3)
         self.assertEqual(policy.requests[1].inference_delay, 1)

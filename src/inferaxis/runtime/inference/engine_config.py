@@ -1,4 +1,4 @@
-"""Internal config helpers for :mod:`inferaxis.runtime.inference.engine`."""
+"""Runtime configuration helpers for :mod:`inferaxis.runtime.inference.engine`."""
 
 from __future__ import annotations
 
@@ -41,12 +41,6 @@ def validate_runtime_config(
             "InferenceRuntime(enable_rtc=True) requires execution_steps=... ."
         )
 
-    if runtime.latency_steps is not None:
-        runtime.latency_steps = _validate_nonnegative_real(
-            runtime.latency_steps,
-            field_name="InferenceRuntime.latency_steps",
-        )
-
     for field_name in ("warmup_requests", "profile_delay_requests"):
         _validate_nonnegative_int(
             getattr(runtime, field_name),
@@ -80,13 +74,15 @@ def validate_runtime_config(
         raise InterfaceValidationError(
             "InferenceRuntime.latency_steps_offset must be an int."
         )
+    if not isinstance(runtime.startup_validation_only, bool):
+        raise InterfaceValidationError(
+            "InferenceRuntime.startup_validation_only must be a bool."
+        )
 
 
 def scheduler_initial_latency_steps(runtime: "InferenceRuntime") -> float:
     """Return the async startup latency prior for one runtime."""
 
-    if runtime.latency_steps is not None:
-        return runtime.latency_steps
     if runtime.mode != "async":
         return 0.0
     return 1.0
@@ -112,7 +108,6 @@ def build_chunk_scheduler_kwargs(
         "steps_before_request": runtime.steps_before_request,
         "execution_steps": runtime.execution_steps,
         "initial_latency_steps": scheduler_initial_latency_steps(runtime),
-        "fixed_latency_steps": runtime.latency_steps,
         "control_period_s": scheduler_control_period_s(runtime),
         "warmup_requests": runtime.warmup_requests,
         "profile_delay_requests": runtime.profile_delay_requests,
@@ -123,6 +118,7 @@ def build_chunk_scheduler_kwargs(
         ),
         "enable_rtc": runtime.enable_rtc,
         "latency_steps_offset": runtime.latency_steps_offset,
+        "startup_validation_only": runtime.startup_validation_only,
     }
 
 
@@ -136,13 +132,13 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
         runtime.ensemble_weight if runtime.ensemble_weight is not None else 0.5
     )
     scheduler.initial_latency_steps = scheduler_initial_latency_steps(runtime)
-    scheduler.fixed_latency_steps = runtime.latency_steps
     scheduler.control_period_s = scheduler_control_period_s(runtime)
     scheduler.warmup_requests = runtime.warmup_requests
     scheduler.profile_delay_requests = runtime.profile_delay_requests
     scheduler.interpolation_steps = runtime.interpolation_steps
     scheduler.enable_rtc = runtime.enable_rtc
     scheduler.latency_steps_offset = runtime.latency_steps_offset
+    scheduler.startup_validation_only = runtime.startup_validation_only
 
 
 def should_replace_chunk_scheduler(
@@ -156,7 +152,6 @@ def should_replace_chunk_scheduler(
 
     return (
         runtime._chunk_scheduler_key != scheduler_key
-        or scheduler.fixed_latency_steps != runtime.latency_steps
         or scheduler.execution_steps != runtime.execution_steps
         or (runtime.mode != "async" and source_is_single_step)
     )

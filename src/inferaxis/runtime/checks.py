@@ -244,7 +244,7 @@ def check_policy(
         spec.required_task_keys,
         owner_label="policy",
     )
-    from ..runtime.inference.protocols import ChunkRequest
+    from ..runtime.inference.contracts import ChunkRequest
 
     request = ChunkRequest(
         request_step=0,

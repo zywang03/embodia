@@ -10,9 +10,9 @@ from os import PathLike
 from pathlib import Path
 from typing import Any
 
-from ...core.errors import InterfaceValidationError
-from ...shared.common import validate_positive_number
-from .engine import InferenceMode
+from ....core.errors import InterfaceValidationError
+from ....shared.common import validate_positive_number
+from ..engine import InferenceMode
 
 
 @dataclass(slots=True)
@@ -227,7 +227,7 @@ class AsyncBufferTrace:
     def write_svg(self, path: str | PathLike[str]) -> None:
         """Write a dependency-free SVG plot for the simulated buffer trace."""
 
-        from ._profile_render import _async_buffer_trace_svg
+        from .render import _async_buffer_trace_svg
 
         output_path = Path(path)
         output_path.write_text(

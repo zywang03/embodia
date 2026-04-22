@@ -7,7 +7,7 @@ from typing import Any
 
 from ..core.errors import InterfaceValidationError
 from ..core.schema import Action, Frame, validate_action
-from .coerce import as_action
+from .coerce import as_action_fast
 
 FrameSource = Callable[[], Frame | Mapping[str, Any]]
 ActionSource = Callable[[Frame, object], object]
@@ -65,7 +65,7 @@ def call_action_fn(
             "resolved action source must return an action-like value, got None."
         )
     try:
-        action = as_action(raw_action)
+        action = as_action_fast(raw_action)
     except TypeError as exc:
         raise InterfaceValidationError(
             "resolved action source must return an action-like value, got "
@@ -84,7 +84,7 @@ def _first_action_and_plan_length_from_plan(
     """Normalize one action/chunk return value and report its length."""
 
     try:
-        action = as_action(raw_plan)
+        action = as_action_fast(raw_plan)
     except TypeError:
         action = None
     else:
@@ -101,7 +101,7 @@ def _first_action_and_plan_length_from_plan(
 
     first = raw_plan[0]
     try:
-        action = as_action(first)
+        action = as_action_fast(first)
     except TypeError as exc:
         raise InterfaceValidationError(
             f"{caller} must return only action-like items, got "
@@ -119,7 +119,7 @@ def first_action_and_plan_length_from_action_call(
 ) -> tuple[Action, int]:
     """Call one action source and return the first action plus plan length."""
 
-    from ..runtime.inference.protocols import ChunkRequest
+    from ..runtime.inference.contracts import ChunkRequest
 
     if request is None:
         request = ChunkRequest(

@@ -76,19 +76,6 @@ def main() -> None:
     policy = YourPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
-        steps_before_request=0,
-        latency_steps=1.0,
-        latency_steps_offset=0,
-        interpolation_steps=2,
-        # Use a fixed request-latency estimate measured internally, then send
-        # a raw-step latency hint to the policy/server.
-        # When this is provided, async startup skips warmup/profile and uses
-        # the manual value directly as the internal base latency estimate.
-        # latency_steps_offset lets you nudge the request-facing raw-step
-        # latency hint sent to the policy/server without changing
-        # steps_before_request.
-        # These are execution-only smoothing controls. They do not change the
-        # raw chunk semantics seen by the policy.
         control_hz=50.0,
     )
 

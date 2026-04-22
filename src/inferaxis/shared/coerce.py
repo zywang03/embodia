@@ -16,6 +16,14 @@ def as_frame(value: object) -> Frame:
         raise TypeError(str(exc)) from exc
 
 
+def as_frame_fast(value: object) -> Frame:
+    """Return one Frame without re-coercing already standardized instances."""
+
+    if isinstance(value, Frame):
+        return value
+    return as_frame(value)
+
+
 def as_action(value: object) -> Action:
     """Return a standardized action or raise a strict runtime boundary error."""
 
@@ -23,6 +31,14 @@ def as_action(value: object) -> Action:
         return coerce_action(value)
     except InterfaceValidationError as exc:
         raise TypeError(str(exc)) from exc
+
+
+def as_action_fast(value: object) -> Action:
+    """Return one Action without re-coercing already standardized instances."""
+
+    if isinstance(value, Action):
+        return value
+    return as_action(value)
 
 
 def maybe_as_action(value: object) -> Action | None:
@@ -36,4 +52,21 @@ def maybe_as_action(value: object) -> Action | None:
         return None
 
 
-__all__ = ["as_action", "as_frame", "maybe_as_action"]
+def maybe_as_action_fast(value: object) -> Action | None:
+    """Return one Action while fast-pathing already standardized instances."""
+
+    if value is None:
+        return None
+    if isinstance(value, Action):
+        return value
+    return maybe_as_action(value)
+
+
+__all__ = [
+    "as_action",
+    "as_action_fast",
+    "as_frame",
+    "as_frame_fast",
+    "maybe_as_action",
+    "maybe_as_action_fast",
+]

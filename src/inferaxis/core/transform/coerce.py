@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-import time
 from typing import Any
 
-import numpy as np
-
-from ..arraylike import to_numpy_array
 from ..errors import InterfaceValidationError
 from ..schema import (
     Action,
@@ -53,28 +49,6 @@ def _copy_sequence(value: object, field_name: str) -> list[Any]:
             f"{field_name} must be a sequence, got {type(value).__name__}."
         )
     return list(value)
-
-
-def _copy_array_mapping(
-    value: Mapping[str, Any] | None,
-    field_name: str,
-    *,
-    wrap_scalar: bool,
-) -> dict[str, np.ndarray]:
-    """Convert a mapping into ``dict[str, numpy.ndarray]``."""
-
-    mapping = _copy_string_key_mapping(value, field_name)
-    return {
-        key: to_numpy_array(
-            item,
-            field_name=f"{field_name}[{key!r}]",
-            wrap_scalar=wrap_scalar,
-            numeric_only=True,
-            allow_bool=True,
-            copy=True,
-        )
-        for key, item in mapping.items()
-    }
 
 
 def _coerce_action_commands(
@@ -126,44 +100,18 @@ def _coerce_action_commands(
         )
     return commands
 
-
-def _coerce_command_value(value: object, field_name: str) -> np.ndarray:
-    """Convert one command payload into a 1D float64 ndarray."""
-
-    array = to_numpy_array(
-        value,
-        field_name=field_name,
-        wrap_scalar=True,
-        numeric_only=True,
-        allow_bool=False,
-        copy=True,
-        dtype=np.float64,
-    )
-    if array.ndim != 1:
-        raise InterfaceValidationError(
-            f"{field_name} must be a 1D numeric vector, got ndim={array.ndim}."
-        )
-    return array
-
-
 def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
     """Normalize a ``Frame`` or mapping into a standard :class:`Frame`.
 
     For frame-like mappings, ``images`` and ``state`` are the only required
-    payload fields. inferaxis ignores user-provided ``timestamp_ns`` and
-    ``sequence_id`` at the mapping boundary and manages them internally.
+    payload fields. inferaxis avoids defensive array copies; callers that need
+    ownership isolation should construct ``Frame(..., copy=True)`` explicitly.
+    inferaxis ignores user-provided ``timestamp_ns`` and ``sequence_id`` at the
+    mapping boundary and manages them internally.
     """
 
     if isinstance(value, Frame):
-        copied = Frame(
-            images={key: item.copy() for key, item in value.images.items()},
-            state={key: item.copy() for key, item in value.state.items()},
-            task=dict(value.task),
-            meta=dict(value.meta),
-        )
-        copied.timestamp_ns = value.timestamp_ns
-        copied.sequence_id = value.sequence_id
-        return copied
+        return value
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
             f"frame must be a Frame or mapping, got {type(value).__name__}."
@@ -177,8 +125,8 @@ def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
             f"frame mapping is missing required field {exc.args[0]!r}."
         ) from exc
     return Frame(
-        images=_copy_array_mapping(images, "frame.images", wrap_scalar=False),
-        state=_copy_array_mapping(state, "frame.state", wrap_scalar=True),
+        images=_copy_string_key_mapping(images, "frame.images"),
+        state=_copy_string_key_mapping(state, "frame.state"),
         task=_copy_string_key_mapping(value.get("task"), "frame.task"),
         meta=_copy_string_key_mapping(value.get("meta"), "frame.meta"),
     )
@@ -189,15 +137,11 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
     A standalone command payload does not carry its owning target. The target
     belongs to ``Action.commands`` when the command is part of one action.
+    Existing command objects and compliant arrays are reused.
     """
 
     if isinstance(value, Command):
-        return Command(
-            command=value.command,
-            value=value.value.copy(),
-            ref_frame=value.ref_frame,
-            meta=dict(value.meta),
-        )
+        return value
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
             f"command must be a Command or mapping, got {type(value).__name__}."
@@ -218,7 +162,7 @@ def coerce_command(value: Command | Mapping[str, Any]) -> Command:
 
     return Command(
         command=command,
-        value=_coerce_command_value(command_value, "command.value"),
+        value=command_value,
         ref_frame=value.get("ref_frame"),
         meta=_copy_string_key_mapping(value.get("meta"), "command.meta"),
     )
@@ -244,12 +188,11 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
                 "Action.commands must be a mapping from target to Command, got "
                 f"{type(value.commands).__name__}."
             )
-        return Action(
-            commands={
-                target: coerce_command(command)
-                for target, command in value.commands.items()
-            },
-            meta=dict(value.meta),
+        if all(isinstance(command, Command) for command in value.commands.values()):
+            return value
+        return Action.from_commands(
+            value.commands,
+            meta=value.meta,
         )
     if not isinstance(value, Mapping):
         raise InterfaceValidationError(
@@ -257,9 +200,10 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
         )
 
     if "commands" in value:
-        return Action(
-            commands=_coerce_action_commands(value["commands"], "action.commands"),
+        return Action.from_commands(
+            _coerce_action_commands(value["commands"], "action.commands"),
             meta=_copy_string_key_mapping(value.get("meta"), "action.meta"),
+            trusted=True,
         )
 
     if "meta" in value:
@@ -268,9 +212,10 @@ def coerce_action(value: Action | Mapping[str, Any]) -> Action:
             "{'commands': ..., 'meta': ...}."
         )
 
-    return Action(
-        commands=_coerce_action_commands(value, "action"),
+    return Action.from_commands(
+        _coerce_action_commands(value, "action"),
         meta={},
+        trusted=True,
     )
 
 

@@ -383,6 +383,39 @@ class InferenceRuntimeTests(unittest.TestCase):
             infra.recommend_inference_mode,
         )
 
+    def test_async_runtime_profile_resolves_default_output_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
+            "pathlib.Path.cwd",
+            return_value=Path(tmpdir),
+        ):
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+            )
+
+            assert runtime.profile_output_dir is not None
+            self.assertEqual(runtime.profile_output_dir.parent.name, "profiles")
+            self.assertTrue(
+                runtime.profile_output_dir.name.startswith("inference-runtime-")
+            )
+            runtime.close()
+
+    def test_runtime_profile_requires_async_mode(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                profile=True,
+            )
+
+        self.assertIn("mode=ASYNC", str(ctx.exception))
+
+    def test_runtime_rejects_invalid_profile_output_dir(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile_output_dir=object(),  # type: ignore[arg-type]
+            )
+
     def test_runtime_accepts_interpolation_steps(self) -> None:
         runtime = infra.InferenceRuntime(
             mode=infra.InferenceMode.SYNC,
@@ -2785,6 +2818,204 @@ class InferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(arm_value(third.action), 3.0)
         self.assertEqual(arm_value(fourth.raw_action), 5.0)
         self.assertEqual(arm_value(fourth.action), 5.0)
+
+    def test_async_runtime_profile_writes_live_request_report(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                steps_before_request=2,
+            )
+
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            runtime.close()
+
+            json_path = Path(tmpdir) / "runtime_profile.json"
+            html_path = Path(tmpdir) / "runtime_profile.html"
+            self.assertTrue(json_path.exists())
+            self.assertTrue(html_path.exists())
+            self.assertFalse((Path(tmpdir) / "runtime_profile.svg").exists())
+
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["summary"]["total_requests"], 1)
+            self.assertEqual(payload["summary"]["accepted_requests"], 1)
+            self.assertEqual(payload["summary"]["failed_requests"], 0)
+            self.assertEqual(payload["config"]["profile_output_dir"], tmpdir)
+
+            request = payload["requests"][0]
+            self.assertEqual(request["request_index"], 0)
+            self.assertEqual(request["request_step"], 0)
+            self.assertEqual(request["returned_chunk_length"], 2)
+            self.assertEqual(request["accepted_chunk_length"], 2)
+            self.assertTrue(request["accepted"])
+            self.assertFalse(request["dropped_as_stale"])
+            self.assertIsNone(request["error"])
+
+            self.assertEqual(len(payload["action_steps"]), 2)
+            first_action_step = payload["action_steps"][0]
+            self.assertEqual(first_action_step["step_index"], 0)
+            self.assertTrue(first_action_step["plan_refreshed"])
+            self.assertEqual(first_action_step["buffer_size"], 1)
+            self.assertEqual(first_action_step["execution_buffer_size"], 0)
+            self.assertEqual(
+                first_action_step["action_commands"][0]["target"],
+                "arm",
+            )
+            self.assertEqual(
+                first_action_step["action_commands"][0]["value"],
+                [1.0] * 6,
+            )
+
+            html_text = html_path.read_text(encoding="utf-8")
+            self.assertIn("Plotly.newPlot", html_text)
+            self.assertIn("InferenceRuntime Live Profile", html_text)
+            self.assertIn("Step Trace: buffer size + action values", html_text)
+            self.assertIn("buffer_size", html_text)
+            self.assertIn("arm[0]", html_text)
+
+    def test_async_runtime_profile_closes_completed_pending_request_cleanly(
+        self,
+    ) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                control_hz=50.0,
+                steps_before_request=0,
+                warmup_requests=0,
+                profile_delay_requests=0,
+            )
+
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            scheduler = runtime._chunk_scheduler
+            self.assertIsNotNone(scheduler)
+            pending = scheduler._pending_future  # type: ignore[union-attr]
+            self.assertIsNotNone(pending)
+            deadline_s = time.monotonic() + 1.0
+            while not pending.done():  # type: ignore[union-attr]
+                if time.monotonic() >= deadline_s:
+                    self.fail("pending profile request did not finish in time")
+                time.sleep(0.001)
+
+            runtime.close()
+
+            payload = json.loads(
+                (Path(tmpdir) / "runtime_profile.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(payload["summary"]["total_requests"], 2)
+            self.assertEqual(payload["summary"]["accepted_requests"], 1)
+            self.assertEqual(payload["summary"]["failed_requests"], 0)
+
+            pending_request = payload["requests"][1]
+            self.assertFalse(pending_request["accepted"])
+            self.assertIsNone(pending_request["error"])
+            self.assertEqual(pending_request["returned_chunk_length"], 2)
+            self.assertEqual(pending_request["accepted_chunk_length"], 0)
+            self.assertIn(
+                "unused",
+                (Path(tmpdir) / "runtime_profile.html").read_text(encoding="utf-8"),
+            )
+
+    def test_async_runtime_profile_tracks_startup_probe_requests_without_errors(
+        self,
+    ) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                control_hz=50.0,
+                warmup_requests=1,
+                profile_delay_requests=1,
+                steps_before_request=2,
+            )
+
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            runtime.close()
+
+            payload = json.loads(
+                (Path(tmpdir) / "runtime_profile.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(payload["summary"]["total_requests"], 2)
+            self.assertEqual(payload["summary"]["accepted_requests"], 1)
+            self.assertEqual(payload["summary"]["failed_requests"], 0)
+            self.assertFalse(payload["requests"][0]["accepted"])
+            self.assertIsNone(payload["requests"][0]["error"])
+            self.assertTrue(payload["requests"][1]["accepted"])
+
+    def test_async_runtime_profile_records_request_errors(self) -> None:
+        robot = RuntimeRobot()
+
+        def failing_policy(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                steps_before_request=0,
+            )
+
+            with self.assertRaises(infra.InterfaceValidationError) as ctx:
+                infra.run_step(
+                    observe_fn=robot.get_obs,
+                    act_fn=robot.send_action,
+                    act_src_fn=failing_policy,
+                    runtime=runtime,
+                )
+
+            self.assertIn("RuntimeError: boom", str(ctx.exception))
+            runtime.close()
+
+            payload = json.loads(
+                (Path(tmpdir) / "runtime_profile.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(payload["summary"]["failed_requests"], 1)
+            self.assertEqual(payload["summary"]["accepted_requests"], 0)
+            self.assertIn("RuntimeError: boom", payload["requests"][0]["error"])
 
     def test_profile_sync_inference_uses_requested_stable_sample_window(self) -> None:
         robot = RuntimeRobot()

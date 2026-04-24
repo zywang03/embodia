@@ -35,6 +35,7 @@ class ChunkScheduler:
     enable_rtc: bool = False
     latency_steps_offset: int = 0
     startup_validation_only: bool = True
+    live_profile: object | None = None
     clock: Callable[[], float] = time.perf_counter
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
     _global_step: int = field(default=0, init=False, repr=False)
@@ -107,6 +108,7 @@ class ChunkScheduler:
     def close(self) -> None:
         """Shut down background request execution."""
 
+        self._record_completed_pending_profile_request()
         self.reset()
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
@@ -145,7 +147,6 @@ class ChunkScheduler:
     _materialize_command = actions._materialize_command
     _commands_share_layout = actions._commands_share_layout
     _commands_share_target_layout = actions._commands_share_target_layout
-    _actions_match = actions._actions_match
     _blend_overlap_action = actions._blend_overlap_action
     _overlap_new_weight = actions._overlap_new_weight
     _interpolate_action = actions._interpolate_action
@@ -177,6 +178,9 @@ class ChunkScheduler:
     _accept_pending_chunk = execution._accept_pending_chunk
     _accept_ready_pending_chunk = execution._accept_ready_pending_chunk
     _accept_blocking_pending_chunk = execution._accept_blocking_pending_chunk
+    _record_completed_pending_profile_request = (
+        execution._record_completed_pending_profile_request
+    )
     _request_until_execution_buffer_ready = execution._request_until_execution_buffer_ready
     _ensure_executable_actions = execution._ensure_executable_actions
     _maybe_launch_next_request = execution._maybe_launch_next_request

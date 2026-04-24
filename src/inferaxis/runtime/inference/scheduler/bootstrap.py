@@ -123,6 +123,10 @@ def _bootstrap_async_latency(
         if request_index >= self.warmup_requests:
             profiled_steps.append(observed_steps)
         reusable_completed = completed
+        if request_index < total_requests - 1 and self.live_profile is not None:
+            self.live_profile.record_completed_without_accept(  # type: ignore[attr-defined]
+                request_index=completed.request_index,
+            )
 
     if last_rtc_bootstrap_duration_s is not None:
         self._confirm_slow_rtc_bootstrap_request(

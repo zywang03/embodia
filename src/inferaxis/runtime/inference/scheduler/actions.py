@@ -88,20 +88,6 @@ def _commands_share_target_layout(
     return True
 
 
-def _actions_match(self, left: Action, right: Action) -> bool:
-    """Return whether two actions are structurally identical."""
-
-    if left.meta != right.meta:
-        return False
-    if not self._commands_share_layout(left, right):
-        return False
-    for target, left_command in left.commands.items():
-        right_command = right.commands[target]
-        if not np.array_equal(left_command.value, right_command.value):
-            return False
-    return True
-
-
 def _blend_overlap_action(
     self,
     old_action: Action,

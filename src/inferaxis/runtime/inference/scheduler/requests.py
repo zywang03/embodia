@@ -38,6 +38,7 @@ def _build_request_job(
     """Build one request together with its launch-time buffer snapshot."""
 
     request_step = self._global_step
+    request_time_s = float(self.clock())
     buffer_actions = self._buffer
     buffer_length = len(buffer_actions)
     launch_buffer = list(buffer_actions) if self.use_overlap_blend and buffer_length else []
@@ -54,10 +55,18 @@ def _build_request_job(
             )
     else:
         latency_steps = 0
+    request_index = 0
+    if self.live_profile is not None:
+        request_index = self.live_profile.record_launch(  # type: ignore[attr-defined]
+            request_step=request_step,
+            launch_control_step=self._control_step,
+            launch_time_s=request_time_s,
+            latency_hint_raw_steps=latency_steps,
+        )
     return _RequestJob(
         request=ChunkRequest(
             request_step=request_step,
-            request_time_s=float(self.clock()),
+            request_time_s=request_time_s,
             active_chunk_length=buffer_length,
             remaining_steps=buffer_length,
             latency_steps=latency_steps,
@@ -68,6 +77,7 @@ def _build_request_job(
             ),
         ),
         launch_buffer=launch_buffer,
+        request_index=request_index,
         launch_control_step=self._control_step,
     )
 
@@ -83,34 +93,69 @@ def _execute_request(
         raise InterfaceValidationError("ChunkScheduler needs action_source=....")
 
     request = job.request
+    profiler = self.live_profile
+    reply_time_s: float | None = None
     try:
         raw_plan = self.action_source(frame, request)
+        if profiler is not None:
+            reply_time_s = float(self.clock())
     except Exception as exc:
+        if profiler is not None:
+            profiler.record_error(  # type: ignore[attr-defined]
+                request_index=job.request_index,
+                error=f"act_src_fn(frame, request) raised {type(exc).__name__}: {exc}",
+                reply_time_s=reply_time_s,
+                prepared_time_s=None,
+                returned_chunk_length=None,
+            )
         raise InterfaceValidationError(
             f"act_src_fn(frame, request) raised {type(exc).__name__}: {exc}"
         ) from exc
 
-    plan = self._normalize_plan(raw_plan)
-    self._validate_chunk_length(len(plan))
-    if self.use_overlap_blend and job.launch_buffer:
-        overlap_count = min(len(job.launch_buffer), len(plan))
-        fused = [
-            self._blend_overlap_action(
-                job.launch_buffer[index],
-                plan[index],
-                overlap_index=index,
-                overlap_count=overlap_count,
+    try:
+        plan = self._normalize_plan(raw_plan)
+        self._validate_chunk_length(len(plan))
+        if self.use_overlap_blend and job.launch_buffer:
+            overlap_count = min(len(job.launch_buffer), len(plan))
+            fused = [
+                self._blend_overlap_action(
+                    job.launch_buffer[index],
+                    plan[index],
+                    overlap_index=index,
+                    overlap_count=overlap_count,
+                )
+                for index in range(overlap_count)
+            ]
+            prepared_actions = fused + list(plan[overlap_count:])
+        else:
+            prepared_actions = list(plan)
+    except Exception as exc:
+        if profiler is not None:
+            profiler.record_error(  # type: ignore[attr-defined]
+                request_index=job.request_index,
+                error=str(exc),
+                reply_time_s=reply_time_s,
+                prepared_time_s=float(self.clock()),
+                returned_chunk_length=None,
             )
-            for index in range(overlap_count)
-        ]
-        prepared_actions = fused + list(plan[overlap_count:])
-    else:
-        prepared_actions = list(plan)
+        raise
+
+    prepared_time_s = float(self.clock()) if profiler is not None else None
+    if profiler is not None:
+        profiler.record_reply(  # type: ignore[attr-defined]
+            request_index=job.request_index,
+            reply_time_s=reply_time_s,
+            prepared_time_s=prepared_time_s,
+            returned_chunk_length=len(plan),
+        )
 
     return _CompletedChunk(
         request=request,
         prepared_actions=prepared_actions,
         source_plan_length=len(plan),
+        request_index=job.request_index,
+        reply_time_s=reply_time_s,
+        prepared_time_s=prepared_time_s,
         launch_control_step=job.launch_control_step,
     )
 

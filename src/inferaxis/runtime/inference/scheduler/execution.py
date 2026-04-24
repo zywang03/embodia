@@ -24,9 +24,31 @@ def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
         0,
     )
     self._update_latency_estimate(waited_control_steps)
+    accepted_length = max(len(completed.prepared_actions) - stale_steps, 0)
+    profiler = self.live_profile
 
     if stale_steps >= len(completed.prepared_actions):
+        if profiler is not None:
+            profiler.record_accept(  # type: ignore[attr-defined]
+                request_index=completed.request_index,
+                accepted_time_s=None,
+                waited_control_steps=waited_control_steps,
+                stale_raw_steps=stale_steps,
+                accepted_chunk_length=0,
+                dropped_as_stale=True,
+            )
         return False
+
+    accepted_time_s = float(self.clock()) if profiler is not None else None
+    if profiler is not None:
+        profiler.record_accept(  # type: ignore[attr-defined]
+            request_index=completed.request_index,
+            accepted_time_s=accepted_time_s,
+            waited_control_steps=waited_control_steps,
+            stale_raw_steps=stale_steps,
+            accepted_chunk_length=accepted_length,
+            dropped_as_stale=False,
+        )
 
     next_buffer = deque(islice(completed.prepared_actions, stale_steps, None))
 
@@ -71,6 +93,22 @@ def _accept_blocking_pending_chunk(self) -> bool:
     return refreshed
 
 
+def _record_completed_pending_profile_request(self) -> None:
+    """Mark a completed but unaccepted pending request before profiler flush."""
+
+    profiler = self.live_profile
+    future = self._pending_future
+    if profiler is None or future is None or not future.done():
+        return
+    try:
+        completed = future.result()
+    except Exception:
+        return
+    profiler.record_completed_without_accept(  # type: ignore[attr-defined]
+        request_index=completed.request_index,
+    )
+
+
 def _request_until_execution_buffer_ready(
     self,
     frame: Frame,
@@ -93,6 +131,10 @@ def _request_until_execution_buffer_ready(
             completed=completed,
             rtc_seed_chunk=startup_rtc_seed_chunk,
         ):
+            if self.live_profile is not None:
+                self.live_profile.record_completed_without_accept(  # type: ignore[attr-defined]
+                    request_index=completed.request_index,
+                )
             startup_rtc_seed_chunk = completed.prepared_actions
             continue
         self._validate_startup_execution_window(completed)

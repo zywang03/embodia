@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import PathLike
 from typing import TYPE_CHECKING, Any
 
 from ...core.errors import InterfaceValidationError
@@ -27,6 +28,20 @@ def validate_runtime_config(
             "InferenceRuntime.mode must be InferenceMode.SYNC or "
             f"InferenceMode.ASYNC, got {runtime.mode!r}."
         ) from exc
+
+    if not isinstance(runtime.profile, bool):
+        raise InterfaceValidationError("InferenceRuntime.profile must be a bool.")
+    if runtime.profile and runtime.mode != "async":
+        raise InterfaceValidationError(
+            "InferenceRuntime(profile=True) currently requires mode=ASYNC."
+        )
+    if runtime.profile_output_dir is not None and not isinstance(
+        runtime.profile_output_dir,
+        (str, PathLike),
+    ):
+        raise InterfaceValidationError(
+            "InferenceRuntime.profile_output_dir must be a path-like value when provided."
+        )
 
     _validate_nonnegative_int(
         runtime.steps_before_request,
@@ -119,6 +134,7 @@ def build_chunk_scheduler_kwargs(
         "enable_rtc": runtime.enable_rtc,
         "latency_steps_offset": runtime.latency_steps_offset,
         "startup_validation_only": runtime.startup_validation_only,
+        "live_profile": runtime._live_profile_recorder,
     }
 
 
@@ -139,6 +155,7 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.enable_rtc = runtime.enable_rtc
     scheduler.latency_steps_offset = runtime.latency_steps_offset
     scheduler.startup_validation_only = runtime.startup_validation_only
+    scheduler.live_profile = runtime._live_profile_recorder
 
 
 def should_replace_chunk_scheduler(
@@ -187,18 +204,3 @@ def _validate_optional_positive_int(value: Any, *, field_name: str) -> None:
         raise InterfaceValidationError(
             f"{field_name} must be > 0 when provided, got {value!r}."
         )
-
-
-def _validate_nonnegative_real(value: Any, *, field_name: str) -> float:
-    """Require one real-valued setting to be non-negative."""
-
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise InterfaceValidationError(
-            f"{field_name} must be a real number >= 0 when provided."
-        )
-    validated = float(value)
-    if validated < 0.0:
-        raise InterfaceValidationError(
-            f"{field_name} must be >= 0, got {validated!r}."
-        )
-    return validated

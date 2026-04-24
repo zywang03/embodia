@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from os import PathLike
+from pathlib import Path
 
 from ...core.errors import InterfaceValidationError
 from ...core.schema import Action, Frame
@@ -20,17 +22,12 @@ from ...shared.action_source import (
     callable_key,
     resolve_runtime_owner,
 )
-from .contracts import ChunkRequest
 from .control import RealtimeController
 from .optimizers import BlendWeight
 from .scheduler import ChunkScheduler
-from .engine_config import (
-    scheduler_control_period_s,
-    validate_runtime_config,
-)
+from .engine_config import validate_runtime_config
 from .engine_scheduler import (
     bootstrap_chunk_scheduler,
-    default_request,
     ensure_chunk_scheduler,
     resolve_raw_action,
 )
@@ -48,6 +45,8 @@ class InferenceRuntime:
     """Composable runtime configuration for optimized :func:`run_step` calls."""
 
     mode: InferenceMode | str
+    profile: bool = False
+    profile_output_dir: str | PathLike[str] | None = None
     steps_before_request: int = 0
     execution_steps: int | None = None
     warmup_requests: int = 1
@@ -78,11 +77,33 @@ class InferenceRuntime:
         init=False,
         repr=False,
     )
+    _live_profile_recorder: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Validate mode-specific runtime configuration."""
 
         validate_runtime_config(self, mode_enum=InferenceMode)
+        resolved_profile_output_dir: Path | None = None
+        if self.profile:
+            from .live_profile import (
+                LiveRuntimeProfileRecorder,
+                resolve_live_profile_output_dir,
+            )
+
+            resolved_profile_output_dir = resolve_live_profile_output_dir(
+                self.profile_output_dir,
+            )
+            self._live_profile_recorder = LiveRuntimeProfileRecorder(
+                output_dir=resolved_profile_output_dir,
+            )
+        elif self.profile_output_dir is not None:
+            resolved_profile_output_dir = Path(self.profile_output_dir)
+
+        self.profile_output_dir = resolved_profile_output_dir
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
@@ -97,15 +118,13 @@ class InferenceRuntime:
     def close(self) -> None:
         """Release any background scheduler resources held by this runtime."""
 
-        if self._chunk_scheduler is not None:
-            self._chunk_scheduler.close()
-            self._chunk_scheduler = None
-        self._chunk_scheduler_key = None
-
-    def _scheduler_control_period_s(self) -> float | None:
-        """Return the control period used for async latency bootstrap."""
-
-        return scheduler_control_period_s(self)
+        try:
+            if self._chunk_scheduler is not None:
+                self._chunk_scheduler.close()
+                self._chunk_scheduler = None
+            self._chunk_scheduler_key = None
+        finally:
+            self._flush_live_profile()
 
     def _ensure_chunk_scheduler(
         self,
@@ -116,10 +135,37 @@ class InferenceRuntime:
 
         return ensure_chunk_scheduler(self, act_src_fn=act_src_fn)
 
-    def _default_request(self) -> ChunkRequest:
-        """Build one direct-call request for non-scheduled action sources."""
+    def _profile_config_snapshot(self) -> dict[str, object]:
+        """Build one JSON-safe runtime configuration snapshot for profiling."""
 
-        return default_request()
+        return {
+            "mode": str(self.mode),
+            "profile": self.profile,
+            "profile_output_dir": (
+                None
+                if self.profile_output_dir is None
+                else str(self.profile_output_dir)
+            ),
+            "steps_before_request": self.steps_before_request,
+            "execution_steps": self.execution_steps,
+            "warmup_requests": self.warmup_requests,
+            "profile_delay_requests": self.profile_delay_requests,
+            "interpolation_steps": self.interpolation_steps,
+            "ensemble_weight": self.ensemble_weight,
+            "control_hz": self.control_hz,
+            "enable_rtc": self.enable_rtc,
+            "latency_steps_offset": self.latency_steps_offset,
+            "startup_validation_only": self.startup_validation_only,
+        }
+
+    def _flush_live_profile(self) -> None:
+        """Flush the live async profiling recorder when it is enabled."""
+
+        if self._live_profile_recorder is None:
+            return
+        self._live_profile_recorder.flush(  # type: ignore[union-attr]
+            config_snapshot=self._profile_config_snapshot(),
+        )
 
     def _step_validation_enabled(self, *, source_key: object | None) -> bool:
         """Return whether the current runtime step should do full validation."""
@@ -240,7 +286,7 @@ class InferenceRuntime:
             validate=validate_step_values,
         )
 
-        raw_action, plan_refreshed, plan_length = self._resolve_raw_action(
+        raw_action, plan_refreshed, _ = self._resolve_raw_action(
             frame=normalized_frame,
             act_src_fn=act_src_fn,
             source_key=source_key,
@@ -258,6 +304,21 @@ class InferenceRuntime:
         control_wait_s = 0.0
         if pace_control and self.realtime_controller is not None:
             control_wait_s = self.realtime_controller.wait()
+
+        if self._live_profile_recorder is not None:
+            buffer_size = None
+            execution_buffer_size = None
+            if self._chunk_scheduler is not None:
+                buffer_size = len(self._chunk_scheduler._buffer)
+                execution_buffer_size = len(self._chunk_scheduler._execution_buffer)
+            self._live_profile_recorder.record_action(  # type: ignore[attr-defined]
+                raw_action=raw_action,
+                action=action,
+                plan_refreshed=plan_refreshed,
+                control_wait_s=control_wait_s,
+                buffer_size=buffer_size,
+                execution_buffer_size=execution_buffer_size,
+            )
 
         return StepResult(
             frame=normalized_frame,

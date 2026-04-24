@@ -76,7 +76,15 @@ def main() -> None:
     policy = YourPolicy()
     runtime = infra.InferenceRuntime(
         mode=infra.InferenceMode.ASYNC,
+        profile=True,
         control_hz=50.0,
+        steps_before_request=0,
+        warmup_requests=0,
+        profile_delay_requests=0,
+        interpolation_steps=0,
+        ensemble_weight=None,
+        enable_rtc=False,
+        latency_steps_offset=0,
     )
 
     for step_index in range(5):
@@ -97,7 +105,9 @@ def main() -> None:
             f"{result.control_wait_s:.4f}",
         )
 
+    runtime.close()
     print("native_robot_received:", robot.last_native_action)
+    print("runtime_profile_dir:", runtime.profile_output_dir)
     print("example 2 passed.")
 
 

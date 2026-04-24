@@ -76,12 +76,17 @@ def attach_runtime_frame_metadata(
     reset: bool = False,
     copy_arrays: bool = True,
 ) -> Frame:
-    """Return ``frame`` with inferaxis-managed timestamp and sequence metadata."""
+    """Return ``frame`` with inferaxis-managed timestamp and sequence metadata.
+
+    ``copy_arrays`` is retained for compatibility with older callers. The
+    metadata path no longer makes defensive array copies; it only chooses
+    whether to run the lightweight Frame normalization path.
+    """
 
     if copy_arrays:
         updated = Frame(
-            images={key: value.copy() for key, value in frame.images.items()},
-            state={key: value.copy() for key, value in frame.state.items()},
+            images=frame.images,
+            state=frame.state,
             task=dict(frame.task),
             meta=dict(frame.meta),
         )

@@ -53,10 +53,10 @@ def optional_array_to_numpy(
     """
 
     if isinstance(value, np.ndarray):
-        return np.array(value, copy=copy)
+        return np.array(value, copy=True) if copy else value
 
     if isinstance(value, np.generic):
-        return np.array(value, copy=copy)
+        return np.array(value, copy=True) if copy else np.asarray(value)
 
     torch_type = torch_tensor_type()
     if torch_type is None or not isinstance(value, torch_type):
@@ -78,7 +78,8 @@ def optional_array_to_numpy(
         raise InterfaceValidationError(
             f"{field_name} torch tensor does not expose numpy()."
         )
-    return np.array(to_numpy(), copy=copy)
+    array = to_numpy()
+    return np.array(array, copy=True) if copy else np.asarray(array)
 
 
 def to_numpy_array(
@@ -97,13 +98,21 @@ def to_numpy_array(
     if converted is not None:
         array = converted
     elif wrap_scalar and isinstance(value, Real) and not isinstance(value, bool):
-        array = np.array([value], copy=copy, dtype=dtype)
+        array = (
+            np.array([value], copy=True, dtype=dtype)
+            if copy
+            else np.asarray([value], dtype=dtype)
+        )
     elif isinstance(value, (str, bytes)) or isinstance(value, Mapping):
         raise InterfaceValidationError(
             f"{field_name} must be array-like, got {type(value).__name__}."
         )
     elif isinstance(value, Sequence):
-        array = np.array(value, copy=copy, dtype=dtype)
+        array = (
+            np.array(value, copy=True, dtype=dtype)
+            if copy
+            else np.asarray(value, dtype=dtype)
+        )
     else:
         raise InterfaceValidationError(
             f"{field_name} must be array-like, got {type(value).__name__}."
@@ -132,7 +141,7 @@ def to_numpy_array(
         raise InterfaceValidationError(
             f"{field_name} must not use object dtype."
         )
-    return np.array(array, copy=copy) if copy else array
+    return array
 
 
 def optional_array_to_list(value: object, *, field_name: str) -> list[Any] | None:

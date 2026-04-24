@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 import inferaxis as infra
+import numpy as np
 from inferaxis.core.schema import (
     Command,
     CommandKindSpec,
@@ -14,6 +15,7 @@ from inferaxis.core.schema import (
     register_command_kind,
     validate_command,
 )
+from inferaxis.core.transform import coerce_command
 from inferaxis.runtime.checks import check_policy
 
 from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
@@ -88,6 +90,170 @@ class InterfaceTests(unittest.TestCase):
             "gripper_position",
         )
         self.assertTrue(is_known_command_kind(command.command))
+
+    def test_frame_constructor_reuses_arrays_by_default(self) -> None:
+        image = demo_image()
+        state = np.zeros(6, dtype=np.float64)
+
+        frame = infra.Frame(
+            images={"front_rgb": image},
+            state={"arm": state},
+        )
+
+        self.assertIs(frame.images["front_rgb"], image)
+        self.assertIs(frame.state["arm"], state)
+
+    def test_frame_constructor_copies_arrays_when_requested(self) -> None:
+        image = demo_image()
+        state = np.zeros(6, dtype=np.float64)
+
+        frame = infra.Frame(
+            images={"front_rgb": image},
+            state={"arm": state},
+            copy=True,
+        )
+
+        self.assertIsNot(frame.images["front_rgb"], image)
+        self.assertIsNot(frame.state["arm"], state)
+        self.assertFalse(np.shares_memory(frame.images["front_rgb"], image))
+        self.assertFalse(np.shares_memory(frame.state["arm"], state))
+
+    def test_command_constructor_reuses_float64_1d_array_by_default(self) -> None:
+        value = np.zeros(6, dtype=np.float64)
+
+        command = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=value,
+        )
+
+        self.assertIs(command.value, value)
+
+    def test_command_constructor_copies_array_when_requested(self) -> None:
+        value = np.zeros(6, dtype=np.float64)
+
+        command = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=value,
+            copy=True,
+        )
+
+        self.assertIsNot(command.value, value)
+        self.assertFalse(np.shares_memory(command.value, value))
+
+    def test_command_constructor_converts_list_and_non_float64_arrays(self) -> None:
+        int_value = np.arange(6, dtype=np.int32)
+
+        from_list = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=[1, 2, 3],
+        )
+        from_int_array = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=int_value,
+        )
+
+        self.assertEqual(from_list.value.dtype, np.dtype(np.float64))
+        assert_array_equal(self, from_list.value, [1.0, 2.0, 3.0])
+        self.assertEqual(from_int_array.value.dtype, np.dtype(np.float64))
+        self.assertFalse(np.shares_memory(from_int_array.value, int_value))
+
+    def test_action_single_reuses_1d_array_and_preserves_reshape_behavior(self) -> None:
+        value = np.arange(6, dtype=np.float64)
+        matrix = np.arange(6, dtype=np.float64).reshape(2, 3)
+
+        action = infra.Action.single(
+            target="arm",
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=value,
+        )
+        flattened = infra.Action.single(
+            target="arm",
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=matrix,
+        )
+        scalar = infra.Action.single(
+            target="gripper",
+            command=infra.BuiltinCommandKind.GRIPPER_POSITION,
+            value=0.5,
+        )
+
+        self.assertIs(action.get_command("arm").value, value)  # type: ignore[union-attr]
+        self.assertEqual(flattened.get_command("arm").value.shape, (6,))  # type: ignore[union-attr]
+        assert_array_equal(self, flattened.get_command("arm").value, [0, 1, 2, 3, 4, 5])  # type: ignore[union-attr]
+        assert_array_equal(self, scalar.get_command("gripper").value, [0.5])  # type: ignore[union-attr]
+
+    def test_action_single_copies_array_when_requested(self) -> None:
+        value = np.arange(6, dtype=np.float64)
+
+        action = infra.Action.single(
+            target="arm",
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=value,
+            copy=True,
+        )
+
+        command = action.get_command("arm")
+        assert command is not None
+        self.assertIsNot(command.value, value)
+        self.assertFalse(np.shares_memory(command.value, value))
+
+    def test_action_from_commands_trusted_reuses_command_objects(self) -> None:
+        value = np.zeros(6, dtype=np.float64)
+        command = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=value,
+        )
+
+        commands = {"arm": command}
+        action = infra.Action.from_commands(commands, trusted=True)
+
+        self.assertIs(action.commands, commands)
+        self.assertIs(action.commands["arm"], command)
+        self.assertIs(action.commands["arm"].value, value)
+
+    def test_coerce_frame_and_command_reuse_standard_objects(self) -> None:
+        image = demo_image()
+        state = np.zeros(6, dtype=np.float64)
+        frame = infra.Frame(
+            images={"front_rgb": image},
+            state={"arm": state},
+        )
+        command_value = np.zeros(6, dtype=np.float64)
+        command = infra.Command(
+            command=infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+            value=command_value,
+        )
+
+        copied_frame = infra.coerce_frame(frame)
+        copied_command = coerce_command(command)
+
+        self.assertIs(copied_frame, frame)
+        self.assertIs(copied_frame.images["front_rgb"], image)
+        self.assertIs(copied_frame.state["arm"], state)
+        self.assertIs(copied_command, command)
+        self.assertIs(copied_command.value, command_value)
+
+    def test_coerce_frame_and_command_reuse_arrays_from_mappings(self) -> None:
+        image = demo_image()
+        state = np.zeros(6, dtype=np.float64)
+        command_value = np.zeros(6, dtype=np.float64)
+
+        frame = infra.coerce_frame(
+            {
+                "images": {"front_rgb": image},
+                "state": {"arm": state},
+            }
+        )
+        command = coerce_command(
+            {
+                "command": infra.BuiltinCommandKind.CARTESIAN_POSE_DELTA,
+                "value": command_value,
+            }
+        )
+
+        self.assertIs(frame.images["front_rgb"], image)
+        self.assertIs(frame.state["arm"], state)
+        self.assertIs(command.value, command_value)
 
     def test_register_command_kind_rejects_duplicate_name(self) -> None:
         spec = CommandKindSpec(

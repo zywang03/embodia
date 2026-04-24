@@ -7,7 +7,8 @@ robotics middleware stack.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 import time
 from typing import Any
@@ -159,6 +160,7 @@ def _coerce_numpy_mapping(
     field_name: str,
     *,
     wrap_scalar: bool,
+    copy: bool,
 ) -> dict[str, np.ndarray]:
     """Normalize one string-keyed mapping into ndarray values."""
 
@@ -170,10 +172,37 @@ def _coerce_numpy_mapping(
             wrap_scalar=wrap_scalar,
             numeric_only=True,
             allow_bool=True,
-            copy=True,
+            copy=copy,
         )
         for key, item in mapping.items()
     }
+
+
+def _ensure_bool(value: object, field_name: str) -> bool:
+    """Validate one boolean setting."""
+
+    if not isinstance(value, bool):
+        raise InterfaceValidationError(
+            f"{field_name} must be a bool, got {type(value).__name__}."
+        )
+    return value
+
+
+def _materialize_command(
+    *,
+    command: str,
+    value: np.ndarray,
+    ref_frame: str | None,
+    meta: dict[str, Any],
+) -> Command:
+    """Build one already-normalized command without copying arrays."""
+
+    materialized = object.__new__(Command)
+    materialized.command = command
+    materialized.value = value
+    materialized.ref_frame = ref_frame
+    materialized.meta = meta
+    return materialized
 
 
 def is_custom_command_kind_name(name: str) -> bool:
@@ -219,19 +248,23 @@ class Frame:
     task: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     sequence_id: int | None = field(default=None, init=False)
+    copy: InitVar[bool] = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, copy: bool) -> None:
         """Normalize frame arrays at construction time."""
 
+        copy = _ensure_bool(copy, "frame.copy")
         self.images = _coerce_numpy_mapping(
             self.images,
             "frame.images",
             wrap_scalar=False,
+            copy=copy,
         )
         self.state = _coerce_numpy_mapping(
             self.state,
             "frame.state",
             wrap_scalar=True,
+            copy=copy,
         )
         self.task = _ensure_string_key_dict(self.task, "frame.task")
         self.meta = _ensure_string_key_dict(self.meta, "frame.meta")
@@ -249,10 +282,12 @@ class Command:
     value: np.ndarray
     ref_frame: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    copy: InitVar[bool] = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, copy: bool) -> None:
         """Normalize command vectors at construction time."""
 
+        copy = _ensure_bool(copy, "command.copy")
         self.command = _ensure_non_empty_string(self.command, "command.command")
         self.value = to_numpy_array(
             self.value,
@@ -260,7 +295,7 @@ class Command:
             wrap_scalar=True,
             numeric_only=True,
             allow_bool=False,
-            copy=True,
+            copy=copy,
             dtype=np.float64,
         )
         if self.value.ndim != 1:
@@ -287,27 +322,121 @@ class Action:
         ref_frame: str | None = None,
         command_meta: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
+        copy: bool = False,
     ) -> Action:
         """Build an action containing exactly one command."""
 
-        return cls(
-            commands={
-                target: Command(
-                    command=command,
-                    value=to_numpy_array(
-                        value,
-                        field_name="action.value",
-                        wrap_scalar=True,
-                        numeric_only=True,
-                        allow_bool=False,
-                        copy=True,
-                        dtype=np.float64,
-                    ).reshape(-1),
+        copy = _ensure_bool(copy, "action.copy")
+        normalized_command_meta = (
+            {}
+            if command_meta is None
+            else _ensure_string_key_dict(dict(command_meta), "command.meta")
+        )
+        normalized_value = to_numpy_array(
+            value,
+            field_name="action.value",
+            wrap_scalar=True,
+            numeric_only=True,
+            allow_bool=False,
+            copy=copy,
+            dtype=np.float64,
+        )
+        if normalized_value.ndim != 1:
+            normalized_value = normalized_value.reshape(-1)
+
+        return cls.from_commands(
+            {
+                target: _materialize_command(
+                    command=_ensure_non_empty_string(command, "command.command"),
+                    value=normalized_value,
                     ref_frame=ref_frame,
-                    meta={} if command_meta is None else dict(command_meta),
+                    meta=normalized_command_meta,
                 )
             },
             meta={} if meta is None else dict(meta),
+            trusted=True,
+        )
+
+    @classmethod
+    def from_commands(
+        cls,
+        commands: Mapping[str, Command | Mapping[str, Any]],
+        *,
+        meta: dict[str, Any] | None = None,
+        trusted: bool = False,
+        copy: bool = False,
+    ) -> Action:
+        """Build an action from existing command objects or command mappings."""
+
+        trusted = _ensure_bool(trusted, "action.trusted")
+        copy = _ensure_bool(copy, "action.copy")
+        action_meta = {} if meta is None else dict(meta)
+
+        if trusted:
+            if not isinstance(commands, dict):
+                raise InterfaceValidationError(
+                    "trusted action.commands must be a dict[str, Command]."
+                )
+            for target, command in commands.items():
+                _ensure_non_empty_string(target, f"action.commands[{target!r}] key")
+                if not isinstance(command, Command):
+                    raise InterfaceValidationError(
+                        "trusted action.commands values must be Command instances, "
+                        f"got {type(command).__name__} for target {target!r}."
+                    )
+            return cls(commands=commands, meta=action_meta)
+
+        if not isinstance(commands, Mapping):
+            raise InterfaceValidationError(
+                f"action.commands must be a mapping, got {type(commands).__name__}."
+            )
+
+        normalized: dict[str, Command] = {}
+        for target, item in commands.items():
+            target_name = _ensure_non_empty_string(
+                target,
+                f"action.commands[{target!r}] key",
+            )
+            if isinstance(item, Command):
+                normalized[target_name] = Command(
+                    command=item.command,
+                    value=item.value,
+                    ref_frame=item.ref_frame,
+                    meta=dict(item.meta),
+                    copy=copy,
+                )
+                continue
+            if not isinstance(item, Mapping):
+                raise InterfaceValidationError(
+                    f"action.commands[{target_name!r}] must be a Command or "
+                    f"command mapping, got {type(item).__name__}."
+                )
+            if "target" in item and item["target"] != target_name:
+                raise InterfaceValidationError(
+                    f"action.commands[{target_name!r}] target mismatch: outer "
+                    f"key is {target_name!r} but nested target is {item['target']!r}."
+                )
+            if "command" not in item:
+                raise InterfaceValidationError(
+                    f"action.commands[{target_name!r}] is missing required field "
+                    "'command'."
+                )
+            if "value" not in item:
+                raise InterfaceValidationError(
+                    f"action.commands[{target_name!r}] is missing required field "
+                    "'value'."
+                )
+            normalized[target_name] = Command(
+                command=item["command"],
+                value=item["value"],
+                ref_frame=item.get("ref_frame"),
+                meta={} if item.get("meta") is None else dict(item["meta"]),
+                copy=copy,
+            )
+
+        return cls(
+            commands=normalized,
+            meta=action_meta,
         )
 
     def get_command(self, target: str) -> Command | None:

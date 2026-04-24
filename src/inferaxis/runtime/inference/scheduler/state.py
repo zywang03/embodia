@@ -15,6 +15,9 @@ class _CompletedChunk:
     request: ChunkRequest
     prepared_actions: list[Action]
     source_plan_length: int
+    request_index: int = 0
+    reply_time_s: float | None = None
+    prepared_time_s: float | None = None
     launch_control_step: int = 0
 
 
@@ -24,6 +27,7 @@ class _RequestJob:
 
     request: ChunkRequest
     launch_buffer: list[Action]
+    request_index: int = 0
     launch_control_step: int = 0
 
 

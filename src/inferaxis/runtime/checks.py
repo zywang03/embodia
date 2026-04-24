@@ -28,7 +28,6 @@ from ..core.schema import (
     validate_robot_spec,
 )
 from ..core.transform import coerce_policy_spec, coerce_robot_spec
-from ..shared.coerce import as_action as _as_action
 from ..shared.coerce import as_frame as _as_frame
 from ..shared.sequence import attach_runtime_frame_metadata
 

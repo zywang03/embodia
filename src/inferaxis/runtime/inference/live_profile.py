@@ -13,6 +13,7 @@ from .profiling.models import (
     RuntimeInferenceProfile,
     RuntimeProfileActionCommand,
     RuntimeProfileActionStep,
+    RuntimeProfileChunkAction,
     RuntimeProfileRequest,
 )
 
@@ -103,6 +104,8 @@ class LiveRuntimeProfileRecorder:
         self._records: list[_LiveRuntimeRequestState] = []
         self._record_by_index: dict[int, _LiveRuntimeRequestState] = {}
         self._action_steps: list[RuntimeProfileActionStep] = []
+        self._chunk_actions: list[RuntimeProfileChunkAction] = []
+        self._recorded_chunk_requests: set[int] = set()
         self._flushed = False
 
     def _commands_from_action(
@@ -192,7 +195,13 @@ class LiveRuntimeProfileRecorder:
         record.dropped_as_stale = dropped_as_stale
         record.closed = True
 
-    def record_completed_without_accept(self, *, request_index: int) -> None:
+    def record_completed_without_accept(
+        self,
+        *,
+        request_index: int,
+        request_step: int | None = None,
+        actions: list[Action] | None = None,
+    ) -> None:
         """Close one request that finished successfully but was not accepted."""
 
         if self._flushed:
@@ -202,6 +211,15 @@ class LiveRuntimeProfileRecorder:
             return
         record.accepted_chunk_length = 0
         record.closed = True
+        if request_step is not None and actions is not None:
+            self.record_chunk_actions(
+                request_index=request_index,
+                request_step=request_step,
+                actions=actions,
+                stale_steps=0,
+                accepted_length=0,
+                status="unused",
+            )
 
     def record_error(
         self,
@@ -252,6 +270,41 @@ class LiveRuntimeProfileRecorder:
             )
         )
 
+    def record_chunk_actions(
+        self,
+        *,
+        request_index: int,
+        request_step: int,
+        actions: list[Action],
+        stale_steps: int,
+        accepted_length: int,
+        status: str = "integrated",
+    ) -> None:
+        """Record returned chunk actions with accepted/drop annotations."""
+
+        if self._flushed or request_index in self._recorded_chunk_requests:
+            return
+        self._recorded_chunk_requests.add(request_index)
+        accepted_start = max(stale_steps, 0)
+        accepted_end = accepted_start + max(accepted_length, 0)
+        for action_index, action in enumerate(actions):
+            action_status = status
+            if status == "integrated":
+                if accepted_start <= action_index < accepted_end:
+                    action_status = "accepted"
+                else:
+                    action_status = "dropped"
+            self._chunk_actions.append(
+                RuntimeProfileChunkAction(
+                    request_index=request_index,
+                    request_step=request_step,
+                    action_index=action_index,
+                    step_index=request_step + action_index,
+                    status=action_status,
+                    commands=self._commands_from_action(action),
+                )
+            )
+
     def flush(self, *, config_snapshot: dict[str, object]) -> None:
         """Write one JSON report plus interactive HTML visualization exactly once."""
 
@@ -270,6 +323,7 @@ class LiveRuntimeProfileRecorder:
             config=dict(config_snapshot),
             requests=[record.to_profile_request() for record in self._records],
             action_steps=list(self._action_steps),
+            chunk_actions=list(self._chunk_actions),
         )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         profile.write_json(self.output_dir / "runtime_profile.json")

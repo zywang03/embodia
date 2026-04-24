@@ -29,6 +29,13 @@ def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
 
     if stale_steps >= len(completed.prepared_actions):
         if profiler is not None:
+            profiler.record_chunk_actions(  # type: ignore[attr-defined]
+                request_index=completed.request_index,
+                request_step=completed.request.request_step,
+                actions=completed.prepared_actions,
+                stale_steps=stale_steps,
+                accepted_length=0,
+            )
             profiler.record_accept(  # type: ignore[attr-defined]
                 request_index=completed.request_index,
                 accepted_time_s=None,
@@ -41,6 +48,13 @@ def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
 
     accepted_time_s = float(self.clock()) if profiler is not None else None
     if profiler is not None:
+        profiler.record_chunk_actions(  # type: ignore[attr-defined]
+            request_index=completed.request_index,
+            request_step=completed.request.request_step,
+            actions=completed.prepared_actions,
+            stale_steps=stale_steps,
+            accepted_length=accepted_length,
+        )
         profiler.record_accept(  # type: ignore[attr-defined]
             request_index=completed.request_index,
             accepted_time_s=accepted_time_s,
@@ -106,6 +120,8 @@ def _record_completed_pending_profile_request(self) -> None:
         return
     profiler.record_completed_without_accept(  # type: ignore[attr-defined]
         request_index=completed.request_index,
+        request_step=completed.request.request_step,
+        actions=completed.prepared_actions,
     )
 
 
@@ -134,6 +150,8 @@ def _request_until_execution_buffer_ready(
             if self.live_profile is not None:
                 self.live_profile.record_completed_without_accept(  # type: ignore[attr-defined]
                     request_index=completed.request_index,
+                    request_step=completed.request.request_step,
+                    actions=completed.prepared_actions,
                 )
             startup_rtc_seed_chunk = completed.prepared_actions
             continue

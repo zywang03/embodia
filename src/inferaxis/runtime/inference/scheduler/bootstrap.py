@@ -126,6 +126,8 @@ def _bootstrap_async_latency(
         if request_index < total_requests - 1 and self.live_profile is not None:
             self.live_profile.record_completed_without_accept(  # type: ignore[attr-defined]
                 request_index=completed.request_index,
+                request_step=completed.request.request_step,
+                actions=completed.prepared_actions,
             )
 
     if last_rtc_bootstrap_duration_s is not None:

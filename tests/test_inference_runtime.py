@@ -2880,13 +2880,19 @@ class InferenceRuntimeTests(unittest.TestCase):
                 first_action_step["action_commands"][0]["value"],
                 [1.0] * 6,
             )
+            self.assertEqual(len(payload["chunk_actions"]), 2)
+            self.assertEqual(payload["chunk_actions"][0]["request_index"], 0)
+            self.assertEqual(payload["chunk_actions"][0]["status"], "accepted")
+            self.assertEqual(payload["chunk_actions"][0]["commands"][0]["value"], [1.0] * 6)
+            self.assertEqual(payload["chunk_actions"][1]["status"], "accepted")
 
             html_text = html_path.read_text(encoding="utf-8")
             self.assertIn("Plotly.newPlot", html_text)
             self.assertIn("InferenceRuntime Live Profile", html_text)
-            self.assertIn("Step Trace: buffer size + action values", html_text)
+            self.assertIn("Step Trace: buffer size + chunk actions", html_text)
             self.assertIn("buffer_size", html_text)
             self.assertIn("arm[0]", html_text)
+            self.assertIn("chunk 0 accepted", html_text)
 
     def test_async_runtime_profile_closes_completed_pending_request_cleanly(
         self,
@@ -2939,6 +2945,64 @@ class InferenceRuntimeTests(unittest.TestCase):
                 "unused",
                 (Path(tmpdir) / "runtime_profile.html").read_text(encoding="utf-8"),
             )
+
+    def test_async_runtime_profile_marks_dropped_chunk_prefix_actions(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                control_hz=50.0,
+                steps_before_request=0,
+                warmup_requests=0,
+                profile_delay_requests=0,
+            )
+
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            scheduler = runtime._chunk_scheduler
+            self.assertIsNotNone(scheduler)
+            pending = scheduler._pending_future  # type: ignore[union-attr]
+            self.assertIsNotNone(pending)
+            pending.result(timeout=1.0)  # type: ignore[union-attr]
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            runtime.close()
+
+            payload = json.loads(
+                (Path(tmpdir) / "runtime_profile.json").read_text(encoding="utf-8")
+            )
+            request_one_actions = [
+                action
+                for action in payload["chunk_actions"]
+                if action["request_index"] == 1
+            ]
+            self.assertEqual(
+                [action["status"] for action in request_one_actions],
+                ["dropped", "accepted"],
+            )
+            self.assertEqual(
+                [action["step_index"] for action in request_one_actions],
+                [0, 1],
+            )
+
+            html_text = (Path(tmpdir) / "runtime_profile.html").read_text(
+                encoding="utf-8",
+            )
+            self.assertIn("chunk 1 dropped", html_text)
+            self.assertIn("chunk 1 accepted", html_text)
+            self.assertIn('"dash":"dash"', html_text)
 
     def test_async_runtime_profile_tracks_startup_probe_requests_without_errors(
         self,

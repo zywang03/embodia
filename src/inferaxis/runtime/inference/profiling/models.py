@@ -413,6 +413,33 @@ class RuntimeProfileActionStep:
 
 
 @dataclass(slots=True)
+class RuntimeProfileChunkAction:
+    """One action candidate from a returned chunk, annotated after integration."""
+
+    request_index: int
+    request_step: int
+    action_index: int
+    step_index: int
+    status: str
+    commands: list[RuntimeProfileActionCommand]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export the chunk action candidate into a JSON-safe dictionary."""
+
+        return {
+            "request_index": self.request_index,
+            "request_step": self.request_step,
+            "action_index": self.action_index,
+            "step_index": self.step_index,
+            "status": self.status,
+            "commands": [
+                command.to_dict()
+                for command in self.commands
+            ],
+        }
+
+
+@dataclass(slots=True)
 class RuntimeInferenceProfile:
     """Serializable live request-level profile captured from async runtime use."""
 
@@ -420,6 +447,7 @@ class RuntimeInferenceProfile:
     config: dict[str, Any]
     requests: list[RuntimeProfileRequest]
     action_steps: list[RuntimeProfileActionStep] = field(default_factory=list)
+    chunk_actions: list[RuntimeProfileChunkAction] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         """Return one compact request-level summary for the full session."""
@@ -477,6 +505,7 @@ class RuntimeInferenceProfile:
             "summary": self.summary(),
             "requests": [request.to_dict() for request in self.requests],
             "action_steps": [step.to_dict() for step in self.action_steps],
+            "chunk_actions": [action.to_dict() for action in self.chunk_actions],
         }
 
     def write_json(self, path: str | PathLike[str]) -> None:

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from .render_runtime_svg import (
     _runtime_action_channels,
     _runtime_chunk_action_channel_keys,
-    _runtime_profile_svg,
 )
 
 if TYPE_CHECKING:

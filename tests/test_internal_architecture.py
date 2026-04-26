@@ -65,3 +65,26 @@ class InternalArchitectureTests(unittest.TestCase):
         }
 
         self.assertEqual(set(schema_module.__all__), expected_names)
+
+    def test_profiling_render_internal_modules_reexport_helpers(self) -> None:
+        from inferaxis.runtime.inference.profiling import render as render_module
+        from inferaxis.runtime.inference.profiling import render_async_trace
+        from inferaxis.runtime.inference.profiling import render_runtime_html
+        from inferaxis.runtime.inference.profiling import render_runtime_svg
+
+        self.assertIs(
+            render_async_trace._step_plot_points,
+            render_module._step_plot_points,
+        )
+        self.assertIs(
+            render_async_trace._async_buffer_trace_svg,
+            render_module._async_buffer_trace_svg,
+        )
+        self.assertIs(
+            render_runtime_svg._runtime_profile_svg,
+            render_module._runtime_profile_svg,
+        )
+        self.assertIs(
+            render_runtime_html._runtime_profile_html,
+            render_module._runtime_profile_html,
+        )

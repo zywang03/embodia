@@ -93,6 +93,7 @@ def measure(
                 act_fn=robot.send_action,
                 act_src_fn=policy.infer,
                 runtime=runtime,
+                pace_control=False,
             )
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             if step_index >= WARMUP_STEPS:

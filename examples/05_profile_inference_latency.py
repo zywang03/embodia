@@ -174,7 +174,9 @@ def main() -> None:
         startup_ignore_inference_samples=args.startup_ignore_samples,
         stable_inference_sample_count=args.stable_sample_count,
         steps_before_request=args.steps_before_request,
-        output_path=(output_dir / "recommendation.json") if output_dir is not None else None,
+        output_path=(output_dir / "recommendation.json")
+        if output_dir is not None
+        else None,
         request_log_fn=print if args.print_requests else None,
     )
 

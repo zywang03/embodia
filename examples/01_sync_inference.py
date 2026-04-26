@@ -93,10 +93,14 @@ def main() -> None:
             runtime=runtime,
         )
         print(
-            "step:", step_index,
-            "action:", infra.action_to_dict(result.action),
-            "plan_refreshed:", result.plan_refreshed,
-            "wait:", f"{result.control_wait_s:.4f}",
+            "step:",
+            step_index,
+            "action:",
+            infra.action_to_dict(result.action),
+            "plan_refreshed:",
+            result.plan_refreshed,
+            "wait:",
+            f"{result.control_wait_s:.4f}",
         )
 
     print("native_robot_received:", robot.last_native_action)

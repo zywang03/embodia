@@ -136,8 +136,8 @@ def main() -> None:
             infra.run_step(
                 act_fn=robot.send_action,
                 frame=infra.coerce_frame(frame),
-                act_src_fn=lambda _frame, _request, recorded_action=action: infra.coerce_action(
-                    recorded_action
+                act_src_fn=lambda _frame, _request, recorded_action=action: (
+                    infra.coerce_action(recorded_action)
                 ),
             )
             replayed += 1

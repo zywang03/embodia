@@ -56,7 +56,9 @@ class YourRtcPolicy:
         execute_horizon = request.execute_horizon
         self.last_rtc_summary = {
             "has_rtc_args": request.rtc_args is not None,
-            "prev_action_chunk_len": 0 if prev_action_chunk is None else len(prev_action_chunk),
+            "prev_action_chunk_len": 0
+            if prev_action_chunk is None
+            else len(prev_action_chunk),
             "inference_delay": inference_delay,
             "execute_horizon": execute_horizon,
         }

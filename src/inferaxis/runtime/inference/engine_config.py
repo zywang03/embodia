@@ -9,6 +9,7 @@ from ...core.errors import InterfaceValidationError
 from ...shared.common import validate_positive_number
 from .control import RealtimeController
 from .optimizers import _normalize_blend_weight
+from .validation import resolve_validation_mode
 
 if TYPE_CHECKING:
     from .engine import InferenceMode, InferenceRuntime
@@ -42,6 +43,14 @@ def validate_runtime_config(
         raise InterfaceValidationError(
             "InferenceRuntime.profile_output_dir must be a path-like value when provided."
         )
+
+    resolved_validation, startup_validation_only = resolve_validation_mode(
+        validation=runtime.validation,
+        startup_validation_only=runtime.startup_validation_only,
+        field_name="InferenceRuntime.startup_validation_only",
+    )
+    runtime.validation = str(resolved_validation)
+    runtime.startup_validation_only = startup_validation_only
 
     _validate_nonnegative_int(
         runtime.steps_before_request,
@@ -89,10 +98,6 @@ def validate_runtime_config(
         raise InterfaceValidationError(
             "InferenceRuntime.latency_steps_offset must be an int."
         )
-    if not isinstance(runtime.startup_validation_only, bool):
-        raise InterfaceValidationError(
-            "InferenceRuntime.startup_validation_only must be a bool."
-        )
 
 
 def scheduler_initial_latency_steps(runtime: "InferenceRuntime") -> float:
@@ -133,6 +138,7 @@ def build_chunk_scheduler_kwargs(
         ),
         "enable_rtc": runtime.enable_rtc,
         "latency_steps_offset": runtime.latency_steps_offset,
+        "validation": runtime.validation,
         "startup_validation_only": runtime.startup_validation_only,
         "live_profile": runtime._live_profile_recorder,
     }
@@ -154,6 +160,7 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.interpolation_steps = runtime.interpolation_steps
     scheduler.enable_rtc = runtime.enable_rtc
     scheduler.latency_steps_offset = runtime.latency_steps_offset
+    scheduler.validation = runtime.validation
     scheduler.startup_validation_only = runtime.startup_validation_only
     scheduler.live_profile = runtime._live_profile_recorder
 

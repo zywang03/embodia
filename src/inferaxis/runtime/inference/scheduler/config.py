@@ -6,6 +6,7 @@ from typing import Any
 
 from ....core.errors import InterfaceValidationError
 from ..optimizers import _normalize_blend_weight
+from ..validation import resolve_validation_mode
 
 
 def _validate_configuration(self) -> None:
@@ -78,8 +79,14 @@ def _validate_configuration(self) -> None:
         int,
     ):
         raise InterfaceValidationError("latency_steps_offset must be an int.")
-    if not isinstance(self.startup_validation_only, bool):
-        raise InterfaceValidationError("startup_validation_only must be a bool.")
+
+    resolved_validation, startup_validation_only = resolve_validation_mode(
+        validation=self.validation,
+        startup_validation_only=self.startup_validation_only,
+        field_name="startup_validation_only",
+    )
+    self.validation = str(resolved_validation)
+    self.startup_validation_only = startup_validation_only
 
     self.overlap_current_weight = _normalize_blend_weight(
         self.overlap_current_weight,

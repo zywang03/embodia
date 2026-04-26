@@ -11,6 +11,7 @@ import time
 from ....core.schema import Action
 from ..optimizers import BlendWeight
 from ..protocols import ActionSource, ActionSourceProtocol
+from ..validation import UNSET_VALIDATION, ValidationMode
 from . import actions, bootstrap, config, execution, latency, requests, rtc
 from .state import _CompletedChunk
 
@@ -34,7 +35,8 @@ class ChunkScheduler:
     overlap_current_weight: BlendWeight = 0.5
     enable_rtc: bool = False
     latency_steps_offset: int = 0
-    startup_validation_only: bool = True
+    validation: str | None = None
+    startup_validation_only: bool | object = UNSET_VALIDATION
     live_profile: object | None = None
     clock: Callable[[], float] = time.perf_counter
     _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
@@ -123,6 +125,8 @@ class ChunkScheduler:
     def runtime_validation_enabled(self) -> bool:
         """Return whether hot-path frame/action validation should run."""
 
+        if self.validation == ValidationMode.OFF:
+            return False
         if not self.startup_validation_only:
             return True
         return not self._startup_validation_complete

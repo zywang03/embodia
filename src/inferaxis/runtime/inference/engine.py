@@ -31,6 +31,7 @@ from .engine_scheduler import (
     ensure_chunk_scheduler,
     resolve_raw_action,
 )
+from .validation import UNSET_VALIDATION, ValidationMode
 
 
 class InferenceMode(StrEnum):
@@ -56,7 +57,8 @@ class InferenceRuntime:
     control_hz: float | None = None
     enable_rtc: bool = False
     latency_steps_offset: int = 0
-    startup_validation_only: bool = True
+    validation: ValidationMode | str | None = None
+    startup_validation_only: bool | object = UNSET_VALIDATION
     realtime_controller: RealtimeController | None = field(
         default=None,
         init=False,
@@ -104,6 +106,20 @@ class InferenceRuntime:
             resolved_profile_output_dir = Path(self.profile_output_dir)
 
         self.profile_output_dir = resolved_profile_output_dir
+
+    @classmethod
+    def async_realtime(cls, **kwargs: object) -> "InferenceRuntime":
+        """Build the default async realtime runtime preset."""
+
+        preset_kwargs: dict[str, object] = {
+            "mode": InferenceMode.ASYNC,
+            "validation": ValidationMode.STARTUP,
+            "profile": False,
+            "interpolation_steps": 0,
+            "ensemble_weight": None,
+        }
+        preset_kwargs.update(kwargs)
+        return cls(**preset_kwargs)
 
     def reset(self) -> None:
         """Reset source state and any attached runtime components."""
@@ -155,6 +171,7 @@ class InferenceRuntime:
             "control_hz": self.control_hz,
             "enable_rtc": self.enable_rtc,
             "latency_steps_offset": self.latency_steps_offset,
+            "validation": self.validation,
             "startup_validation_only": self.startup_validation_only,
         }
 
@@ -170,6 +187,8 @@ class InferenceRuntime:
     def _step_validation_enabled(self, *, source_key: object | None) -> bool:
         """Return whether the current runtime step should do full validation."""
 
+        if self.validation == ValidationMode.OFF:
+            return False
         if not self.startup_validation_only:
             return True
         scheduler = self._chunk_scheduler

@@ -183,6 +183,62 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertTrue(runtime.startup_validation_only)
 
+    def test_runtime_accepts_validation_strategy(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            validation="off",
+        )
+
+        self.assertEqual(runtime.validation, "off")
+        self.assertFalse(runtime.startup_validation_only)
+
+    def test_runtime_maps_startup_validation_only_to_validation_strategy(self) -> None:
+        startup_runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=True,
+        )
+        always_runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=False,
+        )
+
+        self.assertEqual(startup_runtime.validation, "startup")
+        self.assertEqual(always_runtime.validation, "always")
+
+    def test_runtime_rejects_conflicting_validation_settings(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                startup_validation_only=True,
+                validation="always",
+            )
+
+        self.assertIn("validation", str(ctx.exception))
+        self.assertIn("startup_validation_only", str(ctx.exception))
+
+    def test_runtime_rejects_unknown_validation_strategy(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                validation="sometimes",
+            )
+
+        self.assertIn("validation", str(ctx.exception))
+
+    def test_async_realtime_preset_builds_async_runtime(self) -> None:
+        runtime = infra.InferenceRuntime.async_realtime(
+            control_hz=50.0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+
+        self.assertEqual(runtime.mode, infra.InferenceMode.ASYNC)
+        self.assertEqual(runtime.validation, "startup")
+        self.assertEqual(runtime.control_hz, 50.0)
+        self.assertEqual(runtime.execution_steps, 3)
+        self.assertTrue(runtime.enable_rtc)
+        self.assertFalse(runtime.profile)
+
     def test_runtime_defaults_zeroed_async_tuning_knobs(self) -> None:
         runtime = infra.InferenceRuntime(
             mode=infra.InferenceMode.ASYNC,

@@ -118,6 +118,8 @@ class InferenceRuntime:
             "interpolation_steps": 0,
             "ensemble_weight": None,
         }
+        if "startup_validation_only" in kwargs and "validation" not in kwargs:
+            preset_kwargs.pop("validation")
         preset_kwargs.update(kwargs)
         return cls(**preset_kwargs)
 

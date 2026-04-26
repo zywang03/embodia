@@ -239,6 +239,14 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertTrue(runtime.enable_rtc)
         self.assertFalse(runtime.profile)
 
+    def test_async_realtime_preset_allows_legacy_validation_override(self) -> None:
+        runtime = infra.InferenceRuntime.async_realtime(
+            startup_validation_only=False,
+        )
+
+        self.assertEqual(runtime.validation, "always")
+        self.assertFalse(runtime.startup_validation_only)
+
     def test_runtime_defaults_zeroed_async_tuning_knobs(self) -> None:
         runtime = infra.InferenceRuntime(
             mode=infra.InferenceMode.ASYNC,

@@ -1,0 +1,1170 @@
+"""Runtime-engine tests for inferaxis inference runtime utilities."""
+
+from __future__ import annotations
+
+import unittest
+
+import inferaxis as infra
+
+from helpers import (
+    PlanningSource,
+    PlainRuntimeExecutor,
+    RecordingRuntimePolicy,
+    RtcLoggingChunkPolicy,
+    RuntimePolicy,
+    RuntimeRobot,
+    SingleActionChunkPolicy,
+    arm_action,
+    arm_value,
+    assert_array_equal,
+    demo_image,
+    make_profile_clock,
+)
+
+
+class RuntimeEngineTests(unittest.TestCase):
+    """Coverage for sync/async runtime engine flow."""
+
+    def test_runtime_accepts_scalar_ensemble_weight(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            ensemble_weight=0.5,
+        )
+
+        self.assertEqual(runtime.ensemble_weight, 0.5)
+
+    def test_runtime_accepts_weight_schedule_ensemble_weight(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            ensemble_weight=(0.2, 0.8),
+        )
+
+        self.assertEqual(runtime.ensemble_weight, (0.2, 0.8))
+
+    def test_runtime_defaults_to_no_ensemble_weight(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+        )
+
+        self.assertIsNone(runtime.ensemble_weight)
+
+    def test_inference_runtime_public_exports_remain_stable(self) -> None:
+        import inferaxis.runtime.inference as inference_module
+
+        self.assertIs(inference_module.InferenceRuntime, infra.InferenceRuntime)
+        self.assertIs(inference_module.InferenceMode, infra.InferenceMode)
+        self.assertIs(
+            inference_module.profile_sync_inference,
+            infra.profile_sync_inference,
+        )
+        self.assertIs(
+            inference_module.recommend_inference_mode,
+            infra.recommend_inference_mode,
+        )
+
+    def test_runtime_profile_requires_async_mode(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                profile=True,
+            )
+
+        self.assertIn("mode=ASYNC", str(ctx.exception))
+
+    def test_runtime_rejects_invalid_profile_output_dir(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile_output_dir=object(),  # type: ignore[arg-type]
+            )
+
+    def test_runtime_accepts_interpolation_steps(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            interpolation_steps=2,
+        )
+
+        self.assertEqual(runtime.interpolation_steps, 2)
+
+    def test_runtime_rejects_invalid_interpolation_steps(self) -> None:
+        for invalid in (-1, 1.5, True):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    interpolation_steps=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_no_longer_accepts_removed_transition_bridge_configuration(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                enable_mismatch_bridge=False,  # type: ignore[call-arg]
+            )
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                transition_bridge_steps=2,  # type: ignore[call-arg]
+            )
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                transition_bridge_mismatch_threshold=1.5,  # type: ignore[call-arg]
+            )
+
+    def test_sync_runtime_skips_overlap_scheduler_for_single_action_source(self) -> None:
+        robot = RuntimeRobot()
+        policy = SingleActionChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            ensemble_weight=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.raw_action), 1.0)
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.raw_action), 2.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(robot.last_action), 2.0)  # type: ignore[arg-type]
+
+    def test_runtime_enable_rtc_needs_no_extra_bootstrap_config(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            enable_rtc=True,
+            execution_steps=1,
+        )
+
+        self.assertTrue(runtime.enable_rtc)
+        self.assertEqual(runtime.execution_steps, 1)
+
+    def test_runtime_accepts_control_hz_and_builds_internal_controller(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            control_hz=50.0,
+        )
+
+        self.assertEqual(runtime.control_hz, 50.0)
+        self.assertIsNotNone(runtime.realtime_controller)
+        assert runtime.realtime_controller is not None
+        self.assertEqual(runtime.realtime_controller.hz, 50.0)
+
+    def test_runtime_rejects_invalid_control_hz(self) -> None:
+        for invalid in (0, -1, True, "50"):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    control_hz=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_accepts_latency_steps_offset(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            latency_steps_offset=-2,
+        )
+
+        self.assertEqual(runtime.latency_steps_offset, -2)
+
+    def test_runtime_accepts_startup_validation_only(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=True,
+        )
+
+        self.assertTrue(runtime.startup_validation_only)
+
+    def test_runtime_defaults_zeroed_async_tuning_knobs(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+        )
+
+        self.assertEqual(runtime.steps_before_request, 0)
+        self.assertEqual(runtime.latency_steps_offset, 0)
+        self.assertEqual(runtime.interpolation_steps, 0)
+        self.assertTrue(runtime.startup_validation_only)
+
+    def test_runtime_rejects_invalid_latency_steps_offset(self) -> None:
+        for invalid in (1.5, True, "2"):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    latency_steps_offset=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_rejects_invalid_startup_validation_only(self) -> None:
+        for invalid in (1, "yes", None):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.SYNC,
+                    startup_validation_only=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_no_longer_accepts_legacy_rtc_delay_offset_keyword(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.SYNC,
+                rtc_inference_delay_offset_steps=1,  # type: ignore[call-arg]
+            )
+
+    def test_async_runtime_no_longer_requires_execution_steps_without_rtc(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+        )
+
+        self.assertEqual(runtime.mode, infra.InferenceMode.ASYNC)
+        self.assertIsNone(runtime.execution_steps)
+
+    def test_async_runtime_accepts_execution_steps(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+        )
+
+        self.assertEqual(runtime.mode, infra.InferenceMode.ASYNC)
+        self.assertEqual(runtime.execution_steps, 1)
+
+    def test_runtime_rejects_invalid_execution_steps(self) -> None:
+        for invalid in (0, -1, 1.5, True):
+            with self.assertRaises(infra.InterfaceValidationError):
+                infra.InferenceRuntime(
+                    mode=infra.InferenceMode.ASYNC,
+                    steps_before_request=0,
+                    execution_steps=invalid,  # type: ignore[arg-type]
+                )
+
+    def test_runtime_allows_steps_before_request_equal_to_execution_steps_without_rtc(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=2,
+            execution_steps=2,
+        )
+
+        self.assertEqual(runtime.steps_before_request, 2)
+        self.assertEqual(runtime.execution_steps, 2)
+
+    def test_async_runtime_accepts_startup_request_count_config(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+            warmup_requests=2,
+            profile_delay_requests=4,
+        )
+
+        self.assertEqual(runtime.warmup_requests, 2)
+        self.assertEqual(runtime.profile_delay_requests, 4)
+
+    def test_runtime_no_longer_accepts_legacy_latency_steps_keyword(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                steps_before_request=0,
+                execution_steps=1,
+                latency_steps=4,  # type: ignore[call-arg]
+            )
+
+    def test_async_runtime_with_control_hz_warms_then_profiles_latency_before_execute(self) -> None:
+        class CountingRobot(RuntimeRobot):
+            def __init__(self) -> None:
+                super().__init__()
+                self.send_count = 0
+
+            def send_action(self, action: infra.Action) -> None:
+                self.send_count += 1
+                super().send_action(action)
+
+        class ConstantChunkPolicy:
+            def __init__(self) -> None:
+                self.request_count = 0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                self.request_count += 1
+                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
+
+        robot = CountingRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            warmup_requests=2,
+            profile_delay_requests=2,
+            control_hz=50.0,
+        )
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 7.0)
+        self.assertEqual(robot.send_count, 1)
+        self.assertGreaterEqual(policy.request_count, 4)
+        self.assertIsNotNone(runtime._chunk_scheduler)
+        self.assertTrue(runtime._chunk_scheduler.latency_estimate_ready())  # type: ignore[union-attr]
+        self.assertGreaterEqual(runtime._chunk_scheduler.estimated_latency_steps(), 1)  # type: ignore[union-attr]
+
+    def test_async_runtime_bootstrap_async_can_be_called_explicitly(self) -> None:
+        class CountingRobot(RuntimeRobot):
+            def __init__(self) -> None:
+                super().__init__()
+                self.send_count = 0
+
+            def send_action(self, action: infra.Action) -> None:
+                self.send_count += 1
+                super().send_action(action)
+
+        class ConstantChunkPolicy:
+            def __init__(self) -> None:
+                self.request_count = 0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                self.request_count += 1
+                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
+
+        robot = CountingRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            warmup_requests=2,
+            profile_delay_requests=2,
+            control_hz=50.0,
+        )
+
+        bootstrapped = runtime.bootstrap_async(
+            observe_fn=robot.get_obs,
+            act_src_fn=policy.infer,
+        )
+
+        self.assertTrue(bootstrapped)
+        self.assertEqual(robot.send_count, 0)
+        self.assertEqual(policy.request_count, 4)
+        self.assertIsNotNone(runtime._chunk_scheduler)
+        self.assertGreater(len(runtime._chunk_scheduler._buffer), 0)  # type: ignore[union-attr]
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 7.0)
+        self.assertEqual(robot.send_count, 1)
+
+    def test_async_runtime_bootstrap_async_enable_rtc_sends_prev_action_chunk_during_warmup(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            warmup_requests=1,
+            profile_delay_requests=2,
+            control_hz=50.0,
+            enable_rtc=True,
+        )
+
+        bootstrapped = runtime.bootstrap_async(
+            observe_fn=robot.get_obs,
+            act_src_fn=policy.infer,
+        )
+
+        self.assertTrue(bootstrapped)
+        self.assertEqual(len(policy.requests), 3)
+        self.assertIsNone(policy.requests[0].rtc_args)
+        self.assertIsNone(policy.requests[0].prev_action_chunk)
+        assert policy.requests[1].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[1].prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+        self.assertEqual(policy.requests[1].execute_horizon, 3)
+        assert policy.requests[2].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[2].prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+        self.assertEqual(policy.requests[2].execute_horizon, 3)
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 1.0)
+
+    def test_async_runtime_bootstrap_async_enable_rtc_does_not_apply_latency_offset_during_warmup(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            warmup_requests=1,
+            profile_delay_requests=2,
+            control_hz=50.0,
+            enable_rtc=True,
+            latency_steps_offset=2,
+        )
+
+        bootstrapped = runtime.bootstrap_async(
+            observe_fn=robot.get_obs,
+            act_src_fn=policy.infer,
+        )
+
+        self.assertTrue(bootstrapped)
+        self.assertEqual(len(policy.requests), 3)
+        self.assertIsNone(policy.requests[0].rtc_args)
+        self.assertEqual(policy.requests[1].latency_steps, 0)
+        self.assertEqual(policy.requests[2].latency_steps, 0)
+        self.assertEqual(policy.requests[1].inference_delay, 1)
+        self.assertEqual(policy.requests[2].inference_delay, 1)
+
+    def test_async_runtime_startup_validation_only_skips_steady_state_frame_validation(self) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            startup_validation_only=True,
+        )
+
+        first = infra.run_step(
+            frame=robot.get_obs(),
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        bad_frame = robot.get_obs()
+        bad_frame.timestamp_ns = -1
+        second = infra.run_step(
+            frame=bad_frame,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        assert runtime._chunk_scheduler is not None
+        self.assertTrue(runtime._chunk_scheduler._startup_validation_complete)
+
+    def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
+        executor = PlainRuntimeExecutor()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+
+        result = infra.run_step(
+            observe_fn=executor.get_obs,
+            act_fn=executor.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 1.0)
+        self.assertEqual(len(policy.requests), 3)
+        self.assertIsNone(policy.requests[0].rtc_args)
+        rtc_args = policy.requests[-1].rtc_args
+        self.assertIsNotNone(rtc_args)
+
+    def test_async_runtime_rejects_single_action_source(self) -> None:
+        robot = RuntimeRobot()
+        policy = SingleActionChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+            ensemble_weight=0.5,
+        )
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+
+        self.assertIn("more than one action", str(ctx.exception))
+
+    def test_sync_runtime_does_not_filter_multi_step_chunks_without_overlap(self) -> None:
+        robot = RuntimeRobot()
+        source = PlanningSource()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=2,
+            ensemble_weight=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+
+        self.assertTrue(first.plan_refreshed)
+        self.assertFalse(second.plan_refreshed)
+        self.assertEqual(arm_value(first.raw_action), 10.0)
+        self.assertEqual(arm_value(first.action), 10.0)
+        self.assertEqual(arm_value(second.raw_action), 11.0)
+        self.assertEqual(arm_value(second.action), 11.0)
+        self.assertEqual(arm_value(robot.last_action), 11.0)  # type: ignore[arg-type]
+
+    def test_async_runtime_does_not_filter_each_emitted_action(self) -> None:
+        robot = RuntimeRobot()
+        source = PlanningSource()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+            ensemble_weight=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.raw_action), 10.0)
+        self.assertEqual(arm_value(first.action), 10.0)
+        self.assertEqual(arm_value(second.raw_action), 11.0)
+        self.assertEqual(arm_value(second.action), 11.0)
+        self.assertEqual(arm_value(robot.last_action), 11.0)  # type: ignore[arg-type]
+
+    def test_sync_runtime_memoizes_single_action_source_and_rejects_later_chunks(self) -> None:
+        class InconsistentPolicy:
+            def __init__(self) -> None:
+                self.step_index = 0
+
+            def reset(self) -> None:
+                self.step_index = 0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> infra.Action | list[infra.Action]:
+                del obs, request
+                if self.step_index == 0:
+                    self.step_index += 1
+                    return infra.Action.single(
+                        target="arm",
+                        command="cartesian_pose_delta",
+                        value=[1.0] * 6,
+                    )
+                return [
+                    infra.Action.single(
+                        target="arm",
+                        command="cartesian_pose_delta",
+                        value=[2.0] * 6,
+                    ),
+                    infra.Action.single(
+                        target="arm",
+                        command="cartesian_pose_delta",
+                        value=[3.0] * 6,
+                    ),
+                ]
+
+        robot = RuntimeRobot()
+        policy = InconsistentPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertIsNone(runtime._chunk_scheduler)
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+
+        self.assertIn("previously classified as single-step", str(ctx.exception))
+
+    def test_sync_runtime_accepts_plain_local_executor(self) -> None:
+        executor = PlainRuntimeExecutor()
+        policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(mode=infra.InferenceMode.SYNC)
+
+        result = infra.run_step(
+            observe_fn=executor.get_obs,
+            act_fn=executor.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 1.0)
+        self.assertEqual(arm_value(executor.last_action), 1.0)  # type: ignore[arg-type]
+
+    def test_sync_runtime_prefers_robot_returned_action(self) -> None:
+        class ReturningRobot(RuntimeRobot):
+            def send_action(self, action: object) -> infra.Action:
+                del action
+                self.last_action = infra.Action.single(
+                    target="arm",
+                    command="cartesian_pose_delta",
+                    value=[9.0] * 6,
+                )
+                return self.last_action
+
+        robot = ReturningRobot()
+        policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(mode=infra.InferenceMode.SYNC)
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.raw_action), 1.0)
+        self.assertEqual(arm_value(result.action), 9.0)
+        self.assertEqual(arm_value(robot.last_action), 9.0)  # type: ignore[arg-type]
+
+    def test_runtime_step_keeps_public_shape_small(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            ensemble_weight=0.5,
+        )
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertFalse(hasattr(result, "timing"))
+        self.assertGreaterEqual(result.control_wait_s, 0.0)
+
+    def test_sync_runtime_can_use_overlap_with_overlap_aware_source(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=0,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(third.action), 3.0)
+
+    def test_async_runtime_can_use_internal_scheduler(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+        )
+
+        first = runtime.step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+        )
+        second = runtime.step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+        )
+        third = runtime.step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+        )
+
+        self.assertTrue(first.plan_refreshed)
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(third.action), 3.0)
+
+    def test_async_runtime_without_ensemble_weight_replaces_overlap_with_new_chunk(self) -> None:
+        class FourStepPolicy:
+            def __init__(self) -> None:
+                self.base = 1.0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                base = self.base
+                self.base += 4.0
+                return [arm_action(base + float(offset)) for offset in range(4)]
+
+        robot = RuntimeRobot()
+        policy = FourStepPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=2,
+            execution_steps=3,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(third.action), 3.0)
+        self.assertEqual(arm_value(fourth.action), 6.0)
+
+    def test_async_runtime_enable_rtc_first_request_has_no_rtc_args_and_is_discarded(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(result.action), 1.0)
+        self.assertGreaterEqual(len(policy.requests), 2)
+        self.assertIsNone(policy.requests[0].rtc_args)
+        self.assertIsNone(policy.requests[0].prev_action_chunk)
+
+    def test_async_runtime_enable_rtc_passes_full_chunk_context(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertTrue(policy.second_request_seen.wait(timeout=1.0))
+        self.assertGreaterEqual(len(policy.requests), 2)
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertIsNone(policy.requests[0].rtc_args)
+        self.assertIsNone(policy.requests[0].prev_action_chunk)
+
+        first_rtc_args = policy.requests[1].rtc_args
+        self.assertIsNotNone(first_rtc_args)
+        assert first_rtc_args is not None
+        self.assertEqual(first_rtc_args.inference_delay, 1)
+        self.assertEqual(first_rtc_args.execute_horizon, 3)
+        self.assertEqual(
+            [arm_value(action) for action in first_rtc_args.prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+        self.assertEqual(policy.requests[1].inference_delay, 1)
+        self.assertEqual(policy.requests[1].execute_horizon, 3)
+        assert policy.requests[1].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[1].prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+
+    def test_async_runtime_enable_rtc_prev_chunk_tracks_current_active_chunk(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            enable_rtc=True,
+        )
+
+        for _ in range(8):
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+
+        self.assertGreaterEqual(len(policy.requests), 5)
+
+        self.assertIsNone(policy.requests[0].prev_action_chunk)
+        assert policy.requests[1].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[1].prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+        tracked_request = policy.requests[-1]
+        assert tracked_request.prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in tracked_request.prev_action_chunk],
+            [5.0, 5.0, 5.0, 5.0],
+        )
+        self.assertEqual(tracked_request.execute_horizon, 3)
+        self.assertEqual(tracked_request.inference_delay, 1)
+
+    def test_async_runtime_interpolation_executes_smoothed_actions_but_rtc_stays_raw(self) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=3,
+            interpolation_steps=2,
+            enable_rtc=True,
+        )
+
+        emitted: list[float] = []
+        for _ in range(6):
+            result = infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+            )
+            emitted.append(arm_value(result.action))
+
+        self.assertTrue(policy.second_request_seen.wait(timeout=1.0))
+        self.assertEqual(emitted[0], 1.0)
+        self.assertAlmostEqual(emitted[1], 4.0 / 3.0)
+        self.assertAlmostEqual(emitted[2], 5.0 / 3.0)
+        self.assertEqual(emitted[3], 2.0)
+        assert policy.requests[1].prev_action_chunk is not None
+        self.assertEqual(
+            [arm_value(action) for action in policy.requests[1].prev_action_chunk],
+            [1.0, 2.0, 3.0, 3.0],
+        )
+        self.assertEqual(policy.requests[1].execute_horizon, 3)
+        self.assertEqual(policy.requests[1].inference_delay, 1)
+
+    def test_async_runtime_requires_action_source(self) -> None:
+        robot = RuntimeRobot()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+        )
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                runtime=runtime,
+            )
+
+        self.assertIn("act_src_fn", str(ctx.exception))
+
+    def test_sync_overlap_requires_action_source(self) -> None:
+        robot = RuntimeRobot()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=0,
+        )
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                runtime=runtime,
+            )
+
+        self.assertIn("act_src_fn", str(ctx.exception))
+
+    def test_sync_runtime_future_only_chunk_handoff_uses_request_step_origin(self) -> None:
+        robot = RuntimeRobot()
+        source = PlanningSource()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=0,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=source.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 10.0)
+        self.assertEqual(arm_value(second.action), 11.0)
+        self.assertEqual(arm_value(third.action), 12.0)
+        self.assertEqual(arm_value(fourth.action), 13.0)
+
+    def test_runtime_closes_old_scheduler_when_source_changes(self) -> None:
+        robot = RuntimeRobot()
+        first_policy = RuntimePolicy()
+        second_policy = RuntimePolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+            execution_steps=1,
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=first_policy.infer,
+            runtime=runtime,
+        )
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=first_policy.infer,
+            runtime=runtime,
+        )
+        first_scheduler = runtime._chunk_scheduler
+        self.assertIsNotNone(first_scheduler)
+        self.assertIsNotNone(first_scheduler._executor)  # type: ignore[union-attr]
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=second_policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertIsNot(runtime._chunk_scheduler, first_scheduler)
+        self.assertIsNone(first_scheduler._executor)  # type: ignore[union-attr]
+
+    def test_runtime_restarts_scheduler_when_source_changes_with_ensemble_weight(self) -> None:
+        robot = RuntimeRobot()
+        first_policy = PlanningSource()
+        second_policy = PlanningSource()
+        second_policy.plan_base = 100.0
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.SYNC,
+            steps_before_request=0,
+            ensemble_weight=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=first_policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=second_policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 10.0)
+        self.assertEqual(arm_value(second.raw_action), 100.0)
+        self.assertEqual(arm_value(second.action), 100.0)
+
+    def test_async_runtime_blends_chunk_handoff_overlap_with_ensemble_weight(self) -> None:
+        class FourStepPolicy:
+            def __init__(self) -> None:
+                self.base = 1.0
+
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                base = self.base
+                self.base += 4.0
+                return [
+                    infra.Action.single(
+                        target="arm",
+                        command="cartesian_pose_delta",
+                        value=[base + offset] * 6,
+                    )
+                    for offset in range(4)
+                ]
+
+        robot = RuntimeRobot()
+        policy = FourStepPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=2,
+            execution_steps=3,
+            ensemble_weight=0.5,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+        )
+
+        self.assertEqual(arm_value(first.action), 1.0)
+        self.assertEqual(arm_value(second.action), 2.0)
+        self.assertEqual(arm_value(third.action), 3.0)
+        self.assertEqual(arm_value(fourth.raw_action), 5.0)
+        self.assertEqual(arm_value(fourth.action), 5.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

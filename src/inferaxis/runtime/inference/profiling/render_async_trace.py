@@ -85,10 +85,7 @@ def _async_buffer_trace_svg(trace: "AsyncBufferTrace") -> str:
         plot_width=plot_width,
         plot_height=plot_height,
     )
-    blended_mask = [
-        step.blended_from_request_index is not None
-        for step in steps
-    ]
+    blended_mask = [step.blended_from_request_index is not None for step in steps]
 
     def x_of(step: int) -> float:
         return margin_left + (plot_width * step / x_count)
@@ -250,8 +247,8 @@ def _async_buffer_trace_svg(trace: "AsyncBufferTrace") -> str:
         "request_completed",
         (
             f'<polygon points="{legend_cursor_x + 5.0:.2f},{legend_row_y - 9} '
-            f'{legend_cursor_x + 10.0:.2f},{legend_row_y - 4} '
-            f'{legend_cursor_x + 5.0:.2f},{legend_row_y + 1} '
+            f"{legend_cursor_x + 10.0:.2f},{legend_row_y - 4} "
+            f"{legend_cursor_x + 5.0:.2f},{legend_row_y + 1} "
             f'{legend_cursor_x:.2f},{legend_row_y - 4}" fill="#f59e0b" '
             'stroke="#92400e" stroke-width="1.2" />'
         ),
@@ -393,8 +390,8 @@ def _async_buffer_trace_svg(trace: "AsyncBufferTrace") -> str:
         'font-size="12" text-anchor="middle" fill="#111827">'
         "step</text>"
         + f'<text x="18" y="{margin_top - 12}" font-size="12" fill="#111827">'
-        "buffer</text>"
-        + "</svg>"
+        "buffer</text>" + "</svg>"
     )
+
 
 __all__ = ["_async_buffer_trace_svg", "_step_plot_points"]

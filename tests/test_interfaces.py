@@ -377,7 +377,9 @@ class InterfaceTests(unittest.TestCase):
             act_src_fn=scripted,
         )
         assert_array_equal(self, result.action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
-        assert_array_equal(self, executor.last_action.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
+        assert_array_equal(
+            self, executor.last_action.get_command("arm").value, [1.0] * 6
+        )  # type: ignore[union-attr]
 
     def test_run_step_accepts_bound_policy_method(self) -> None:
         executor = DummyRobot()
@@ -420,7 +422,9 @@ class InterfaceTests(unittest.TestCase):
         )
 
         assert_array_equal(self, result.action.get_command("arm").value, [0.0] * 6)  # type: ignore[union-attr]
-        assert_array_equal(self, executor.last_action.get_command("arm").value, [0.0] * 6)  # type: ignore[union-attr]
+        assert_array_equal(
+            self, executor.last_action.get_command("arm").value, [0.0] * 6
+        )  # type: ignore[union-attr]
 
     def test_run_step_accepts_frame_without_local_execution(self) -> None:
         frame = infra.coerce_frame(
@@ -536,7 +540,9 @@ class InterfaceTests(unittest.TestCase):
             act_src_fn=scripted,
         )
         assert_array_equal(self, result.action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
-        assert_array_equal(self, executor.last_action.get_command("arm").value, [0.25] * 6)  # type: ignore[union-attr]
+        assert_array_equal(
+            self, executor.last_action.get_command("arm").value, [0.25] * 6
+        )  # type: ignore[union-attr]
 
     def test_run_step_result_can_be_exported(self) -> None:
         executor = DummyRobot()
@@ -645,7 +651,9 @@ class InterfaceTests(unittest.TestCase):
                 self.reset_calls += 1
                 return "ok"
 
-            def infer(self, obs: infra.Frame, request: infra.ChunkRequest) -> infra.Action:
+            def infer(
+                self, obs: infra.Frame, request: infra.ChunkRequest
+            ) -> infra.Action:
                 del obs, request
                 return infra.Action.single(
                     target="arm",

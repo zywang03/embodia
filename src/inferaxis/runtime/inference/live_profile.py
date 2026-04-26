@@ -118,10 +118,7 @@ class LiveRuntimeProfileRecorder:
             RuntimeProfileActionCommand(
                 target=target,
                 command=str(command.command),
-                value=[
-                    float(value)
-                    for value in command.value.reshape(-1).tolist()
-                ],
+                value=[float(value) for value in command.value.reshape(-1).tolist()],
                 ref_frame=command.ref_frame,
             )
             for target, command in action.commands.items()

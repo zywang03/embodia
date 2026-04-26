@@ -23,8 +23,7 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
         component = spec.get_component(target)
         if component is None:
             raise InterfaceValidationError(
-                f"robot {spec.name!r} does not define component "
-                f"{target!r}."
+                f"robot {spec.name!r} does not define component {target!r}."
             )
         if command.command not in component.command:
             raise InterfaceValidationError(
@@ -44,7 +43,10 @@ def ensure_action_supported_by_robot(action: Action, spec: RobotSpec) -> None:
                 f"{component.name!r} of type {component.type!r}; allowed component "
                 f"types: {command_spec.allowed_component_types!r}."
             )
-        if _kind_uses_component_dof(command_spec) and len(command.value) != component.dof:
+        if (
+            _kind_uses_component_dof(command_spec)
+            and len(command.value) != component.dof
+        ):
             raise InterfaceValidationError(
                 f"command {command.command!r} for robot component "
                 f"{component.name!r} must match component dof={component.dof}, got "

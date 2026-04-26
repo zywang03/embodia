@@ -247,8 +247,7 @@ def _runtime_combined_step_trace(
         'text-anchor="middle" fill="#111827">runtime step</text>'
     )
     fragments.append(
-        f'<text x="18" y="{chart_top - 10}" font-size="11" fill="#111827">'
-        "value</text>"
+        f'<text x="18" y="{chart_top - 10}" font-size="11" fill="#111827">value</text>'
     )
 
     return "".join(fragments), section_height
@@ -283,10 +282,7 @@ def _runtime_action_trace_section(
     body_height = max(len(visible_channels), 1) * row_height
     row_section_y = combined_y + combined_height + 28
     section_height = (
-        (row_section_y - y_start)
-        + header_height
-        + body_height
-        + footer_height
+        (row_section_y - y_start) + header_height + body_height + footer_height
     )
 
     fragments: list[str] = [
@@ -311,9 +307,7 @@ def _runtime_action_trace_section(
         f'<text x="24" y="{y_start + 46}" font-size="12" fill="#4b5563">'
         f"{escape(subtitle)}</text>"
     )
-    fragments.append(
-        combined_section
-    )
+    fragments.append(combined_section)
     fragments.append(
         f'<text x="24" y="{row_section_y + 24}" font-size="14" font-weight="700" '
         'fill="#111827">Per-Channel Detail</text>'
@@ -452,7 +446,9 @@ def _runtime_profile_svg(profile: "RuntimeInferenceProfile") -> str:
     margin_left = 280
     margin_right = 28
     chart_width = width - margin_left - margin_right
-    request_section_height = header_height + footer_height + max(len(requests), 1) * row_height
+    request_section_height = (
+        header_height + footer_height + max(len(requests), 1) * row_height
+    )
     action_section_y = request_section_height + 32
     action_section, action_section_height = _runtime_action_trace_section(
         profile,
@@ -581,10 +577,9 @@ def _runtime_profile_svg(profile: "RuntimeInferenceProfile") -> str:
         + "".join(rows)
         + f'<line x1="24" y1="{request_section_height + 16}" '
         f'x2="{width - 24}" y2="{request_section_height + 16}" '
-        'stroke="#e5e7eb" stroke-width="1" />'
-        + action_section
-        + "</svg>"
+        'stroke="#e5e7eb" stroke-width="1" />' + action_section + "</svg>"
     )
+
 
 __all__ = [
     "_runtime_action_channels",

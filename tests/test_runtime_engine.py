@@ -90,7 +90,9 @@ class RuntimeEngineTests(unittest.TestCase):
                     interpolation_steps=invalid,  # type: ignore[arg-type]
                 )
 
-    def test_runtime_no_longer_accepts_removed_transition_bridge_configuration(self) -> None:
+    def test_runtime_no_longer_accepts_removed_transition_bridge_configuration(
+        self,
+    ) -> None:
         with self.assertRaises(TypeError):
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.SYNC,
@@ -107,7 +109,9 @@ class RuntimeEngineTests(unittest.TestCase):
                 transition_bridge_mismatch_threshold=1.5,  # type: ignore[call-arg]
             )
 
-    def test_sync_runtime_skips_overlap_scheduler_for_single_action_source(self) -> None:
+    def test_sync_runtime_skips_overlap_scheduler_for_single_action_source(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = SingleActionChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -240,7 +244,9 @@ class RuntimeEngineTests(unittest.TestCase):
                     execution_steps=invalid,  # type: ignore[arg-type]
                 )
 
-    def test_runtime_allows_steps_before_request_equal_to_execution_steps_without_rtc(self) -> None:
+    def test_runtime_allows_steps_before_request_equal_to_execution_steps_without_rtc(
+        self,
+    ) -> None:
         runtime = infra.InferenceRuntime(
             mode=infra.InferenceMode.ASYNC,
             steps_before_request=2,
@@ -271,7 +277,9 @@ class RuntimeEngineTests(unittest.TestCase):
                 latency_steps=4,  # type: ignore[call-arg]
             )
 
-    def test_async_runtime_with_control_hz_warms_then_profiles_latency_before_execute(self) -> None:
+    def test_async_runtime_with_control_hz_warms_then_profiles_latency_before_execute(
+        self,
+    ) -> None:
         class CountingRobot(RuntimeRobot):
             def __init__(self) -> None:
                 super().__init__()
@@ -292,7 +300,12 @@ class RuntimeEngineTests(unittest.TestCase):
             ) -> list[infra.Action]:
                 del obs, request
                 self.request_count += 1
-                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
+                return [
+                    arm_action(7.0),
+                    arm_action(8.0),
+                    arm_action(9.0),
+                    arm_action(10.0),
+                ]
 
         robot = CountingRobot()
         policy = ConstantChunkPolicy()
@@ -340,7 +353,12 @@ class RuntimeEngineTests(unittest.TestCase):
             ) -> list[infra.Action]:
                 del obs, request
                 self.request_count += 1
-                return [arm_action(7.0), arm_action(8.0), arm_action(9.0), arm_action(10.0)]
+                return [
+                    arm_action(7.0),
+                    arm_action(8.0),
+                    arm_action(9.0),
+                    arm_action(10.0),
+                ]
 
         robot = CountingRobot()
         policy = ConstantChunkPolicy()
@@ -374,7 +392,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(result.action), 7.0)
         self.assertEqual(robot.send_count, 1)
 
-    def test_async_runtime_bootstrap_async_enable_rtc_sends_prev_action_chunk_during_warmup(self) -> None:
+    def test_async_runtime_bootstrap_async_enable_rtc_sends_prev_action_chunk_during_warmup(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = RtcLoggingChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -418,7 +438,9 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertEqual(arm_value(result.action), 1.0)
 
-    def test_async_runtime_bootstrap_async_enable_rtc_does_not_apply_latency_offset_during_warmup(self) -> None:
+    def test_async_runtime_bootstrap_async_enable_rtc_does_not_apply_latency_offset_during_warmup(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = RtcLoggingChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -445,7 +467,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(policy.requests[1].inference_delay, 1)
         self.assertEqual(policy.requests[2].inference_delay, 1)
 
-    def test_async_runtime_startup_validation_only_skips_steady_state_frame_validation(self) -> None:
+    def test_async_runtime_startup_validation_only_skips_steady_state_frame_validation(
+        self,
+    ) -> None:
         class ConstantChunkPolicy:
             def infer(
                 self,
@@ -528,7 +552,9 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertIn("more than one action", str(ctx.exception))
 
-    def test_sync_runtime_does_not_filter_multi_step_chunks_without_overlap(self) -> None:
+    def test_sync_runtime_does_not_filter_multi_step_chunks_without_overlap(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         source = PlanningSource()
         runtime = infra.InferenceRuntime(
@@ -587,7 +613,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(second.action), 11.0)
         self.assertEqual(arm_value(robot.last_action), 11.0)  # type: ignore[arg-type]
 
-    def test_sync_runtime_memoizes_single_action_source_and_rejects_later_chunks(self) -> None:
+    def test_sync_runtime_memoizes_single_action_source_and_rejects_later_chunks(
+        self,
+    ) -> None:
         class InconsistentPolicy:
             def __init__(self) -> None:
                 self.step_index = 0
@@ -767,7 +795,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(second.action), 2.0)
         self.assertEqual(arm_value(third.action), 3.0)
 
-    def test_async_runtime_without_ensemble_weight_replaces_overlap_with_new_chunk(self) -> None:
+    def test_async_runtime_without_ensemble_weight_replaces_overlap_with_new_chunk(
+        self,
+    ) -> None:
         class FourStepPolicy:
             def __init__(self) -> None:
                 self.base = 1.0
@@ -820,7 +850,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(third.action), 3.0)
         self.assertEqual(arm_value(fourth.action), 6.0)
 
-    def test_async_runtime_enable_rtc_first_request_has_no_rtc_args_and_is_discarded(self) -> None:
+    def test_async_runtime_enable_rtc_first_request_has_no_rtc_args_and_is_discarded(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = RtcLoggingChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -895,7 +927,9 @@ class RuntimeEngineTests(unittest.TestCase):
             [1.0, 2.0, 3.0, 3.0],
         )
 
-    def test_async_runtime_enable_rtc_prev_chunk_tracks_current_active_chunk(self) -> None:
+    def test_async_runtime_enable_rtc_prev_chunk_tracks_current_active_chunk(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = RtcLoggingChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -930,7 +964,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(tracked_request.execute_horizon, 3)
         self.assertEqual(tracked_request.inference_delay, 1)
 
-    def test_async_runtime_interpolation_executes_smoothed_actions_but_rtc_stays_raw(self) -> None:
+    def test_async_runtime_interpolation_executes_smoothed_actions_but_rtc_stays_raw(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = RtcLoggingChunkPolicy()
         runtime = infra.InferenceRuntime(
@@ -997,7 +1033,9 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertIn("act_src_fn", str(ctx.exception))
 
-    def test_sync_runtime_future_only_chunk_handoff_uses_request_step_origin(self) -> None:
+    def test_sync_runtime_future_only_chunk_handoff_uses_request_step_origin(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         source = PlanningSource()
         runtime = infra.InferenceRuntime(
@@ -1071,7 +1109,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertIsNot(runtime._chunk_scheduler, first_scheduler)
         self.assertIsNone(first_scheduler._executor)  # type: ignore[union-attr]
 
-    def test_runtime_restarts_scheduler_when_source_changes_with_ensemble_weight(self) -> None:
+    def test_runtime_restarts_scheduler_when_source_changes_with_ensemble_weight(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         first_policy = PlanningSource()
         second_policy = PlanningSource()
@@ -1099,7 +1139,9 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(second.raw_action), 100.0)
         self.assertEqual(arm_value(second.action), 100.0)
 
-    def test_async_runtime_blends_chunk_handoff_overlap_with_ensemble_weight(self) -> None:
+    def test_async_runtime_blends_chunk_handoff_overlap_with_ensemble_weight(
+        self,
+    ) -> None:
         class FourStepPolicy:
             def __init__(self) -> None:
                 self.base = 1.0

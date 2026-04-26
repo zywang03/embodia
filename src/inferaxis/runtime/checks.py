@@ -56,7 +56,9 @@ def _optional_method(obj: object, method_name: str) -> object | None:
     return method if callable(method) else None
 
 
-def _call_method(method: object, obj: object, method_name: str, *args: object) -> object:
+def _call_method(
+    method: object, obj: object, method_name: str, *args: object
+) -> object:
     """Call a checked method and wrap runtime errors consistently."""
 
     assert callable(method)
@@ -64,8 +66,7 @@ def _call_method(method: object, obj: object, method_name: str, *args: object) -
         return method(*args)
     except Exception as exc:
         raise InterfaceValidationError(
-            f"{_object_label(obj)} {method_name}() raised "
-            f"{type(exc).__name__}: {exc}"
+            f"{_object_label(obj)} {method_name}() raised {type(exc).__name__}: {exc}"
         ) from exc
 
 
@@ -110,9 +111,7 @@ def _pair_problems(robot_spec: RobotSpec, policy_spec: PolicySpec) -> list[str]:
     for output in policy_spec.outputs:
         component = robot_spec.get_component(output.target)
         if component is None:
-            problems.append(
-                f"robot is missing required component {output.target!r}."
-            )
+            problems.append(f"robot is missing required component {output.target!r}.")
             continue
         if output.command not in component.command:
             problems.append(

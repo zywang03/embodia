@@ -30,9 +30,12 @@ class ProfilingTests(unittest.TestCase):
     """Coverage for runtime profiling and recommendation helpers."""
 
     def test_async_runtime_profile_resolves_default_output_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, mock.patch(
-            "pathlib.Path.cwd",
-            return_value=Path(tmpdir),
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "pathlib.Path.cwd",
+                return_value=Path(tmpdir),
+            ),
         ):
             runtime = infra.InferenceRuntime(
                 mode=infra.InferenceMode.ASYNC,
@@ -50,7 +53,9 @@ class ProfilingTests(unittest.TestCase):
         import inferaxis.runtime.inference.profiling as profiling_module
 
         self.assertIs(profiling_module._ProfiledRequestSample, _ProfiledRequestSample)
-        self.assertIs(profiling_module._build_async_buffer_trace, _build_async_buffer_trace)
+        self.assertIs(
+            profiling_module._build_async_buffer_trace, _build_async_buffer_trace
+        )
 
     def test_profile_and_recommend_accept_plain_local_executor(self) -> None:
         executor = PlainRuntimeExecutor()
@@ -153,7 +158,9 @@ class ProfilingTests(unittest.TestCase):
             self.assertEqual(len(payload["chunk_actions"]), 2)
             self.assertEqual(payload["chunk_actions"][0]["request_index"], 0)
             self.assertEqual(payload["chunk_actions"][0]["status"], "accepted")
-            self.assertEqual(payload["chunk_actions"][0]["commands"][0]["value"], [1.0] * 6)
+            self.assertEqual(
+                payload["chunk_actions"][0]["commands"][0]["value"], [1.0] * 6
+            )
             self.assertEqual(payload["chunk_actions"][1]["status"], "accepted")
 
             html_text = html_path.read_text(encoding="utf-8")
@@ -374,7 +381,9 @@ class ProfilingTests(unittest.TestCase):
         self.assertAlmostEqual(profile.estimated_inference_time_s, 0.0085)
         self.assertAlmostEqual(profile.estimated_step_time_s, 0.02)
 
-    def test_profile_sync_inference_estimates_sustainable_hz_from_chunk_size(self) -> None:
+    def test_profile_sync_inference_estimates_sustainable_hz_from_chunk_size(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         source = PlanningSource()
 
@@ -494,7 +503,9 @@ class ProfilingTests(unittest.TestCase):
         self.assertFalse(recommendation.sync_expected_to_meet_target)
         self.assertIn("act_src_fn", recommendation.reason)
 
-    def test_recommend_inference_mode_treats_single_action_source_as_sync_only(self) -> None:
+    def test_recommend_inference_mode_treats_single_action_source_as_sync_only(
+        self,
+    ) -> None:
         robot = RuntimeRobot()
         policy = SingleActionChunkPolicy()
 

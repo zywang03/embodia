@@ -136,9 +136,7 @@ def _bootstrap_async_latency(
         )
 
     if profiled_steps:
-        self._latency_steps_estimate = float(
-            sum(profiled_steps) / len(profiled_steps)
-        )
+        self._latency_steps_estimate = float(sum(profiled_steps) / len(profiled_steps))
     else:
         self._latency_steps_estimate = max(self._latency_steps_estimate, 1.0)
     self._latency_observation_count = self.warmup_requests

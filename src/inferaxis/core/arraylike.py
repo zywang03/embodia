@@ -138,9 +138,7 @@ def to_numpy_array(
             )
 
     if array.dtype == np.dtype("O"):
-        raise InterfaceValidationError(
-            f"{field_name} must not use object dtype."
-        )
+        raise InterfaceValidationError(f"{field_name} must not use object dtype.")
     return array
 
 
@@ -161,10 +159,7 @@ def to_python_value(value: object) -> object:
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, Mapping):
-        return {
-            key: to_python_value(item)
-            for key, item in value.items()
-        }
+        return {key: to_python_value(item) for key, item in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [to_python_value(item) for item in value]
     return value

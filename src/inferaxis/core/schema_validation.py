@@ -98,7 +98,11 @@ def _ensure_ndarray(
         raise InterfaceValidationError(
             f"{field_name} must use a numeric dtype, got {value.dtype}."
         )
-    if finite and np.issubdtype(value.dtype, np.floating) and not np.isfinite(value).all():
+    if (
+        finite
+        and np.issubdtype(value.dtype, np.floating)
+        and not np.isfinite(value).all()
+    ):
         raise InterfaceValidationError(f"{field_name} must be finite.")
     return value
 
@@ -218,7 +222,9 @@ def validate_frame(frame: object) -> None:
             finite=False,
         )
     if frame.sequence_id is not None:
-        if isinstance(frame.sequence_id, bool) or not isinstance(frame.sequence_id, int):
+        if isinstance(frame.sequence_id, bool) or not isinstance(
+            frame.sequence_id, int
+        ):
             raise InterfaceValidationError(
                 "frame.sequence_id must be an int when provided."
             )
@@ -307,8 +313,7 @@ def validate_component_spec(spec: object) -> None:
 
     if not isinstance(spec, ComponentSpec):
         raise InterfaceValidationError(
-            "spec must be a ComponentSpec instance, got "
-            f"{type(spec).__name__}."
+            f"spec must be a ComponentSpec instance, got {type(spec).__name__}."
         )
 
     _ensure_non_empty_string(spec.name, "component_spec.name")
@@ -386,8 +391,7 @@ def validate_policy_output_spec(spec: object) -> None:
 
     if not isinstance(spec, PolicyOutputSpec):
         raise InterfaceValidationError(
-            "spec must be a PolicyOutputSpec instance, got "
-            f"{type(spec).__name__}."
+            f"spec must be a PolicyOutputSpec instance, got {type(spec).__name__}."
         )
 
     _ensure_non_empty_string(spec.target, "policy_output_spec.target")

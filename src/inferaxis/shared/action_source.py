@@ -104,8 +104,7 @@ def _first_action_and_plan_length_from_plan(
         action = as_action_fast(first)
     except TypeError as exc:
         raise InterfaceValidationError(
-            f"{caller} must return only action-like items, got "
-            f"{type(first).__name__}."
+            f"{caller} must return only action-like items, got {type(first).__name__}."
         ) from exc
     validate_action(action)
     return action, len(raw_plan)

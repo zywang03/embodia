@@ -33,12 +33,10 @@ def frame_to_dict(frame: Frame | Mapping[str, Any]) -> dict[str, Any]:
     return {
         "timestamp_ns": normalized.timestamp_ns,
         "images": {
-            key: to_python_value(value)
-            for key, value in normalized.images.items()
+            key: to_python_value(value) for key, value in normalized.images.items()
         },
         "state": {
-            key: to_python_value(value)
-            for key, value in normalized.state.items()
+            key: to_python_value(value) for key, value in normalized.state.items()
         },
         "task": to_python_value(normalized.task),
         "meta": to_python_value(normalized.meta),
@@ -154,8 +152,7 @@ def robot_spec_to_dict(spec: RobotSpec | Mapping[str, Any]) -> dict[str, Any]:
         "name": normalized.name,
         "image_keys": list(normalized.image_keys),
         "components": [
-            component_spec_to_dict(component)
-            for component in normalized.components
+            component_spec_to_dict(component) for component in normalized.components
         ],
         "meta": dict(normalized.meta),
     }
@@ -184,7 +181,9 @@ def policy_spec_to_dict(spec: PolicySpec | Mapping[str, Any]) -> dict[str, Any]:
         "required_image_keys": list(normalized.required_image_keys),
         "required_state_keys": list(normalized.required_state_keys),
         "required_task_keys": list(normalized.required_task_keys),
-        "outputs": [policy_output_spec_to_dict(output) for output in normalized.outputs],
+        "outputs": [
+            policy_output_spec_to_dict(output) for output in normalized.outputs
+        ],
         "meta": dict(normalized.meta),
     }
 

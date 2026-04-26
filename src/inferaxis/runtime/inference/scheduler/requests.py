@@ -18,13 +18,10 @@ def _steps_before_request_satisfied(self) -> bool:
         self.steps_before_request,
         int,
     ):
-        raise InterfaceValidationError(
-            "steps_before_request must be an int >= 0."
-        )
+        raise InterfaceValidationError("steps_before_request must be an int >= 0.")
     if self.steps_before_request < 0:
         raise InterfaceValidationError(
-            "steps_before_request must be >= 0, got "
-            f"{self.steps_before_request!r}."
+            f"steps_before_request must be >= 0, got {self.steps_before_request!r}."
         )
     return self._active_chunk_waited_raw_steps >= self.steps_before_request
 
@@ -41,7 +38,9 @@ def _build_request_job(
     request_time_s = float(self.clock())
     buffer_actions = self._buffer
     buffer_length = len(buffer_actions)
-    launch_buffer = list(buffer_actions) if self.use_overlap_blend and buffer_length else []
+    launch_buffer = (
+        list(buffer_actions) if self.use_overlap_blend and buffer_length else []
+    )
     if include_latency:
         control_latency_steps = self.estimated_latency_steps()
         latency_steps = self._estimated_request_latency_steps(

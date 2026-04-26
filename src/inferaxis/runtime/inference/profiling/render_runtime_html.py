@@ -58,10 +58,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         ),
     )
 
-    request_labels = [
-        f"req {request.request_index}"
-        for request in requests
-    ]
+    request_labels = [f"req {request.request_index}" for request in requests]
     request_customdata = [
         [
             request.request_step,
@@ -82,10 +79,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             go.Bar(
                 name=f"{label} ms",
                 x=request_labels,
-                y=[
-                    _seconds_to_ms(getattr(request, attr_name))
-                    for request in requests
-                ],
+                y=[_seconds_to_ms(getattr(request, attr_name)) for request in requests],
                 marker_color=color,
                 customdata=request_customdata,
                 hovertemplate=(
@@ -109,22 +103,13 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         for request in requests
     ]
     if requests:
-        statuses = [
-            _runtime_request_status(request)[0]
-            for request in requests
-        ]
-        status_colors = [
-            _runtime_request_status(request)[1]
-            for request in requests
-        ]
+        statuses = [_runtime_request_status(request)[0] for request in requests]
+        status_colors = [_runtime_request_status(request)[1] for request in requests]
         fig.add_trace(
             go.Scatter(
                 name="request status",
                 x=request_labels,
-                y=[
-                    total * 1.04 if total > 0.0 else 0.02
-                    for total in request_totals
-                ],
+                y=[total * 1.04 if total > 0.0 else 0.02 for total in request_totals],
                 mode="text",
                 text=statuses,
                 textfont={"color": status_colors, "size": 11},
@@ -135,10 +120,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             col=1,
         )
 
-    step_x = [
-        step.step_index
-        for step in action_steps
-    ]
+    step_x = [step.step_index for step in action_steps]
     buffer_y = [
         None if step.buffer_size is None else float(step.buffer_size)
         for step in action_steps
@@ -152,9 +134,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                 mode="lines+markers",
                 line={"color": "#111827", "width": 3, "dash": "dash"},
                 marker={"size": 8},
-                hovertemplate=(
-                    "step=%{x}<br>buffer_size=%{y}<extra></extra>"
-                ),
+                hovertemplate=("step=%{x}<br>buffer_size=%{y}<extra></extra>"),
             ),
             row=2,
             col=1,
@@ -186,10 +166,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
     }
     if profile.chunk_actions and chunk_channel_keys:
         request_indices = sorted(
-            {
-                action.request_index
-                for action in profile.chunk_actions
-            }
+            {action.request_index for action in profile.chunk_actions}
         )
         color_by_request = {
             request_index: palette[index % len(palette)]
@@ -208,9 +185,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             )
             for status in statuses:
                 status_actions = [
-                    action
-                    for action in request_actions
-                    if action.status == status
+                    action for action in request_actions if action.status == status
                 ]
                 for channel_index, (
                     target,
@@ -291,10 +266,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                         "width": 2,
                     },
                     marker={"size": 6},
-                    customdata=[
-                        command_name
-                        for _ in values
-                    ],
+                    customdata=[command_name for _ in values],
                     hovertemplate=(
                         "step=%{x}<br>"
                         f"{label}=%" + "{y:.6g}<br>"
@@ -369,6 +341,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             "scrollZoom": True,
         },
     )
+
 
 __all__ = [
     "_runtime_profile_html",

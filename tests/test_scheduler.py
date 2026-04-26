@@ -32,7 +32,9 @@ from helpers import (
 class SchedulerTests(unittest.TestCase):
     """Coverage for chunk scheduler blending, latency, RTC, and async flow."""
 
-    def test_chunk_scheduler_no_longer_accepts_removed_transition_bridge_configuration(self) -> None:
+    def test_chunk_scheduler_no_longer_accepts_removed_transition_bridge_configuration(
+        self,
+    ) -> None:
         with self.assertRaises(TypeError):
             ChunkScheduler(
                 enable_mismatch_bridge=False,  # type: ignore[call-arg]
@@ -60,7 +62,9 @@ class SchedulerTests(unittest.TestCase):
         assert_array_equal(self, blended.get_command("arm").value, [1.0] * 6)  # type: ignore[union-attr]
         assert_array_equal(self, blended.get_command("gripper").value, [1.0])  # type: ignore[union-attr]
 
-    def test_chunk_scheduler_weight_schedule_preserves_old_early_and_new_late(self) -> None:
+    def test_chunk_scheduler_weight_schedule_preserves_old_early_and_new_late(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             use_overlap_blend=True,
             overlap_current_weight=(0.2, 0.8),
@@ -89,7 +93,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(arm_value(middle), 5.0)
         self.assertEqual(arm_value(last), 8.0)
 
-    def test_chunk_scheduler_weight_schedule_uses_low_when_overlap_has_one_step(self) -> None:
+    def test_chunk_scheduler_weight_schedule_uses_low_when_overlap_has_one_step(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             use_overlap_blend=True,
             overlap_current_weight=(0.2, 0.8),
@@ -104,7 +110,9 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertEqual(arm_value(blended), 2.0)
 
-    def test_chunk_scheduler_keeps_new_gripper_open_close_value_during_overlap(self) -> None:
+    def test_chunk_scheduler_keeps_new_gripper_open_close_value_during_overlap(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             use_overlap_blend=True,
             overlap_current_weight=0.5,
@@ -217,7 +225,9 @@ class SchedulerTests(unittest.TestCase):
             [100.0, 101.0, 102.0],
         )
 
-    def test_chunk_scheduler_execute_request_reuses_source_plan_actions_without_blending(self) -> None:
+    def test_chunk_scheduler_execute_request_reuses_source_plan_actions_without_blending(
+        self,
+    ) -> None:
         plan = [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
 
         scheduler = ChunkScheduler(
@@ -234,7 +244,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertIs(completed.prepared_actions[1], plan[1])
         self.assertIs(completed.prepared_actions[2], plan[2])
 
-    def test_chunk_scheduler_execute_request_blends_prefix_and_reuses_suffix(self) -> None:
+    def test_chunk_scheduler_execute_request_blends_prefix_and_reuses_suffix(
+        self,
+    ) -> None:
         plan = [
             arm_action(50.0),
             arm_action(60.0),
@@ -314,7 +326,9 @@ class SchedulerTests(unittest.TestCase):
             [0.8, 0.9, 1.0],
         )
 
-    def test_chunk_scheduler_uses_step_latency_ema_for_triggering_after_three_request_warmup(self) -> None:
+    def test_chunk_scheduler_uses_step_latency_ema_for_triggering_after_three_request_warmup(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=2,
             latency_ema_beta=0.5,
@@ -335,7 +349,9 @@ class SchedulerTests(unittest.TestCase):
         scheduler._active_chunk_waited_raw_steps = 2
         self.assertTrue(scheduler._steps_before_request_satisfied())
 
-    def test_chunk_scheduler_fixed_latency_steps_override_blocks_ema_updates(self) -> None:
+    def test_chunk_scheduler_fixed_latency_steps_override_blocks_ema_updates(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=3,
             initial_latency_steps=1.0,
@@ -387,7 +403,9 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertEqual(emitted, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 
-    def test_chunk_scheduler_pop_next_action_reuses_buffer_action_without_interpolation(self) -> None:
+    def test_chunk_scheduler_pop_next_action_reuses_buffer_action_without_interpolation(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=0,
         )
@@ -472,13 +490,17 @@ class SchedulerTests(unittest.TestCase):
         while scheduler._buffer or scheduler._execution_buffer:
             emitted.append(scheduler._pop_next_action())
 
-        self.assertEqual([arm_value(action) for action in emitted], [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(
+            [arm_value(action) for action in emitted], [0.0, 1.0, 2.0, 3.0]
+        )
         self.assertEqual(
             [gripper_value(action) for action in emitted],
             [0.0, 0.0, 0.0, 1.0],
         )
 
-    def test_chunk_scheduler_interpolation_keeps_rtc_in_raw_steps_mid_segment(self) -> None:
+    def test_chunk_scheduler_interpolation_keeps_rtc_in_raw_steps_mid_segment(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             execution_steps=3,
@@ -534,7 +556,9 @@ class SchedulerTests(unittest.TestCase):
             [4.0, 7.0, 10.0, 10.0],
         )
 
-    def test_chunk_scheduler_interpolated_execution_only_refreshes_on_raw_boundary(self) -> None:
+    def test_chunk_scheduler_interpolated_execution_only_refreshes_on_raw_boundary(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,
             steps_before_request=0,
@@ -563,7 +587,9 @@ class SchedulerTests(unittest.TestCase):
         )
 
         frame = infra.Frame(images={}, state={})
-        first_action, first_refreshed = scheduler.next_action(frame, prefetch_async=True)
+        first_action, first_refreshed = scheduler.next_action(
+            frame, prefetch_async=True
+        )
         self.assertEqual(arm_value(first_action), 0.0)
         self.assertFalse(first_refreshed)
 
@@ -592,9 +618,15 @@ class SchedulerTests(unittest.TestCase):
         )
         scheduler._pending_future = future
 
-        second_action, second_refreshed = scheduler.next_action(frame, prefetch_async=True)
-        third_action, third_refreshed = scheduler.next_action(frame, prefetch_async=True)
-        fourth_action, fourth_refreshed = scheduler.next_action(frame, prefetch_async=True)
+        second_action, second_refreshed = scheduler.next_action(
+            frame, prefetch_async=True
+        )
+        third_action, third_refreshed = scheduler.next_action(
+            frame, prefetch_async=True
+        )
+        fourth_action, fourth_refreshed = scheduler.next_action(
+            frame, prefetch_async=True
+        )
 
         self.assertEqual(arm_value(second_action), 1.0)
         self.assertFalse(second_refreshed)
@@ -603,7 +635,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(arm_value(fourth_action), 100.0)
         self.assertTrue(fourth_refreshed)
 
-    def test_chunk_scheduler_enable_rtc_builds_fixed_prev_chunk_window_from_buffer_head(self) -> None:
+    def test_chunk_scheduler_enable_rtc_builds_fixed_prev_chunk_window_from_buffer_head(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             execution_steps=3,
@@ -656,7 +690,9 @@ class SchedulerTests(unittest.TestCase):
             [3.0, 4.0, 4.0, 4.0],
         )
 
-    def test_chunk_scheduler_enable_rtc_prev_chunk_reuses_live_buffer_actions(self) -> None:
+    def test_chunk_scheduler_enable_rtc_prev_chunk_reuses_live_buffer_actions(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             execution_steps=3,
@@ -722,7 +758,9 @@ class SchedulerTests(unittest.TestCase):
                     startup_validation_only=invalid,  # type: ignore[arg-type]
                 )
 
-    def test_chunk_scheduler_no_longer_accepts_legacy_rtc_delay_offset_keyword(self) -> None:
+    def test_chunk_scheduler_no_longer_accepts_legacy_rtc_delay_offset_keyword(
+        self,
+    ) -> None:
         with self.assertRaises(TypeError):
             ChunkScheduler(
                 enable_rtc=True,
@@ -765,7 +803,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(job.request.rtc_args.inference_delay, 2)
         self.assertEqual(job.request.execute_horizon, 3)
 
-    def test_chunk_scheduler_enable_rtc_clamps_negative_latency_steps_offset(self) -> None:
+    def test_chunk_scheduler_enable_rtc_clamps_negative_latency_steps_offset(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             execution_steps=3,
@@ -828,7 +868,9 @@ class SchedulerTests(unittest.TestCase):
             [7.0, 8.0],
         )
 
-    def test_chunk_scheduler_enable_rtc_does_not_change_latency_or_trigger_logic(self) -> None:
+    def test_chunk_scheduler_enable_rtc_does_not_change_latency_or_trigger_logic(
+        self,
+    ) -> None:
         def make_scheduler(enable_rtc: bool) -> ChunkScheduler:
             scheduler = ChunkScheduler(
                 steps_before_request=0,
@@ -858,14 +900,22 @@ class SchedulerTests(unittest.TestCase):
         without_rtc = make_scheduler(False)._build_request_job(include_latency=True)
         with_rtc = make_scheduler(True)._build_request_job(include_latency=True)
 
-        self.assertEqual(without_rtc.request.request_step, with_rtc.request.request_step)
-        self.assertEqual(without_rtc.request.request_time_s, with_rtc.request.request_time_s)
+        self.assertEqual(
+            without_rtc.request.request_step, with_rtc.request.request_step
+        )
+        self.assertEqual(
+            without_rtc.request.request_time_s, with_rtc.request.request_time_s
+        )
         self.assertEqual(
             without_rtc.request.active_chunk_length,
             with_rtc.request.active_chunk_length,
         )
-        self.assertEqual(without_rtc.request.remaining_steps, with_rtc.request.remaining_steps)
-        self.assertEqual(without_rtc.request.latency_steps, with_rtc.request.latency_steps)
+        self.assertEqual(
+            without_rtc.request.remaining_steps, with_rtc.request.remaining_steps
+        )
+        self.assertEqual(
+            without_rtc.request.latency_steps, with_rtc.request.latency_steps
+        )
         self.assertIsNone(without_rtc.request.prev_action_chunk)
         self.assertIsNone(without_rtc.request.inference_delay)
         self.assertIsNone(without_rtc.request.execute_horizon)
@@ -879,7 +929,9 @@ class SchedulerTests(unittest.TestCase):
         )
         self.assertIsNotNone(with_rtc.request.rtc_args)
 
-    def test_chunk_scheduler_latency_steps_offset_changes_request_hints_without_affecting_trigger_logic(self) -> None:
+    def test_chunk_scheduler_latency_steps_offset_changes_request_hints_without_affecting_trigger_logic(
+        self,
+    ) -> None:
         def make_scheduler(offset: int) -> ChunkScheduler:
             scheduler = ChunkScheduler(
                 steps_before_request=2,
@@ -911,15 +963,22 @@ class SchedulerTests(unittest.TestCase):
         shifted = make_scheduler(2)
 
         self.assertEqual(base._latency_steps_estimate, shifted._latency_steps_estimate)
-        self.assertEqual(base._remaining_control_steps(), shifted._remaining_control_steps())
-        self.assertEqual(base._steps_before_request_satisfied(), shifted._steps_before_request_satisfied())
+        self.assertEqual(
+            base._remaining_control_steps(), shifted._remaining_control_steps()
+        )
+        self.assertEqual(
+            base._steps_before_request_satisfied(),
+            shifted._steps_before_request_satisfied(),
+        )
 
         base_job = base._build_request_job(include_latency=True)
         shifted_job = shifted._build_request_job(include_latency=True)
 
         self.assertEqual(base_job.request.latency_steps, 2)
         self.assertEqual(shifted_job.request.latency_steps, 4)
-        self.assertEqual(base_job.request.execute_horizon, shifted_job.request.execute_horizon)
+        self.assertEqual(
+            base_job.request.execute_horizon, shifted_job.request.execute_horizon
+        )
         assert base_job.request.prev_action_chunk is not None
         assert shifted_job.request.prev_action_chunk is not None
         self.assertEqual(
@@ -929,7 +988,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(base_job.request.inference_delay, 2)
         self.assertEqual(shifted_job.request.inference_delay, 3)
 
-    def test_chunk_scheduler_latency_steps_offset_applies_even_when_rtc_is_disabled(self) -> None:
+    def test_chunk_scheduler_latency_steps_offset_applies_even_when_rtc_is_disabled(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             enable_rtc=False,
@@ -954,7 +1015,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertIsNone(job.request.prev_action_chunk)
         self.assertIsNone(job.request.rtc_args)
 
-    def test_chunk_scheduler_bootstrap_warns_before_continuing_after_slow_rtc_request(self) -> None:
+    def test_chunk_scheduler_bootstrap_warns_before_continuing_after_slow_rtc_request(
+        self,
+    ) -> None:
         requests: list[infra.ChunkRequest] = []
 
         def action_source(
@@ -1007,7 +1070,9 @@ class SchedulerTests(unittest.TestCase):
             )
         )
 
-    def test_chunk_scheduler_startup_validation_only_still_validates_startup_frame(self) -> None:
+    def test_chunk_scheduler_startup_validation_only_still_validates_startup_frame(
+        self,
+    ) -> None:
         def action_source(
             obs: infra.Frame,
             request: infra.ChunkRequest,
@@ -1025,7 +1090,9 @@ class SchedulerTests(unittest.TestCase):
         with self.assertRaises(infra.InterfaceValidationError):
             scheduler.next_action(bad_frame, prefetch_async=False)
 
-    def test_chunk_scheduler_startup_validation_only_skips_steady_state_plan_validation(self) -> None:
+    def test_chunk_scheduler_startup_validation_only_skips_steady_state_plan_validation(
+        self,
+    ) -> None:
         request_count = 0
 
         def action_source(
@@ -1063,7 +1130,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(scheduler._startup_validation_complete)
         self.assertTrue(math.isnan(arm_value(action)))
 
-    def test_chunk_scheduler_bootstrap_aborts_when_slow_rtc_request_is_rejected(self) -> None:
+    def test_chunk_scheduler_bootstrap_aborts_when_slow_rtc_request_is_rejected(
+        self,
+    ) -> None:
         def action_source(
             obs: infra.Frame,
             request: infra.ChunkRequest,
@@ -1105,7 +1174,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(len(scheduler._buffer), 0)
         self.assertFalse(scheduler.latency_estimate_ready())
 
-    def test_chunk_scheduler_startup_rejects_invalid_rtc_execution_window_structure(self) -> None:
+    def test_chunk_scheduler_startup_rejects_invalid_rtc_execution_window_structure(
+        self,
+    ) -> None:
         def action_source(
             obs: infra.Frame,
             request: infra.ChunkRequest,
@@ -1131,7 +1202,9 @@ class SchedulerTests(unittest.TestCase):
             str(ctx.exception),
         )
 
-    def test_chunk_scheduler_startup_warns_when_delay_exceeds_execution_steps(self) -> None:
+    def test_chunk_scheduler_startup_warns_when_delay_exceeds_execution_steps(
+        self,
+    ) -> None:
         frame = infra.Frame(images={}, state={})
 
         def action_source(
@@ -1161,13 +1234,12 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(arm_value(action), 1.0)
         self.assertTrue(refreshed)
         self.assertTrue(
-            any(
-                "exceeds execution_steps" in str(warning.message)
-                for warning in caught
-            )
+            any("exceeds execution_steps" in str(warning.message) for warning in caught)
         )
 
-    def test_chunk_scheduler_steady_state_warns_when_delay_exceeds_execution_steps(self) -> None:
+    def test_chunk_scheduler_steady_state_warns_when_delay_exceeds_execution_steps(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             steps_before_request=0,
             execution_steps=2,
@@ -1190,10 +1262,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(job.request.execute_horizon, 2)
         self.assertEqual(job.request.inference_delay, 2)
         self.assertTrue(
-            any(
-                "exceeds execution_steps" in str(warning.message)
-                for warning in caught
-            )
+            any("exceeds execution_steps" in str(warning.message) for warning in caught)
         )
 
     def test_sync_overlap_runtime_enable_rtc_discards_warmup_chunk(self) -> None:
@@ -1227,7 +1296,9 @@ class SchedulerTests(unittest.TestCase):
             [1.0, 2.0, 3.0, 3.0],
         )
 
-    def test_async_scheduler_drops_only_executed_steps_after_wall_clock_wait(self) -> None:
+    def test_async_scheduler_drops_only_executed_steps_after_wall_clock_wait(
+        self,
+    ) -> None:
         release_second_chunk = threading.Event()
         request_count = 0
 
@@ -1274,7 +1345,9 @@ class SchedulerTests(unittest.TestCase):
         )
         self.assertEqual(scheduler.estimated_latency_steps(), 0)
 
-    def test_chunk_scheduler_latency_steps_offset_flows_through_interpolation_projection(self) -> None:
+    def test_chunk_scheduler_latency_steps_offset_flows_through_interpolation_projection(
+        self,
+    ) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,
             enable_rtc=True,

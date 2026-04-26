@@ -61,11 +61,11 @@ def profile_sync_inference(
     )
 
     if act_src_fn is None:
-        raise InterfaceValidationError("profile_sync_inference() requires act_src_fn=....")
+        raise InterfaceValidationError(
+            "profile_sync_inference() requires act_src_fn=...."
+        )
 
-    total_requests = (
-        startup_ignore_inference_samples + stable_inference_sample_count
-    )
+    total_requests = startup_ignore_inference_samples + stable_inference_sample_count
 
     step_estimator = _RobustMeanEstimator(
         window_size=timing_window_size,
@@ -337,16 +337,13 @@ def _validate_profile_inputs(
         raise InterfaceValidationError("steps_before_request must be an int.")
     if steps_before_request < 0:
         raise InterfaceValidationError(
-            "steps_before_request must be >= 0, got "
-            f"{steps_before_request!r}."
+            f"steps_before_request must be >= 0, got {steps_before_request!r}."
         )
     if isinstance(stable_inference_sample_count, bool) or not isinstance(
         stable_inference_sample_count,
         int,
     ):
-        raise InterfaceValidationError(
-            "stable_inference_sample_count must be an int."
-        )
+        raise InterfaceValidationError("stable_inference_sample_count must be an int.")
     if stable_inference_sample_count <= 0:
         raise InterfaceValidationError(
             "stable_inference_sample_count must be > 0, got "

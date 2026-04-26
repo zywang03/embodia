@@ -89,9 +89,7 @@ class _RobustMeanEstimator:
             scale = 1.4826 * mad
             threshold = self.mad_scale * scale
             filtered = [
-                sample
-                for sample in samples
-                if abs(sample - median) <= threshold
+                sample for sample in samples if abs(sample - median) <= threshold
             ]
             if not filtered:
                 filtered = samples
@@ -287,7 +285,9 @@ class SyncInferenceProfile:
 
         output_path = Path(path)
         output_path.write_text(
-            json.dumps(self.to_dict(include_trace=include_trace), indent=2, sort_keys=True),
+            json.dumps(
+                self.to_dict(include_trace=include_trace), indent=2, sort_keys=True
+            ),
             encoding="utf-8",
         )
 
@@ -401,14 +401,8 @@ class RuntimeProfileActionStep:
             "control_wait_s": self.control_wait_s,
             "buffer_size": self.buffer_size,
             "execution_buffer_size": self.execution_buffer_size,
-            "raw_commands": [
-                command.to_dict()
-                for command in self.raw_commands
-            ],
-            "action_commands": [
-                command.to_dict()
-                for command in self.action_commands
-            ],
+            "raw_commands": [command.to_dict() for command in self.raw_commands],
+            "action_commands": [command.to_dict() for command in self.action_commands],
         }
 
 
@@ -432,10 +426,7 @@ class RuntimeProfileChunkAction:
             "action_index": self.action_index,
             "step_index": self.step_index,
             "status": self.status,
-            "commands": [
-                command.to_dict()
-                for command in self.commands
-            ],
+            "commands": [command.to_dict() for command in self.commands],
         }
 
 
@@ -469,7 +460,9 @@ class RuntimeInferenceProfile:
         ]
         return {
             "total_requests": len(self.requests),
-            "accepted_requests": sum(1 for request in self.requests if request.accepted),
+            "accepted_requests": sum(
+                1 for request in self.requests if request.accepted
+            ),
             "dropped_stale_requests": sum(
                 1 for request in self.requests if request.dropped_as_stale
             ),

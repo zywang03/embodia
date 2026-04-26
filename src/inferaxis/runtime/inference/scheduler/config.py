@@ -129,9 +129,7 @@ def _validate_optional_positive_int(value: Any, *, field_name: str) -> None:
     if value is None:
         return
     if isinstance(value, bool) or not isinstance(value, int):
-        raise InterfaceValidationError(
-            f"{field_name} must be an int when provided."
-        )
+        raise InterfaceValidationError(f"{field_name} must be an int when provided.")
     if value <= 0:
         raise InterfaceValidationError(
             f"{field_name} must be > 0 when provided, got {value!r}."
@@ -142,9 +140,7 @@ def _validate_real(value: Any, *, field_name: str) -> float:
     """Require one real-valued setting."""
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise InterfaceValidationError(
-            f"{field_name} must be a real number."
-        )
+        raise InterfaceValidationError(f"{field_name} must be a real number.")
     return float(value)
 
 
@@ -153,7 +149,5 @@ def _validate_nonnegative_real(value: Any, *, field_name: str) -> float:
 
     validated = _validate_real(value, field_name=field_name)
     if validated < 0.0:
-        raise InterfaceValidationError(
-            f"{field_name} must be >= 0, got {validated!r}."
-        )
+        raise InterfaceValidationError(f"{field_name} must be >= 0, got {validated!r}.")
     return validated

@@ -50,4 +50,5 @@ def _normalize_blend_weight(value: object, *, field_name: str) -> BlendWeight:
         "(low, high) with 0 <= low <= high <= 1."
     )
 
+
 __all__ = ["BlendWeight"]

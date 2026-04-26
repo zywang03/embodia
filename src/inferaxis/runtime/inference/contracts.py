@@ -89,9 +89,15 @@ class ChunkRequest:
             or self.execute_horizon is not None
         ):
             self.rtc_args = RtcArgs(
-                prev_action_chunk=[] if self.prev_action_chunk is None else self.prev_action_chunk,
-                inference_delay=1 if self.inference_delay is None else self.inference_delay,
-                execute_horizon=0 if self.execute_horizon is None else self.execute_horizon,
+                prev_action_chunk=[]
+                if self.prev_action_chunk is None
+                else self.prev_action_chunk,
+                inference_delay=1
+                if self.inference_delay is None
+                else self.inference_delay,
+                execute_horizon=0
+                if self.execute_horizon is None
+                else self.execute_horizon,
             )
 
 

@@ -183,10 +183,13 @@ def _ensure_executable_actions(
     if self._execution_buffer:
         return plan_refreshed
 
-    return self._request_until_execution_buffer_ready(
-        frame,
-        include_latency=prefetch_async,
-    ) or plan_refreshed
+    return (
+        self._request_until_execution_buffer_ready(
+            frame,
+            include_latency=prefetch_async,
+        )
+        or plan_refreshed
+    )
 
 
 def _maybe_launch_next_request(
@@ -223,9 +226,7 @@ def _pop_next_action(self) -> Action:
 
     self._ensure_execution_buffer()
     if not self._execution_buffer:
-        raise InterfaceValidationError(
-            "ChunkScheduler has no buffered action to emit."
-        )
+        raise InterfaceValidationError("ChunkScheduler has no buffered action to emit.")
     action = self._execution_buffer.popleft()
     self._control_step += 1
     if not self._execution_buffer:

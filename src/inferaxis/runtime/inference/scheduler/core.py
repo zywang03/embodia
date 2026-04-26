@@ -138,10 +138,14 @@ class ChunkScheduler:
     _control_steps_for_actions = latency._control_steps_for_actions
     _raw_segment_control_steps = latency._raw_segment_control_steps
     _remaining_control_steps = latency._remaining_control_steps
-    _project_control_latency_to_raw_steps = latency._project_control_latency_to_raw_steps
+    _project_control_latency_to_raw_steps = (
+        latency._project_control_latency_to_raw_steps
+    )
     _estimated_request_latency_steps = latency._estimated_request_latency_steps
     _update_latency_estimate = latency._update_latency_estimate
-    _observed_latency_steps_from_duration = latency._observed_latency_steps_from_duration
+    _observed_latency_steps_from_duration = (
+        latency._observed_latency_steps_from_duration
+    )
 
     _materialize_action = actions._materialize_action
     _materialize_command = actions._materialize_command
@@ -159,7 +163,9 @@ class ChunkScheduler:
     _build_prev_action_chunk = rtc._build_prev_action_chunk
     _validate_chunk_length = rtc._validate_chunk_length
     _lock_rtc_chunk_total_length = rtc._lock_rtc_chunk_total_length
-    _validate_rtc_execution_window_structure = rtc._validate_rtc_execution_window_structure
+    _validate_rtc_execution_window_structure = (
+        rtc._validate_rtc_execution_window_structure
+    )
     _check_execution_window_delay = rtc._check_execution_window_delay
 
     _steps_before_request_satisfied = requests._steps_before_request_satisfied
@@ -181,7 +187,9 @@ class ChunkScheduler:
     _record_completed_pending_profile_request = (
         execution._record_completed_pending_profile_request
     )
-    _request_until_execution_buffer_ready = execution._request_until_execution_buffer_ready
+    _request_until_execution_buffer_ready = (
+        execution._request_until_execution_buffer_ready
+    )
     _ensure_executable_actions = execution._ensure_executable_actions
     _maybe_launch_next_request = execution._maybe_launch_next_request
     _pop_next_action = execution._pop_next_action

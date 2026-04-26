@@ -35,10 +35,7 @@ def _to_json_safe_summary(value: Any) -> Any:
             include_values=value.ndim <= 1,
         )
     if isinstance(value, dict):
-        return {
-            str(key): _to_json_safe_summary(item)
-            for key, item in value.items()
-        }
+        return {str(key): _to_json_safe_summary(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_json_safe_summary(item) for item in value]
     if isinstance(value, (str, int, float, bool)) or value is None:

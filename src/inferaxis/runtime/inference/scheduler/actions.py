@@ -271,9 +271,7 @@ def _normalize_plan(self, plan: ActionPlan) -> list[Action]:
     if self.max_chunk_size is not None:
         normalized = normalized[: self.max_chunk_size]
     if not normalized:
-        raise InterfaceValidationError(
-            "ChunkScheduler received an empty action chunk."
-        )
+        raise InterfaceValidationError("ChunkScheduler received an empty action chunk.")
 
     if self.runtime_validation_enabled():
         for action in normalized:

@@ -117,8 +117,9 @@ def _build_async_buffer_trace(
             )
             if not pending.sample.ignored_inference_sample:
                 latency_steps_estimate = (
-                    (1.0 - latency_ema_beta) * latency_steps_estimate
-                    + latency_ema_beta * float(waited_executed_steps)
+                    1.0 - latency_ema_beta
+                ) * latency_steps_estimate + latency_ema_beta * float(
+                    waited_executed_steps
                 )
             aligned_chunk_steps = max(
                 pending.sample.chunk_steps - waited_executed_steps,
@@ -147,7 +148,9 @@ def _build_async_buffer_trace(
                 blended_slots = [
                     _TraceActionSlot(
                         request_index=pending.sample.request_index,
-                        blended_from_request_index=surviving_old_slots[index].request_index,
+                        blended_from_request_index=surviving_old_slots[
+                            index
+                        ].request_index,
                     )
                     for index in range(blended_steps_after_accept)
                 ]
@@ -212,7 +215,11 @@ def _build_async_buffer_trace(
             )
         )
 
-        if request_cursor >= len(request_samples) and pending is None and not buffer_slots:
+        if (
+            request_cursor >= len(request_samples)
+            and pending is None
+            and not buffer_slots
+        ):
             break
 
     return AsyncBufferTrace(

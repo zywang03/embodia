@@ -100,6 +100,7 @@ def _coerce_action_commands(
         )
     return commands
 
+
 def coerce_frame(value: Frame | Mapping[str, Any]) -> Frame:
     """Normalize a ``Frame`` or mapping into a standard :class:`Frame`.
 
@@ -381,7 +382,10 @@ def coerce_policy_spec(value: PolicySpec | Mapping[str, Any]) -> PolicySpec:
             value.get("required_task_keys", []),
             "policy_spec.required_task_keys",
         ),
-        outputs=[coerce_policy_output_spec(item) for item in _copy_sequence(outputs, "policy_spec.outputs")],
+        outputs=[
+            coerce_policy_output_spec(item)
+            for item in _copy_sequence(outputs, "policy_spec.outputs")
+        ],
         meta=_copy_string_key_mapping(value.get("meta"), "policy_spec.meta"),
     )
 

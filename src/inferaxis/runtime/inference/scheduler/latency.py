@@ -35,9 +35,7 @@ def _control_steps_for_raw_count(self, raw_steps: int) -> int:
             f"raw_steps must be an int, got {type(raw_steps).__name__}."
         )
     if raw_steps < 0:
-        raise InterfaceValidationError(
-            f"raw_steps must be >= 0, got {raw_steps!r}."
-        )
+        raise InterfaceValidationError(f"raw_steps must be >= 0, got {raw_steps!r}.")
     if raw_steps == 0:
         return 0
     return raw_steps + max(raw_steps - 1, 0) * self.interpolation_steps
@@ -137,9 +135,8 @@ def _update_latency_estimate(self, waited_steps: int) -> None:
         self._latency_steps_estimate = float(waited_steps)
         return
     self._latency_steps_estimate = (
-        (1.0 - self.latency_ema_beta) * self._latency_steps_estimate
-        + self.latency_ema_beta * float(waited_steps)
-    )
+        1.0 - self.latency_ema_beta
+    ) * self._latency_steps_estimate + self.latency_ema_beta * float(waited_steps)
 
 
 def _observed_latency_steps_from_duration(self, inference_time_s: float) -> int:

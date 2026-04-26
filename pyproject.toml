@@ -28,6 +28,25 @@ dependencies = [
 [tool.uv]
 index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.14,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.setuptools]
 package-dir = {"" = "src"}

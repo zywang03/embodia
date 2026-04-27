@@ -175,11 +175,16 @@ def _raw_segment_control_steps(self, *, has_successor: bool) -> int:
 def _remaining_control_steps(self) -> int:
     """Return remaining executable control steps from the current state."""
 
-    if self._execution_buffer:
-        total_steps = len(self._execution_buffer)
-        total_steps += self._control_steps_for_raw_count(max(len(self._buffer) - 1, 0))
-        return total_steps
-    return self._control_steps_for_actions(self._buffer)
+    current_segment_steps = self._execution_cursor.remaining_segment_steps
+    if current_segment_steps:
+        remaining_raw_after_segment = max(
+            self._raw_buffer.remaining_raw_count - 1,
+            0,
+        )
+        return current_segment_steps + self._control_steps_for_raw_count(
+            remaining_raw_after_segment,
+        )
+    return self._control_steps_for_raw_count(self._raw_buffer.remaining_raw_count)
 
 
 def _project_control_latency_to_raw_steps(
@@ -191,13 +196,17 @@ def _project_control_latency_to_raw_steps(
 ) -> int:
     """Project control-step latency back into raw-step chunk semantics."""
 
-    active_buffer = self._buffer if buffer_actions is None else buffer_actions
+    active_buffer = (
+        self._raw_buffer.remaining_actions()
+        if buffer_actions is None
+        else buffer_actions
+    )
     if not active_buffer:
         return max(int(control_latency_steps), 0)
 
     remaining_control_steps = max(int(control_latency_steps), 0)
     current_execution_steps = (
-        len(self._execution_buffer)
+        self._execution_cursor.remaining_segment_steps
         if execution_buffer_steps is None
         else max(int(execution_buffer_steps), 0)
     )

@@ -13,6 +13,7 @@ from ..optimizers import BlendWeight
 from ..protocols import ActionSource, ActionSourceProtocol
 from ..validation import UNSET_VALIDATION, ValidationMode
 from . import actions, bootstrap, config, execution, latency, requests, rtc
+from .buffers import ExecutionCursor, RawChunkBuffer
 from .state import _CompletedChunk
 
 
@@ -40,17 +41,9 @@ class ChunkScheduler:
     startup_validation_only: bool | object = UNSET_VALIDATION
     live_profile: object | None = None
     clock: Callable[[], float] = time.perf_counter
-    _buffer: deque[Action] = field(default_factory=deque, init=False, repr=False)
-    _global_step: int = field(default=0, init=False, repr=False)
     _control_step: int = field(default=0, init=False, repr=False)
-    _active_chunk_snapshot: list[Action] = field(
-        default_factory=list,
-        init=False,
-        repr=False,
-    )
-    _active_chunk_consumed_steps: int = field(default=0, init=False, repr=False)
-    _active_chunk_waited_raw_steps: int = field(default=0, init=False, repr=False)
-    _active_source_plan_length: int = field(default=0, init=False, repr=False)
+    _raw_buffer: RawChunkBuffer = field(init=False, repr=False)
+    _execution_cursor: ExecutionCursor = field(init=False, repr=False)
     _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
     _latency_observation_count: int = field(default=0, init=False, repr=False)
     _startup_latency_bootstrap_complete: bool = field(
@@ -69,11 +62,6 @@ class ChunkScheduler:
         repr=False,
     )
     _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
-    _execution_buffer: deque[Action] = field(
-        default_factory=deque,
-        init=False,
-        repr=False,
-    )
     _rtc_chunk_total_length: int | None = field(
         default=None,
         init=False,
@@ -89,19 +77,19 @@ class ChunkScheduler:
         """Validate configuration and initialize runtime state."""
 
         self._validate_configuration()
+        self._raw_buffer = RawChunkBuffer()
+        self._execution_cursor = ExecutionCursor(
+            buffer=self._raw_buffer,
+            interpolation_steps=self.interpolation_steps,
+        )
 
     def reset(self) -> None:
         """Discard buffered and in-flight chunks but keep learned latency."""
 
-        self._buffer.clear()
-        self._global_step = 0
+        self._raw_buffer.reset()
+        self._execution_cursor.reset()
         self._control_step = 0
-        self._active_chunk_snapshot = []
-        self._active_chunk_consumed_steps = 0
-        self._active_chunk_waited_raw_steps = 0
-        self._active_source_plan_length = 0
         self._startup_execution_window_validated = False
-        self._execution_buffer.clear()
         self._rtc_chunk_total_length = None
         self._startup_validation_complete = False
         if self._pending_future is not None:
@@ -121,7 +109,69 @@ class ChunkScheduler:
     def active_source_plan_length(self) -> int:
         """Return the source chunk length most recently accepted."""
 
-        return self._active_source_plan_length
+        return self._raw_buffer.active_source_plan_length
+
+    @property
+    def _buffer(self) -> deque[Action]:
+        return deque(self._raw_buffer.remaining_actions())
+
+    @_buffer.setter
+    def _buffer(self, value: deque[Action]) -> None:
+        self._raw_buffer.accept_chunk(
+            actions=list(value),
+            request_step=self._raw_buffer.global_step,
+            current_raw_step=self._raw_buffer.global_step,
+            source_plan_length=len(value),
+        )
+        self._execution_cursor.reset()
+
+    @property
+    def _execution_buffer(self) -> deque[Action]:
+        if not self._raw_buffer.has_actions or self._execution_cursor.at_raw_boundary:
+            return deque()
+        return deque(
+            self._raw_buffer.current_action()
+            for _ in range(self._execution_cursor.remaining_segment_steps)
+        )
+
+    @_execution_buffer.setter
+    def _execution_buffer(self, value: deque[Action]) -> None:
+        if value:
+            self._buffer = value
+        else:
+            self._execution_cursor.reset()
+
+    @property
+    def _global_step(self) -> int:
+        return self._raw_buffer.global_step
+
+    @_global_step.setter
+    def _global_step(self, value: int) -> None:
+        self._raw_buffer.global_step = value
+
+    @property
+    def _active_chunk_consumed_steps(self) -> int:
+        return self._raw_buffer.active_chunk_consumed_steps
+
+    @_active_chunk_consumed_steps.setter
+    def _active_chunk_consumed_steps(self, value: int) -> None:
+        self._raw_buffer.active_chunk_consumed_steps = value
+
+    @property
+    def _active_chunk_waited_raw_steps(self) -> int:
+        return self._raw_buffer.active_chunk_waited_raw_steps
+
+    @_active_chunk_waited_raw_steps.setter
+    def _active_chunk_waited_raw_steps(self, value: int) -> None:
+        self._raw_buffer.active_chunk_waited_raw_steps = value
+
+    @property
+    def _active_source_plan_length(self) -> int:
+        return self._raw_buffer.active_source_plan_length
+
+    @_active_source_plan_length.setter
+    def _active_source_plan_length(self, value: int) -> None:
+        self._raw_buffer.active_source_plan_length = value
 
     def runtime_validation_enabled(self) -> bool:
         """Return whether hot-path frame/action validation should run."""

@@ -428,6 +428,39 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertIs(emitted, first_buffer_action)
 
+    def test_chunk_scheduler_next_action_tracks_live_state_in_raw_buffer_and_cursor(
+        self,
+    ) -> None:
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            return [arm_action(1.0), arm_action(3.0)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            interpolation_steps=1,
+        )
+
+        action, refreshed = scheduler.next_action(
+            infra.Frame(images={}, state={}),
+            prefetch_async=False,
+        )
+
+        self.assertEqual(arm_value(action), 1.0)
+        self.assertTrue(refreshed)
+        self.assertTrue(scheduler._raw_buffer.has_actions)
+        self.assertEqual(
+            [
+                arm_value(buffered)
+                for buffered in scheduler._raw_buffer.remaining_actions()
+            ],
+            [1.0, 3.0],
+        )
+        self.assertFalse(scheduler._execution_cursor.at_raw_boundary)
+        self.assertEqual(scheduler._execution_cursor.remaining_segment_steps, 1)
+
     def test_chunk_scheduler_interpolation_count_matches_formula(self) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,
@@ -885,12 +918,6 @@ class SchedulerTests(unittest.TestCase):
                     arm_action(5.0),
                 ]
             )
-            scheduler._active_chunk_snapshot = [
-                arm_action(1.0),
-                arm_action(2.0),
-                arm_action(3.0),
-                arm_action(4.0),
-            ]
             scheduler._active_chunk_consumed_steps = 1
             scheduler._latency_steps_estimate = 2.0
             if enable_rtc:
@@ -947,12 +974,6 @@ class SchedulerTests(unittest.TestCase):
                     arm_action(5.0),
                 ]
             )
-            scheduler._active_chunk_snapshot = [
-                arm_action(1.0),
-                arm_action(2.0),
-                arm_action(3.0),
-                arm_action(4.0),
-            ]
             scheduler._active_chunk_consumed_steps = 1
             scheduler._active_chunk_waited_raw_steps = 1
             scheduler._latency_steps_estimate = 2.0
@@ -998,12 +1019,6 @@ class SchedulerTests(unittest.TestCase):
             clock=lambda: 123.0,
         )
         scheduler._buffer = deque([arm_action(3.0), arm_action(4.0)])
-        scheduler._active_chunk_snapshot = [
-            arm_action(1.0),
-            arm_action(2.0),
-            arm_action(3.0),
-            arm_action(4.0),
-        ]
         scheduler._active_chunk_consumed_steps = 1
         scheduler._latency_steps_estimate = 2.0
 

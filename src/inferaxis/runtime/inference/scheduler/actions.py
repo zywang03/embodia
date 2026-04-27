@@ -276,26 +276,16 @@ def _build_execution_segment(self) -> deque[Action]:
 
 
 def _ensure_execution_buffer(self) -> None:
-    """Populate one execution segment for the current raw step."""
+    """Compatibility wrapper while execution uses the live cursor."""
 
-    if self._execution_buffer or not self._buffer:
-        return
-    self._execution_buffer = self._build_execution_segment()
+    return None
 
 
 def _advance_raw_step(self) -> None:
     """Advance raw scheduler state once the current execution segment finishes."""
 
-    if not self._buffer:
-        return
-    self._buffer.popleft()
-    if self._active_chunk_snapshot:
-        self._active_chunk_consumed_steps = min(
-            self._active_chunk_consumed_steps + 1,
-            len(self._active_chunk_snapshot),
-        )
-    self._active_chunk_waited_raw_steps += 1
-    self._global_step += 1
+    self._raw_buffer.advance_raw_step()
+    self._execution_cursor.reset()
 
 
 def _normalize_plan(self, plan: ActionPlan) -> list[Action]:

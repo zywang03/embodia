@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Sequence
-from itertools import islice
 
 from ....core.errors import InterfaceValidationError
 from ....core.schema import Action, Frame
@@ -64,14 +62,13 @@ def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
             dropped_as_stale=False,
         )
 
-    next_buffer = deque(islice(completed.prepared_actions, stale_steps, None))
-
-    self._active_chunk_snapshot = completed.prepared_actions
-    self._active_chunk_consumed_steps = stale_steps
-    self._active_chunk_waited_raw_steps = 0
-    self._buffer = next_buffer
-    self._execution_buffer.clear()
-    self._active_source_plan_length = completed.source_plan_length
+    self._raw_buffer.accept_chunk(
+        actions=completed.prepared_actions,
+        request_step=completed.request.request_step,
+        current_raw_step=integration_step,
+        source_plan_length=completed.source_plan_length,
+    )
+    self._execution_cursor.reset()
     self._maybe_complete_startup_validation()
     return True
 
@@ -92,7 +89,7 @@ def _accept_pending_chunk(self, *, block: bool) -> bool:
 def _accept_ready_pending_chunk(self) -> bool:
     """Try to accept one already-finished async request."""
 
-    if self._execution_buffer:
+    if not self._execution_cursor.at_raw_boundary:
         return False
     return self._accept_pending_chunk(block=False)
 
@@ -102,9 +99,7 @@ def _accept_blocking_pending_chunk(self) -> bool:
 
     if self._pending_future is None:
         return False
-    refreshed = self._accept_pending_chunk(block=True)
-    self._ensure_execution_buffer()
-    return refreshed
+    return self._accept_pending_chunk(block=True)
 
 
 def _record_completed_pending_profile_request(self) -> None:
@@ -135,7 +130,7 @@ def _request_until_execution_buffer_ready(
 
     plan_refreshed = False
     startup_rtc_seed_chunk: Sequence[Action] | None = None
-    while not self._execution_buffer:
+    while not self._raw_buffer.has_actions:
         completed = self._execute_request(
             frame,
             self._build_request_job(
@@ -161,7 +156,6 @@ def _request_until_execution_buffer_ready(
                 "ChunkScheduler could not produce a usable action chunk."
             )
         plan_refreshed = True
-        self._ensure_execution_buffer()
     return plan_refreshed
 
 
@@ -173,14 +167,13 @@ def _ensure_executable_actions(
 ) -> bool:
     """Make sure one executable action is available before emission."""
 
-    self._ensure_execution_buffer()
-    if self._execution_buffer:
+    if self._raw_buffer.has_actions:
         return False
 
     plan_refreshed = False
     if prefetch_async and self._pending_future is not None:
         plan_refreshed = self._accept_blocking_pending_chunk()
-    if self._execution_buffer:
+    if self._raw_buffer.has_actions:
         return plan_refreshed
 
     return (
@@ -203,7 +196,7 @@ def _maybe_launch_next_request(
 
     if self._pending_future is not None:
         return plan_refreshed
-    if not self._buffer or self._active_source_plan_length == 1:
+    if not self._raw_buffer.has_actions or self._active_source_plan_length == 1:
         return plan_refreshed
     if not self._steps_before_request_satisfied():
         return plan_refreshed
@@ -224,13 +217,10 @@ def _maybe_launch_next_request(
 def _pop_next_action(self) -> Action:
     """Pop one action from the buffer and advance the control step."""
 
-    self._ensure_execution_buffer()
-    if not self._execution_buffer:
+    if not self._raw_buffer.has_actions:
         raise InterfaceValidationError("ChunkScheduler has no buffered action to emit.")
-    action = self._execution_buffer.popleft()
+    action = self._execution_cursor.next_action()
     self._control_step += 1
-    if not self._execution_buffer:
-        self._advance_raw_step()
     return action
 
 

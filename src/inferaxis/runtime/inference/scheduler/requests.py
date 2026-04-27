@@ -36,8 +36,8 @@ def _build_request_job(
 
     request_step = self._global_step
     request_time_s = float(self.clock())
-    buffer_actions = self._buffer
-    buffer_length = len(buffer_actions)
+    buffer_actions = self._raw_buffer.remaining_actions()
+    buffer_length = self._raw_buffer.remaining_raw_count
     launch_buffer = (
         list(buffer_actions) if self.use_overlap_blend and buffer_length else []
     )
@@ -46,7 +46,7 @@ def _build_request_job(
         latency_steps = self._estimated_request_latency_steps(
             control_latency_steps=control_latency_steps,
             buffer_actions=buffer_actions,
-            execution_buffer_steps=len(self._execution_buffer),
+            execution_buffer_steps=self._execution_cursor.remaining_segment_steps,
         )
         if buffer_length:
             self._check_execution_window_delay(

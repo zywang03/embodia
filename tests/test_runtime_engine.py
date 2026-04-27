@@ -668,6 +668,52 @@ class RuntimeEngineTests(unittest.TestCase):
                 pace_control=False,
             )
 
+    def test_async_runtime_rejects_invalid_slow_rtc_bootstrap_on_scheduler_reuse(
+        self,
+    ) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            slow_rtc_bootstrap="warn",
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        assert runtime._chunk_scheduler is not None
+        scheduler = runtime._chunk_scheduler
+        self.assertEqual(scheduler.slow_rtc_bootstrap, "warn")
+
+        runtime.slow_rtc_bootstrap = "ask-politely"
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+                pace_control=False,
+            )
+
+        self.assertIn("slow_rtc_bootstrap", str(ctx.exception))
+        self.assertIs(runtime._chunk_scheduler, scheduler)
+        self.assertEqual(scheduler.slow_rtc_bootstrap, "warn")
+
     def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
         executor = PlainRuntimeExecutor()
         policy = RtcLoggingChunkPolicy()

@@ -64,11 +64,10 @@ def validate_runtime_config(
         raise InterfaceValidationError(
             "InferenceRuntime(enable_rtc=True) requires execution_steps=... ."
         )
-    if runtime.slow_rtc_bootstrap not in {"warn", "error", "confirm"}:
-        raise InterfaceValidationError(
-            "InferenceRuntime.slow_rtc_bootstrap must be 'warn', 'error', or "
-            f"'confirm', got {runtime.slow_rtc_bootstrap!r}."
-        )
+    _validate_slow_rtc_bootstrap_policy(
+        runtime.slow_rtc_bootstrap,
+        field_name="InferenceRuntime.slow_rtc_bootstrap",
+    )
 
     for field_name in ("warmup_requests", "profile_delay_requests"):
         _validate_nonnegative_int(
@@ -157,6 +156,10 @@ def build_chunk_scheduler_kwargs(
 def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> None:
     """Update one reused scheduler from the runtime's latest settings."""
 
+    _validate_slow_rtc_bootstrap_policy(
+        runtime.slow_rtc_bootstrap,
+        field_name="InferenceRuntime.slow_rtc_bootstrap",
+    )
     scheduler.steps_before_request = runtime.steps_before_request
     scheduler.execution_steps = runtime.execution_steps
     scheduler.use_overlap_blend = runtime.ensemble_weight is not None
@@ -230,4 +233,13 @@ def _validate_optional_positive_int(value: Any, *, field_name: str) -> None:
     if value <= 0:
         raise InterfaceValidationError(
             f"{field_name} must be > 0 when provided, got {value!r}."
+        )
+
+
+def _validate_slow_rtc_bootstrap_policy(value: Any, *, field_name: str) -> None:
+    """Require one known slow RTC bootstrap policy value."""
+
+    if value not in {"warn", "error", "confirm"}:
+        raise InterfaceValidationError(
+            f"{field_name} must be 'warn', 'error', or 'confirm', got {value!r}."
         )

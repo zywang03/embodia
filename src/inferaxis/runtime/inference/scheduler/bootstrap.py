@@ -60,7 +60,7 @@ def _confirm_slow_rtc_bootstrap_request(
     *,
     inference_time_s: float,
 ) -> None:
-    """Warn and require confirmation after a slow RTC bootstrap request."""
+    """Apply the configured slow RTC bootstrap policy."""
 
     if inference_time_s <= _SLOW_RTC_WARMUP_THRESHOLD_S:
         return

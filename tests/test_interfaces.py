@@ -27,7 +27,13 @@ from inferaxis.core.transform import (
 )
 from inferaxis.runtime.checks import check_pair, check_policy
 
-from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
+from helpers import (
+    DummyPolicy,
+    DummyRobot,
+    assert_array_equal,
+    demo_image,
+    make_chunk_request,
+)
 
 
 class InterfaceTests(unittest.TestCase):
@@ -58,6 +64,12 @@ class InterfaceTests(unittest.TestCase):
             "frame_to_dict",
         ):
             self.assertFalse(hasattr(infra, removed_name), removed_name)
+
+    def test_make_chunk_request_rejects_removed_legacy_fields(self) -> None:
+        with self.assertRaises(AssertionError) as ctx:
+            make_chunk_request(history_start=0)
+
+        self.assertIn("Unexpected ChunkRequest test fields", str(ctx.exception))
 
     def test_action_roundtrip_uses_grouped_commands(self) -> None:
         action = coerce_action(

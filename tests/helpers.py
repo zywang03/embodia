@@ -134,7 +134,7 @@ def arm_and_gripper_action(
 
 
 def make_chunk_request(**kwargs: object) -> infra.ChunkRequest:
-    """Build one modern ChunkRequest while ignoring removed legacy fields."""
+    """Build one modern ChunkRequest for tests."""
 
     request_step = int(kwargs.pop("request_step", 0))
     request_time_s = float(kwargs.pop("request_time_s", 0.0))
@@ -145,16 +145,6 @@ def make_chunk_request(**kwargs: object) -> infra.ChunkRequest:
     inference_delay = kwargs.pop("inference_delay", None)
     execute_horizon = kwargs.pop("execute_horizon", None)
     rtc_args = kwargs.pop("rtc_args", None)
-
-    for legacy_field in (
-        "history_start",
-        "history_end",
-        "overlap_steps",
-        "request_trigger_steps",
-        "plan_start_step",
-        "history_actions",
-    ):
-        kwargs.pop(legacy_field, None)
 
     if kwargs:
         raise AssertionError(

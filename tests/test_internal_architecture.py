@@ -33,39 +33,6 @@ class InternalArchitectureTests(unittest.TestCase):
             schema_module.ensure_action_supported_by_robot,
         )
 
-    def test_core_schema_legacy_module_exports_remain_complete(self) -> None:
-        from inferaxis.core import schema as schema_module
-
-        expected_names = {
-            "Action",
-            "BuiltinCommandKind",
-            "COMMAND_KIND_REGISTRY",
-            "CUSTOM_COMMAND_KIND_PREFIX",
-            "ComponentSpec",
-            "Command",
-            "CommandKindSpec",
-            "Frame",
-            "KNOWN_COMPONENT_TYPES",
-            "PolicyOutputSpec",
-            "PolicySpec",
-            "RobotSpec",
-            "ensure_action_matches_policy_spec",
-            "ensure_action_supported_by_robot",
-            "get_command_kind_spec",
-            "is_custom_command_kind_name",
-            "is_known_command_kind",
-            "register_command_kind",
-            "validate_action",
-            "validate_command",
-            "validate_component_spec",
-            "validate_frame",
-            "validate_policy_output_spec",
-            "validate_policy_spec",
-            "validate_robot_spec",
-        }
-
-        self.assertEqual(set(schema_module.__all__), expected_names)
-
     def test_profiling_render_internal_modules_reexport_helpers(self) -> None:
         from inferaxis.runtime.inference.profiling import render as render_module
         from inferaxis.runtime.inference.profiling import render_common

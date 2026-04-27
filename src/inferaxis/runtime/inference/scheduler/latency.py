@@ -103,6 +103,9 @@ class LatencyTracker:
         )
         return max(projected + self.latency_steps_offset, 0)
 
+    def offset_request_latency_steps(self, raw_latency_steps: int) -> int:
+        return max(int(raw_latency_steps) + self.latency_steps_offset, 0)
+
     def update(self, *, waited_steps: int) -> None:
         if self.fixed_latency_steps is not None:
             self.estimate = self.fixed_latency_steps
@@ -129,39 +132,31 @@ class LatencyTracker:
 def estimated_latency_steps(self) -> int:
     """Return the internal control-step latency estimate."""
 
-    return self._base_estimated_latency_steps()
+    return self._latency_tracker.estimated_latency_steps()
 
 
 def _base_estimated_latency_steps(self) -> int:
     """Return the internal measured control-step latency before offsets."""
 
-    return max(int(math.ceil(self._latency_steps_estimate)), 0)
+    return self._latency_tracker.estimated_latency_steps()
 
 
 def latency_estimate_ready(self) -> bool:
     """Return whether async execution can trust the current latency estimate."""
 
-    return self._startup_latency_bootstrap_complete
+    return self._latency_tracker.latency_estimate_ready()
 
 
 def _control_steps_for_raw_count(self, raw_steps: int) -> int:
     """Return control-step count for ``raw_steps`` raw actions."""
 
-    if isinstance(raw_steps, bool) or not isinstance(raw_steps, int):
-        raise InterfaceValidationError(
-            f"raw_steps must be an int, got {type(raw_steps).__name__}."
-        )
-    if raw_steps < 0:
-        raise InterfaceValidationError(f"raw_steps must be >= 0, got {raw_steps!r}.")
-    if raw_steps == 0:
-        return 0
-    return raw_steps + max(raw_steps - 1, 0) * self.interpolation_steps
+    return self._latency_tracker.control_steps_for_raw_count(raw_steps)
 
 
 def _control_steps_for_actions(self, actions: Sequence[Action]) -> int:
     """Return control-step count for one raw-action sequence."""
 
-    return self._control_steps_for_raw_count(len(actions))
+    return self._latency_tracker.control_steps_for_raw_count(len(actions))
 
 
 def _raw_segment_control_steps(self, *, has_successor: bool) -> int:
@@ -238,38 +233,16 @@ def _estimated_request_latency_steps(
         buffer_actions=buffer_actions,
         execution_buffer_steps=execution_buffer_steps,
     )
-    return max(
-        projected_steps + self._validated_latency_steps_offset(),
-        0,
-    )
+    return self._latency_tracker.offset_request_latency_steps(projected_steps)
 
 
 def _update_latency_estimate(self, waited_steps: int) -> None:
     """Update ``H_hat`` using the latest observed control-step delay."""
 
-    if self.fixed_latency_steps is not None:
-        self._latency_steps_estimate = self.fixed_latency_steps
-        return
-
-    self._latency_observation_count += 1
-    if self._latency_observation_count <= self.warmup_requests:
-        return
-    if (
-        self._latency_observation_count == self.warmup_requests + 1
-        and self._latency_steps_estimate <= 0.0
-    ):
-        self._latency_steps_estimate = float(waited_steps)
-        return
-    self._latency_steps_estimate = (
-        1.0 - self.latency_ema_beta
-    ) * self._latency_steps_estimate + self.latency_ema_beta * float(waited_steps)
+    self._latency_tracker.update(waited_steps=waited_steps)
 
 
 def _observed_latency_steps_from_duration(self, inference_time_s: float) -> int:
     """Convert one measured request duration into control-step latency."""
 
-    if self.control_period_s is None:
-        return 1
-    if inference_time_s <= 0.0:
-        return 1
-    return max(int(math.ceil(inference_time_s / self.control_period_s)), 1)
+    return self._latency_tracker.observed_latency_steps_from_duration(inference_time_s)

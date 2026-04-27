@@ -120,27 +120,10 @@ def _build_rtc_args(
 ) -> RtcArgs | None:
     """Build optional RTC hints for one policy request."""
 
-    if not self.enable_rtc:
-        return None
-    if self.execution_steps is None:
-        raise InterfaceValidationError(
-            "RTC request construction requires execution_steps."
-        )
-
-    source_chunk = remaining_chunk if remaining_chunk else rtc_seed_chunk
-    if not source_chunk:
-        return None
-
-    prev_action_chunk, execute_horizon = self._build_prev_action_chunk(
-        source_chunk=source_chunk,
-    )
-    return RtcArgs(
-        prev_action_chunk=prev_action_chunk,
-        inference_delay=min(
-            max(int(inference_delay), 1),
-            execute_horizon,
-        ),
-        execute_horizon=execute_horizon,
+    return self._rtc_window_builder.build_args(
+        remaining_chunk=remaining_chunk,
+        inference_delay=inference_delay,
+        rtc_seed_chunk=rtc_seed_chunk,
     )
 
 
@@ -158,34 +141,9 @@ def _build_prev_action_chunk(
     read-only references into the live buffer / seed chunk.
     """
 
-    if not source_chunk:
-        raise InterfaceValidationError(
-            "RTC prev_action_chunk source must contain at least one action."
-        )
-    if self.execution_steps is None:
-        raise InterfaceValidationError(
-            "RTC prev_action_chunk construction requires execution_steps."
-        )
-
-    execute_horizon = self.execution_steps
-    total_length = (
-        self._rtc_chunk_total_length
-        if self._rtc_chunk_total_length is not None
-        else len(source_chunk)
+    return self._rtc_window_builder.build_prev_action_chunk(
+        source_chunk=source_chunk,
     )
-    if total_length < execute_horizon:
-        raise InterfaceValidationError(
-            "RTC locked chunk_total_length must be >= execution_steps, got "
-            f"chunk_total_length={total_length!r}, "
-            f"execution_steps={execute_horizon!r}."
-        )
-    window_limit = min(len(source_chunk), execute_horizon, total_length)
-    window = [source_chunk[index] for index in range(window_limit)]
-    total_pad_count = total_length - len(window)
-    if total_pad_count > 0:
-        pad_action = window[-1]
-        window.extend(pad_action for _ in range(total_pad_count))
-    return window, execute_horizon
 
 
 def _validate_chunk_length(self, chunk_length: int) -> None:
@@ -199,27 +157,7 @@ def _validate_chunk_length(self, chunk_length: int) -> None:
 def _lock_rtc_chunk_total_length(self, chunk_length: int) -> None:
     """Lock one fixed RTC raw chunk length and enforce later consistency."""
 
-    if not self.enable_rtc:
-        return
-    if self.execution_steps is None:
-        raise InterfaceValidationError(
-            "RTC chunk length locking requires execution_steps."
-        )
-    if chunk_length <= 0:
-        raise InterfaceValidationError(
-            f"RTC chunk_total_length must be > 0, got {chunk_length!r}."
-        )
-    if self._rtc_chunk_total_length is None:
-        self._rtc_chunk_total_length = chunk_length
-        self._validate_rtc_execution_window_structure(chunk_length)
-        return
-    if chunk_length != self._rtc_chunk_total_length:
-        raise InterfaceValidationError(
-            "RTC requires a stable source raw chunk length once the first "
-            "chunk is accepted. Got "
-            f"chunk_total_length={chunk_length!r}, "
-            f"locked_chunk_total_length={self._rtc_chunk_total_length!r}."
-        )
+    self._rtc_window_builder.lock_chunk_total_length(chunk_length)
 
 
 def _validate_rtc_execution_window_structure(
@@ -228,16 +166,7 @@ def _validate_rtc_execution_window_structure(
 ) -> None:
     """Validate the fixed RTC request window against the locked chunk size."""
 
-    if not self.enable_rtc or self.execution_steps is None:
-        return
-    if self.execution_steps >= (chunk_total_length - self.steps_before_request):
-        raise InterfaceValidationError(
-            "RTC requires execution_steps < chunk_total_length - "
-            "steps_before_request, got "
-            f"execution_steps={self.execution_steps!r}, "
-            f"chunk_total_length={chunk_total_length!r}, "
-            f"steps_before_request={self.steps_before_request!r}."
-        )
+    self._rtc_window_builder.validate_execution_window_structure(chunk_total_length)
 
 
 def _check_execution_window_delay(

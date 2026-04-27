@@ -97,22 +97,29 @@ def _validate_configuration(self) -> None:
         self.overlap_current_weight,
         field_name="overlap_current_weight",
     )
+    if hasattr(self, "_execution_cursor"):
+        self._execution_cursor.interpolation_steps = self.interpolation_steps
+    if hasattr(self, "_rtc_window_builder"):
+        self._rtc_window_builder.enabled = self.enable_rtc
+        self._rtc_window_builder.execution_steps = self.execution_steps
+        self._rtc_window_builder.steps_before_request = self.steps_before_request
     self.refresh_latency_mode()
 
 
 def refresh_latency_mode(self) -> None:
     """Recompute latency-estimate mode after runtime config changes."""
 
-    if self.fixed_latency_steps is not None:
-        self._latency_steps_estimate = self.fixed_latency_steps
-        self._startup_latency_bootstrap_complete = True
+    if not hasattr(self, "_latency_tracker"):
         return
-
-    self._latency_steps_estimate = self.initial_latency_steps
-    self._startup_latency_bootstrap_complete = (
-        self.control_period_s is None
-        or (self.warmup_requests + self.profile_delay_requests) == 0
-    )
+    self._latency_tracker.latency_ema_beta = self.latency_ema_beta
+    self._latency_tracker.initial_latency_steps = self.initial_latency_steps
+    self._latency_tracker.fixed_latency_steps = self.fixed_latency_steps
+    self._latency_tracker.control_period_s = self.control_period_s
+    self._latency_tracker.warmup_requests = self.warmup_requests
+    self._latency_tracker.profile_delay_requests = self.profile_delay_requests
+    self._latency_tracker.interpolation_steps = self.interpolation_steps
+    self._latency_tracker.latency_steps_offset = self.latency_steps_offset
+    self._latency_tracker.refresh_mode()
 
 
 def _validated_latency_steps_offset(self) -> int:

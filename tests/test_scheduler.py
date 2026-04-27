@@ -15,6 +15,8 @@ import inferaxis as infra
 import numpy as np
 
 from inferaxis.runtime.inference.scheduler import ChunkScheduler, _CompletedChunk
+from inferaxis.runtime.inference.scheduler.latency import LatencyTracker
+from inferaxis.runtime.inference.scheduler.rtc import RtcWindowBuilder
 
 from helpers import (
     DeterministicClock,
@@ -368,6 +370,91 @@ class SchedulerTests(unittest.TestCase):
         self.assertFalse(scheduler._steps_before_request_satisfied())
         scheduler._active_chunk_waited_raw_steps = 3
         self.assertTrue(scheduler._steps_before_request_satisfied())
+
+    def test_chunk_scheduler_initializes_latency_and_rtc_components_with_compat_accessors(
+        self,
+    ) -> None:
+        scheduler = ChunkScheduler(
+            execution_steps=3,
+            steps_before_request=1,
+            interpolation_steps=2,
+            initial_latency_steps=1.5,
+            enable_rtc=True,
+        )
+
+        self.assertIsInstance(scheduler._latency_tracker, LatencyTracker)
+        self.assertIsInstance(scheduler._rtc_window_builder, RtcWindowBuilder)
+        self.assertEqual(
+            scheduler._latency_steps_estimate,
+            scheduler._latency_tracker.estimate,
+        )
+        self.assertEqual(
+            scheduler._latency_observation_count,
+            scheduler._latency_tracker.observation_count,
+        )
+        self.assertEqual(
+            scheduler._startup_latency_bootstrap_complete,
+            scheduler._latency_tracker.bootstrap_complete,
+        )
+        self.assertEqual(
+            scheduler._rtc_chunk_total_length,
+            scheduler._rtc_window_builder.locked_chunk_total_length,
+        )
+
+        scheduler._latency_steps_estimate = 3.25
+        scheduler._latency_observation_count = 7
+        scheduler._startup_latency_bootstrap_complete = True
+        scheduler._rtc_chunk_total_length = 9
+
+        self.assertEqual(scheduler._latency_tracker.estimate, 3.25)
+        self.assertEqual(scheduler._latency_tracker.observation_count, 7)
+        self.assertTrue(scheduler._latency_tracker.bootstrap_complete)
+        self.assertEqual(scheduler._rtc_window_builder.locked_chunk_total_length, 9)
+
+    def test_chunk_scheduler_runtime_configuration_syncs_latency_rtc_and_cursor_components(
+        self,
+    ) -> None:
+        scheduler = ChunkScheduler(
+            execution_steps=3,
+            steps_before_request=1,
+            interpolation_steps=2,
+            latency_ema_beta=0.5,
+            initial_latency_steps=1.5,
+            control_period_s=0.1,
+            warmup_requests=2,
+            profile_delay_requests=1,
+            latency_steps_offset=0,
+            enable_rtc=True,
+        )
+
+        scheduler.fixed_latency_steps = 4.0
+        scheduler.latency_ema_beta = 0.8
+        scheduler.initial_latency_steps = 2.5
+        scheduler.control_period_s = 0.05
+        scheduler.warmup_requests = 5
+        scheduler.profile_delay_requests = 3
+        scheduler.interpolation_steps = 4
+        scheduler.latency_steps_offset = 2
+        scheduler.enable_rtc = False
+        scheduler.execution_steps = 2
+        scheduler.steps_before_request = 0
+
+        scheduler._validate_configuration()
+
+        self.assertEqual(scheduler._execution_cursor.interpolation_steps, 4)
+        self.assertEqual(scheduler._latency_tracker.latency_ema_beta, 0.8)
+        self.assertEqual(scheduler._latency_tracker.initial_latency_steps, 2.5)
+        self.assertEqual(scheduler._latency_tracker.fixed_latency_steps, 4.0)
+        self.assertEqual(scheduler._latency_tracker.control_period_s, 0.05)
+        self.assertEqual(scheduler._latency_tracker.warmup_requests, 5)
+        self.assertEqual(scheduler._latency_tracker.profile_delay_requests, 3)
+        self.assertEqual(scheduler._latency_tracker.interpolation_steps, 4)
+        self.assertEqual(scheduler._latency_tracker.latency_steps_offset, 2)
+        self.assertEqual(scheduler._latency_tracker.estimate, 4.0)
+        self.assertTrue(scheduler._latency_tracker.bootstrap_complete)
+        self.assertFalse(scheduler._rtc_window_builder.enabled)
+        self.assertEqual(scheduler._rtc_window_builder.execution_steps, 2)
+        self.assertEqual(scheduler._rtc_window_builder.steps_before_request, 0)
 
     def test_chunk_scheduler_interpolation_expands_execution_sequence(self) -> None:
         scheduler = ChunkScheduler(

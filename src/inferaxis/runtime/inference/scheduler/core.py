@@ -14,6 +14,8 @@ from ..protocols import ActionSource, ActionSourceProtocol
 from ..validation import UNSET_VALIDATION, ValidationMode
 from . import actions, bootstrap, config, execution, latency, requests, rtc
 from .buffers import ExecutionCursor, RawChunkBuffer
+from .latency import LatencyTracker
+from .rtc import RtcWindowBuilder
 from .state import _CompletedChunk
 
 
@@ -44,13 +46,8 @@ class ChunkScheduler:
     _control_step: int = field(default=0, init=False, repr=False)
     _raw_buffer: RawChunkBuffer = field(init=False, repr=False)
     _execution_cursor: ExecutionCursor = field(init=False, repr=False)
-    _latency_steps_estimate: float = field(default=0.0, init=False, repr=False)
-    _latency_observation_count: int = field(default=0, init=False, repr=False)
-    _startup_latency_bootstrap_complete: bool = field(
-        default=False,
-        init=False,
-        repr=False,
-    )
+    _latency_tracker: LatencyTracker = field(init=False, repr=False)
+    _rtc_window_builder: RtcWindowBuilder = field(init=False, repr=False)
     _startup_execution_window_validated: bool = field(
         default=False,
         init=False,
@@ -62,11 +59,6 @@ class ChunkScheduler:
         repr=False,
     )
     _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
-    _rtc_chunk_total_length: int | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
     _startup_validation_complete: bool = field(
         default=False,
         init=False,
@@ -82,6 +74,21 @@ class ChunkScheduler:
             buffer=self._raw_buffer,
             interpolation_steps=self.interpolation_steps,
         )
+        self._latency_tracker = LatencyTracker(
+            latency_ema_beta=self.latency_ema_beta,
+            initial_latency_steps=self.initial_latency_steps,
+            fixed_latency_steps=self.fixed_latency_steps,
+            control_period_s=self.control_period_s,
+            warmup_requests=self.warmup_requests,
+            profile_delay_requests=self.profile_delay_requests,
+            interpolation_steps=self.interpolation_steps,
+            latency_steps_offset=self.latency_steps_offset,
+        )
+        self._rtc_window_builder = RtcWindowBuilder(
+            enabled=self.enable_rtc,
+            execution_steps=self.execution_steps,
+            steps_before_request=self.steps_before_request,
+        )
 
     def reset(self) -> None:
         """Discard buffered and in-flight chunks but keep learned latency."""
@@ -90,7 +97,7 @@ class ChunkScheduler:
         self._execution_cursor.reset()
         self._control_step = 0
         self._startup_execution_window_validated = False
-        self._rtc_chunk_total_length = None
+        self._rtc_window_builder.reset()
         self._startup_validation_complete = False
         if self._pending_future is not None:
             self._pending_future.cancel()
@@ -167,6 +174,38 @@ class ChunkScheduler:
     @_active_source_plan_length.setter
     def _active_source_plan_length(self, value: int) -> None:
         self._raw_buffer.active_source_plan_length = value
+
+    @property
+    def _latency_steps_estimate(self) -> float:
+        return self._latency_tracker.estimate
+
+    @_latency_steps_estimate.setter
+    def _latency_steps_estimate(self, value: float) -> None:
+        self._latency_tracker.estimate = float(value)
+
+    @property
+    def _latency_observation_count(self) -> int:
+        return self._latency_tracker.observation_count
+
+    @_latency_observation_count.setter
+    def _latency_observation_count(self, value: int) -> None:
+        self._latency_tracker.observation_count = int(value)
+
+    @property
+    def _startup_latency_bootstrap_complete(self) -> bool:
+        return self._latency_tracker.bootstrap_complete
+
+    @_startup_latency_bootstrap_complete.setter
+    def _startup_latency_bootstrap_complete(self, value: bool) -> None:
+        self._latency_tracker.bootstrap_complete = bool(value)
+
+    @property
+    def _rtc_chunk_total_length(self) -> int | None:
+        return self._rtc_window_builder.locked_chunk_total_length
+
+    @_rtc_chunk_total_length.setter
+    def _rtc_chunk_total_length(self, value: int | None) -> None:
+        self._rtc_window_builder.locked_chunk_total_length = value
 
     def runtime_validation_enabled(self) -> bool:
         """Return whether hot-path frame/action validation should run."""

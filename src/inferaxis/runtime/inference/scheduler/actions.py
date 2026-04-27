@@ -26,8 +26,7 @@ _NON_BLENDABLE_OVERLAP_COMMANDS = frozenset(
 )
 
 
-def _materialize_action(
-    self,
+def materialize_action(
     *,
     commands: dict[str, Command],
     meta: dict[str, Any],
@@ -40,8 +39,7 @@ def _materialize_action(
     return action
 
 
-def _materialize_command(
-    self,
+def materialize_command(
     *,
     command: str,
     value: np.ndarray,
@@ -56,6 +54,91 @@ def _materialize_command(
     materialized.ref_frame = ref_frame
     materialized.meta = meta
     return materialized
+
+
+def commands_share_target_layout(
+    left_command: Command,
+    right_command: Command,
+) -> bool:
+    """Return whether two commands can be aligned structurally."""
+
+    if left_command.command != right_command.command:
+        return False
+    if left_command.ref_frame != right_command.ref_frame:
+        return False
+    if left_command.meta != right_command.meta:
+        return False
+    if left_command.value.shape != right_command.value.shape:
+        return False
+    return True
+
+
+def interpolate_action(
+    left_action: Action,
+    right_action: Action,
+    *,
+    right_weight: float,
+) -> Action:
+    """Return one execution-only interpolated action between raw steps."""
+
+    if right_weight <= 0.0:
+        return left_action
+    if right_weight >= 1.0:
+        return right_action
+
+    interpolated_commands: dict[str, Command] = {}
+    has_interpolated_target = False
+    for target, left_command in left_action.commands.items():
+        right_command = right_action.commands.get(target)
+        if (
+            right_command is None
+            or not commands_share_target_layout(left_command, right_command)
+            or left_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS
+        ):
+            interpolated_commands[target] = left_command
+            continue
+
+        has_interpolated_target = True
+        interpolated_commands[target] = materialize_command(
+            command=left_command.command,
+            value=left_command.value * (1.0 - right_weight)
+            + right_command.value * right_weight,
+            ref_frame=left_command.ref_frame,
+            meta=left_command.meta,
+        )
+
+    if not has_interpolated_target:
+        return left_action
+
+    return materialize_action(
+        commands=interpolated_commands,
+        meta=left_action.meta,
+    )
+
+
+def _materialize_action(
+    self,
+    *,
+    commands: dict[str, Command],
+    meta: dict[str, Any],
+) -> Action:
+    return materialize_action(commands=commands, meta=meta)
+
+
+def _materialize_command(
+    self,
+    *,
+    command: str,
+    value: np.ndarray,
+    ref_frame: str | None,
+    meta: dict[str, Any],
+) -> Command:
+    return materialize_command(
+        command=command,
+        value=value,
+        ref_frame=ref_frame,
+        meta=meta,
+    )
 
 
 def _commands_share_layout(self, left: Action, right: Action) -> bool:
@@ -75,17 +158,7 @@ def _commands_share_target_layout(
     left_command: Command,
     right_command: Command,
 ) -> bool:
-    """Return whether two commands can be aligned structurally."""
-
-    if left_command.command != right_command.command:
-        return False
-    if left_command.ref_frame != right_command.ref_frame:
-        return False
-    if left_command.meta != right_command.meta:
-        return False
-    if left_command.value.shape != right_command.value.shape:
-        return False
-    return True
+    return commands_share_target_layout(left_command, right_command)
 
 
 def _blend_overlap_action(
@@ -171,40 +244,10 @@ def _interpolate_action(
     *,
     right_weight: float,
 ) -> Action:
-    """Return one execution-only interpolated action between raw steps."""
-
-    if right_weight <= 0.0:
-        return left_action
-    if right_weight >= 1.0:
-        return right_action
-
-    interpolated_commands: dict[str, Command] = {}
-    has_interpolated_target = False
-    for target, left_command in left_action.commands.items():
-        right_command = right_action.commands.get(target)
-        if (
-            right_command is None
-            or not self._commands_share_target_layout(left_command, right_command)
-            or left_command.command in _NON_BLENDABLE_OVERLAP_COMMANDS
-        ):
-            interpolated_commands[target] = left_command
-            continue
-
-        has_interpolated_target = True
-        interpolated_commands[target] = self._materialize_command(
-            command=left_command.command,
-            value=left_command.value * (1.0 - right_weight)
-            + right_command.value * right_weight,
-            ref_frame=left_command.ref_frame,
-            meta=left_command.meta,
-        )
-
-    if not has_interpolated_target:
-        return left_action
-
-    return self._materialize_action(
-        commands=interpolated_commands,
-        meta=left_action.meta,
+    return interpolate_action(
+        left_action,
+        right_action,
+        right_weight=right_weight,
     )
 
 

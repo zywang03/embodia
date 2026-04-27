@@ -74,17 +74,10 @@ class YourPolicy:
 def main() -> None:
     robot = YourRobot()
     policy = YourPolicy()
-    runtime = infra.InferenceRuntime(
-        mode=infra.InferenceMode.ASYNC,
-        profile=True,
+    runtime = infra.InferenceRuntime.async_realtime(
         control_hz=50.0,
-        steps_before_request=0,
         warmup_requests=0,
         profile_delay_requests=0,
-        interpolation_steps=0,
-        ensemble_weight=None,
-        enable_rtc=False,
-        latency_steps_offset=0,
     )
 
     for step_index in range(5):

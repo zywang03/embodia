@@ -115,24 +115,21 @@ def main() -> None:
         ),
         (
             "async scheduler",
-            infra.InferenceRuntime(
-                mode=infra.InferenceMode.ASYNC,
+            infra.InferenceRuntime.async_realtime(
+                control_hz=50.0,
                 warmup_requests=0,
                 profile_delay_requests=0,
-                startup_validation_only=True,
             ),
             BenchmarkPolicy(chunk_size=4),
         ),
         (
             "async scheduler rtc",
-            infra.InferenceRuntime(
-                mode=infra.InferenceMode.ASYNC,
+            infra.InferenceRuntime.async_realtime(
                 control_hz=50.0,
                 execution_steps=3,
                 warmup_requests=0,
                 profile_delay_requests=0,
                 enable_rtc=True,
-                startup_validation_only=True,
             ),
             BenchmarkPolicy(chunk_size=5),
         ),

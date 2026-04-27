@@ -91,14 +91,11 @@ class YourRtcPolicy:
 def main() -> None:
     robot = YourRobot()
     policy = YourRtcPolicy()
-    runtime = infra.InferenceRuntime(
-        mode=infra.InferenceMode.ASYNC,
-        execution_steps=3,
-        warmup_requests=1,
-        profile_delay_requests=3,
-        interpolation_steps=0,
-        enable_rtc=True,
+    runtime = infra.InferenceRuntime.async_realtime(
         control_hz=50.0,
+        execution_steps=3,
+        enable_rtc=True,
+        slow_rtc_bootstrap="warn",
     )
 
     for step_index in range(5):

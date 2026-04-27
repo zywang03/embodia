@@ -224,7 +224,6 @@ class ChunkScheduler:
     _overlap_new_weight = actions._overlap_new_weight
     _interpolate_action = actions._interpolate_action
     _build_execution_segment = actions._build_execution_segment
-    _ensure_execution_buffer = actions._ensure_execution_buffer
     _advance_raw_step = actions._advance_raw_step
     _normalize_plan = actions._normalize_plan
 

@@ -230,7 +230,7 @@ When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.execute_horizon`. The same values are also mirrored on
 `request.rtc_args` for grouped access:
 
-- `prev_action_chunk`: a fixed-length raw chunk built from the current live buffer head, left-padded with the first live action until it reaches the locked source chunk length
+- `prev_action_chunk`: a fixed-length raw chunk built from the current live buffer head, right-padded with the last live action until it reaches the locked source chunk length
 - `inference_delay`: the estimated number of raw chunk steps from request launch until the new chunk can begin taking effect, clamped into the current RTC execution horizon
 - `execute_horizon`: the fixed raw-step RTC execution window (`execution_steps`), so the effective RTC interval is `[inference_delay, execute_horizon)`
 

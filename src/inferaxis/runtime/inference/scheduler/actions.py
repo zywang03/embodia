@@ -276,12 +276,6 @@ def _build_execution_segment(self) -> deque[Action]:
     return deque(segment)
 
 
-def _ensure_execution_buffer(self) -> None:
-    """Compatibility wrapper while execution uses the live cursor."""
-
-    return None
-
-
 def _advance_raw_step(self) -> None:
     """Advance raw scheduler state once the current execution segment finishes."""
 

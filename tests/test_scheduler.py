@@ -38,7 +38,13 @@ class SchedulerTests(unittest.TestCase):
     """Coverage for chunk scheduler blending, latency, RTC, and async flow."""
 
     def test_chunk_scheduler_no_longer_exposes_private_proxy_accessors(self) -> None:
-        for name in ("_buffer", "_execution_buffer", "_pending_future", "_executor"):
+        for name in (
+            "_buffer",
+            "_execution_buffer",
+            "_pending_future",
+            "_executor",
+            "_ensure_execution_buffer",
+        ):
             self.assertFalse(hasattr(ChunkScheduler, name))
 
     def test_chunk_scheduler_no_longer_accepts_removed_transition_bridge_configuration(

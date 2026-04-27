@@ -229,7 +229,7 @@ result = infra.run_step(
 `request.execute_horizon`。同一组值也会镜像到 `request.rtc_args`
 里，方便按对象整体访问：
 
-- `prev_action_chunk`：从当前 live buffer 头部构造出的固定长度 raw chunk，会先按第一个 live action 左侧补齐 execution window，再继续补到锁定的源 chunk 总长度
+- `prev_action_chunk`：从当前 live buffer 头部构造出的固定长度 raw chunk，会用最后一个 live action 在右侧补齐到锁定的源 chunk 总长度
 - `inference_delay`：从请求发出到新 chunk 最早可能开始生效，还需要等待的 raw chunk 步数，并会被钳制在当前 RTC horizon 内
 - `execute_horizon`：固定的 raw-step RTC 执行窗口，也就是 `execution_steps`，因此 RTC 的有效区间是 `[inference_delay, execute_horizon)`
 

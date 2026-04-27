@@ -101,7 +101,7 @@ return `list[Action]` when the source can emit a future chunk. With
 `request.inference_delay`, and `request.execute_horizon` directly; the same
 values are also available under `request.rtc_args`. `prev_action_chunk` is the
 fixed-length raw chunk built from the current live buffer head and padded on
-the left to the locked source chunk length, while `inference_delay` and
+the right to the locked source chunk length, while `inference_delay` and
 `execute_horizon` are both measured relative to request launch, giving an
 effective RTC interval of `[inference_delay, execute_horizon)`. During cold
 start, the first RTC bootstrap request still has no RTC args so inferaxis can

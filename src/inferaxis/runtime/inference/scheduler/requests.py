@@ -162,9 +162,4 @@ def _execute_request(
 def _ensure_executor(self) -> ThreadPoolExecutor:
     """Create the background executor lazily."""
 
-    if self._executor is None:
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="inferaxis-async-inference",
-        )
-    return self._executor
+    return self._pipeline.ensure_executor()

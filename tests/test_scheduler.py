@@ -246,6 +246,20 @@ class SchedulerTests(unittest.TestCase):
         self.assertIs(completed.prepared_actions[1], plan[1])
         self.assertIs(completed.prepared_actions[2], plan[2])
 
+    def test_chunk_scheduler_pending_and_executor_compat_properties_proxy_pipeline(
+        self,
+    ) -> None:
+        scheduler = ChunkScheduler()
+        future: Future[_CompletedChunk] = Future()
+
+        scheduler._pending_future = future
+        executor = scheduler._ensure_executor()
+
+        self.assertIs(scheduler._pipeline.pending, future)
+        self.assertIs(scheduler._pending_future, future)
+        self.assertIs(scheduler._pipeline.executor, executor)
+        self.assertIs(scheduler._executor, executor)
+
     def test_chunk_scheduler_execute_request_blends_prefix_and_reuses_suffix(
         self,
     ) -> None:

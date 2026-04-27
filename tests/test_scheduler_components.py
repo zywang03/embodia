@@ -246,3 +246,23 @@ class RequestPipelineTests(unittest.TestCase):
         self.assertTrue(pipeline.has_pending)
         pipeline.clear_pending()
         self.assertFalse(pipeline.has_pending)
+
+    def test_pipeline_manages_pending_executor_lifecycle(self) -> None:
+        pipeline = RequestPipeline()
+
+        self.assertFalse(pipeline.has_ready_pending)
+
+        executor = pipeline.ensure_executor()
+        self.assertIs(executor, pipeline.executor)
+
+        future: Future[object] = Future()
+        future.set_result(object())
+        pipeline.pending = future
+
+        self.assertTrue(pipeline.has_pending)
+        self.assertTrue(pipeline.has_ready_pending)
+
+        pipeline.close()
+
+        self.assertIsNone(pipeline.pending)
+        self.assertIsNone(pipeline.executor)

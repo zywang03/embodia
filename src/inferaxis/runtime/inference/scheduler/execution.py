@@ -76,13 +76,14 @@ def _integrate_completed_chunk(self, completed: _CompletedChunk) -> bool:
 def _accept_pending_chunk(self, *, block: bool) -> bool:
     """Integrate a finished async request when available."""
 
-    if self._pending_future is None:
+    pending = self._pipeline.pending
+    if pending is None:
         return False
-    if not block and not self._pending_future.done():
+    if not block and not pending.done():
         return False
 
-    completed = self._pending_future.result()
-    self._pending_future = None
+    completed = pending.result()
+    self._pipeline.clear_pending()
     return self._integrate_completed_chunk(completed)
 
 
@@ -97,7 +98,7 @@ def _accept_ready_pending_chunk(self) -> bool:
 def _accept_blocking_pending_chunk(self) -> bool:
     """Block until the in-flight request finishes and integrate it."""
 
-    if self._pending_future is None:
+    if self._pipeline.pending is None:
         return False
     return self._accept_pending_chunk(block=True)
 
@@ -106,7 +107,7 @@ def _record_completed_pending_profile_request(self) -> None:
     """Mark a completed but unaccepted pending request before profiler flush."""
 
     profiler = self.live_profile
-    future = self._pending_future
+    future = self._pipeline.pending
     if profiler is None or future is None or not future.done():
         return
     try:
@@ -171,7 +172,7 @@ def _ensure_executable_actions(
         return False
 
     plan_refreshed = False
-    if prefetch_async and self._pending_future is not None:
+    if prefetch_async and self._pipeline.pending is not None:
         plan_refreshed = self._accept_blocking_pending_chunk()
     if self._raw_buffer.has_actions:
         return plan_refreshed
@@ -194,7 +195,7 @@ def _maybe_launch_next_request(
 ) -> bool:
     """Launch or inline the next refresh request when the trigger allows it."""
 
-    if self._pending_future is not None:
+    if self._pipeline.pending is not None:
         return plan_refreshed
     if not self._raw_buffer.has_actions or self._active_source_plan_length == 1:
         return plan_refreshed
@@ -203,7 +204,7 @@ def _maybe_launch_next_request(
 
     job = self._build_request_job(include_latency=prefetch_async)
     if prefetch_async:
-        self._pending_future = self._ensure_executor().submit(
+        self._pipeline.pending = self._pipeline.ensure_executor().submit(
             self._execute_request,
             frame,
             job,

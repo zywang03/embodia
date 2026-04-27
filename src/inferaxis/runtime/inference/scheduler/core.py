@@ -15,6 +15,7 @@ from ..validation import UNSET_VALIDATION, ValidationMode
 from . import actions, bootstrap, config, execution, latency, requests, rtc
 from .buffers import ExecutionCursor, RawChunkBuffer
 from .latency import LatencyTracker
+from .pipeline import RequestPipeline
 from .rtc import RtcWindowBuilder
 from .state import _CompletedChunk
 
@@ -53,12 +54,9 @@ class ChunkScheduler:
         init=False,
         repr=False,
     )
-    _pending_future: Future[_CompletedChunk] | None = field(
-        default=None,
-        init=False,
-        repr=False,
+    _pipeline: RequestPipeline = field(
+        default_factory=RequestPipeline, init=False, repr=False
     )
-    _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
     _startup_validation_complete: bool = field(
         default=False,
         init=False,
@@ -99,18 +97,16 @@ class ChunkScheduler:
         self._startup_execution_window_validated = False
         self._rtc_window_builder.reset()
         self._startup_validation_complete = False
-        if self._pending_future is not None:
-            self._pending_future.cancel()
-        self._pending_future = None
+        if self._pipeline.pending is not None:
+            self._pipeline.pending.cancel()
+        self._pipeline.clear_pending()
 
     def close(self) -> None:
         """Shut down background request execution."""
 
         self._record_completed_pending_profile_request()
         self.reset()
-        if self._executor is not None:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-            self._executor = None
+        self._pipeline.close()
 
     @property
     def active_source_plan_length(self) -> int:
@@ -174,6 +170,22 @@ class ChunkScheduler:
     @_active_source_plan_length.setter
     def _active_source_plan_length(self, value: int) -> None:
         self._raw_buffer.active_source_plan_length = value
+
+    @property
+    def _pending_future(self) -> Future[_CompletedChunk] | None:
+        return self._pipeline.pending
+
+    @_pending_future.setter
+    def _pending_future(self, value: Future[_CompletedChunk] | None) -> None:
+        self._pipeline.pending = value
+
+    @property
+    def _executor(self) -> ThreadPoolExecutor | None:
+        return self._pipeline.executor
+
+    @_executor.setter
+    def _executor(self, value: ThreadPoolExecutor | None) -> None:
+        self._pipeline.executor = value
 
     @property
     def _latency_steps_estimate(self) -> float:

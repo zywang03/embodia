@@ -115,10 +115,11 @@ def main() -> None:
         ),
         (
             "async scheduler",
-            infra.InferenceRuntime.async_realtime(
-                control_hz=50.0,
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
                 warmup_requests=0,
                 profile_delay_requests=0,
+                startup_validation_only=True,
             ),
             BenchmarkPolicy(chunk_size=4),
         ),

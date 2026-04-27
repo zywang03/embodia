@@ -118,6 +118,7 @@ def main() -> None:
             policy.last_rtc_summary,
         )
 
+    runtime.close()
     print("native_robot_received:", robot.last_native_action)
     print("example 6 passed.")
 

@@ -714,6 +714,72 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertIs(runtime._chunk_scheduler, scheduler)
         self.assertEqual(scheduler.slow_rtc_bootstrap, "warn")
 
+    def test_async_runtime_reuse_syncs_scheduler_components_from_runtime_config(
+        self,
+    ) -> None:
+        robot = RuntimeRobot()
+        policy = RtcLoggingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=1,
+            execution_steps=2,
+            interpolation_steps=0,
+            enable_rtc=False,
+            latency_steps_offset=0,
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        assert runtime._chunk_scheduler is not None
+        scheduler = runtime._chunk_scheduler
+        self.assertEqual(scheduler._execution_cursor.interpolation_steps, 0)
+        self.assertEqual(scheduler._latency_tracker.latency_steps_offset, 0)
+        self.assertFalse(scheduler._rtc_window_builder.enabled)
+        self.assertEqual(scheduler._rtc_window_builder.execution_steps, 2)
+        self.assertEqual(scheduler._rtc_window_builder.steps_before_request, 1)
+
+        runtime.interpolation_steps = 3
+        runtime.latency_steps_offset = 2
+        runtime.enable_rtc = True
+        runtime.execution_steps = 2
+        runtime.steps_before_request = 0
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertIs(runtime._chunk_scheduler, scheduler)
+        self.assertEqual(
+            scheduler._execution_cursor.interpolation_steps,
+            runtime.interpolation_steps,
+        )
+        self.assertEqual(
+            scheduler._latency_tracker.latency_steps_offset,
+            runtime.latency_steps_offset,
+        )
+        self.assertEqual(
+            scheduler._rtc_window_builder.enabled,
+            runtime.enable_rtc,
+        )
+        self.assertEqual(
+            scheduler._rtc_window_builder.execution_steps,
+            runtime.execution_steps,
+        )
+        self.assertEqual(
+            scheduler._rtc_window_builder.steps_before_request,
+            runtime.steps_before_request,
+        )
+
     def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
         executor = PlainRuntimeExecutor()
         policy = RtcLoggingChunkPolicy()

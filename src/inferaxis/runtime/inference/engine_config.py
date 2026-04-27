@@ -160,6 +160,8 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
         runtime.slow_rtc_bootstrap,
         field_name="InferenceRuntime.slow_rtc_bootstrap",
     )
+    previous_validation = scheduler.validation
+    previous_startup_validation_only = scheduler.startup_validation_only
     scheduler.steps_before_request = runtime.steps_before_request
     scheduler.execution_steps = runtime.execution_steps
     scheduler.use_overlap_blend = runtime.ensemble_weight is not None
@@ -174,10 +176,9 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.enable_rtc = runtime.enable_rtc
     scheduler.slow_rtc_bootstrap = runtime.slow_rtc_bootstrap
     scheduler.latency_steps_offset = runtime.latency_steps_offset
-    previous_validation = scheduler.validation
-    previous_startup_validation_only = scheduler.startup_validation_only
     scheduler.validation = runtime.validation
     scheduler.startup_validation_only = runtime.startup_validation_only
+    scheduler._validate_configuration()
     if (
         (previous_validation, previous_startup_validation_only)
         != (scheduler.validation, scheduler.startup_validation_only)

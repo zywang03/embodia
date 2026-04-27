@@ -82,58 +82,23 @@ def parse_args() -> argparse.Namespace:
             "startup_ignore_samples + stable_sample_count total requests."
         ),
     )
+    # fmt: off
+    parser.add_argument("--target-hz", type=float, required=True, help="Required target control hz for the closed-loop system.")
+    parser.add_argument("--startup-ignore-samples", type=int, default=1, help="Number of early inference samples to ignore.")
+    parser.add_argument("--stable-sample-count", type=int, default=4, help="Number of stable inference samples kept for the final estimate.")
+    parser.add_argument("--policy-latency-ms", type=float, default=15.0, help="Fake policy sleep used only by this example to simulate inference latency.")
     parser.add_argument(
-        "--target-hz",
-        type=float,
-        required=True,
-        help="Required target control hz for the closed-loop system.",
-    )
-    parser.add_argument(
-        "--startup-ignore-samples",
-        type=int,
-        default=1,
-        help="Number of early inference samples to ignore.",
-    )
-    parser.add_argument(
-        "--stable-sample-count",
-        type=int,
-        default=4,
-        help="Number of stable inference samples kept for the final estimate.",
-    )
-    parser.add_argument(
-        "--policy-latency-ms",
-        type=float,
-        default=15.0,
-        help="Fake policy sleep used only by this example to simulate inference latency.",
-    )
-    parser.add_argument(
-        "--chunk-steps",
-        type=int,
-        default=50,
+        "--chunk-steps", type=int, default=50,
         help="Fake policy chunk length used only by this example. Default 50 matches the most common pi06star deployment/default setting.",
     )
     parser.add_argument(
-        "--steps-before-request",
-        type=int,
-        default=0,
+        "--steps-before-request", type=int, default=0,
         help="Number of raw chunk steps to execute after a chunk is accepted before starting the next request.",
     )
-    parser.add_argument(
-        "--execute-action",
-        action="store_true",
-        help="Also call act_fn(...) so step timing includes local action execution.",
-    )
-    parser.add_argument(
-        "--print-requests",
-        action="store_true",
-        help="Print one compact observation summary for each profiled request.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-        help="Optional directory for writing profile/recommendation JSON.",
-    )
+    parser.add_argument("--execute-action", action="store_true", help="Also call act_fn(...) so step timing includes local action execution.")
+    parser.add_argument("--print-requests", action="store_true", help="Print one compact observation summary for each profiled request.")
+    parser.add_argument("--output-dir", type=str, default=None, help="Optional directory for writing profile/recommendation JSON.")
+    # fmt: on
     return parser.parse_args()
 
 

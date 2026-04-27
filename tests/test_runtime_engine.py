@@ -573,6 +573,80 @@ class RuntimeEngineTests(unittest.TestCase):
         assert runtime._chunk_scheduler is not None
         self.assertTrue(runtime._chunk_scheduler._startup_validation_complete)
 
+    def test_async_runtime_validation_off_skips_frame_validation(self) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            validation="off",
+        )
+        bad_frame = robot.get_obs()
+        bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
+
+        result = infra.run_step(
+            frame=bad_frame,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertEqual(arm_value(result.action), 1.0)
+
+    def test_async_runtime_validation_policy_change_resets_reused_scheduler_startup(
+        self,
+    ) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            validation="off",
+        )
+
+        bad_frame = robot.get_obs()
+        bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
+        infra.run_step(
+            frame=bad_frame,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+        assert runtime._chunk_scheduler is not None
+        self.assertFalse(runtime._chunk_scheduler.runtime_validation_enabled())
+
+        runtime.validation = "startup"
+        runtime.startup_validation_only = True
+        refreshed_bad_frame = robot.get_obs()
+        refreshed_bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
+
+        with self.assertRaises(infra.InterfaceValidationError):
+            infra.run_step(
+                frame=refreshed_bad_frame,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+                pace_control=False,
+            )
+
     def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
         executor = PlainRuntimeExecutor()
         policy = RtcLoggingChunkPolicy()

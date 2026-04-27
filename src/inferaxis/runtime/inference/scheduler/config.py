@@ -83,7 +83,7 @@ def _validate_configuration(self) -> None:
     resolved_validation, startup_validation_only = resolve_validation_mode(
         validation=self.validation,
         startup_validation_only=self.startup_validation_only,
-        field_name="startup_validation_only",
+        field_name="ChunkScheduler",
     )
     self.validation = str(resolved_validation)
     self.startup_validation_only = startup_validation_only

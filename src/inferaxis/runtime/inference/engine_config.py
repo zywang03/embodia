@@ -9,7 +9,7 @@ from ...core.errors import InterfaceValidationError
 from ...shared.common import validate_positive_number
 from .control import RealtimeController
 from .optimizers import _normalize_blend_weight
-from .validation import resolve_validation_mode
+from .validation import UNSET_VALIDATION, resolve_validation_mode
 
 if TYPE_CHECKING:
     from .engine import InferenceMode, InferenceRuntime
@@ -47,7 +47,7 @@ def validate_runtime_config(
     resolved_validation, startup_validation_only = resolve_validation_mode(
         validation=runtime.validation,
         startup_validation_only=runtime.startup_validation_only,
-        field_name="InferenceRuntime.startup_validation_only",
+        field_name="InferenceRuntime",
     )
     runtime.validation = str(resolved_validation)
     runtime.startup_validation_only = startup_validation_only
@@ -139,7 +139,11 @@ def build_chunk_scheduler_kwargs(
         "enable_rtc": runtime.enable_rtc,
         "latency_steps_offset": runtime.latency_steps_offset,
         "validation": runtime.validation,
-        "startup_validation_only": runtime.startup_validation_only,
+        "startup_validation_only": (
+            UNSET_VALIDATION
+            if runtime.validation == "off"
+            else runtime.startup_validation_only
+        ),
         "live_profile": runtime._live_profile_recorder,
     }
 
@@ -160,8 +164,17 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.interpolation_steps = runtime.interpolation_steps
     scheduler.enable_rtc = runtime.enable_rtc
     scheduler.latency_steps_offset = runtime.latency_steps_offset
+    previous_validation = scheduler.validation
+    previous_startup_validation_only = scheduler.startup_validation_only
     scheduler.validation = runtime.validation
     scheduler.startup_validation_only = runtime.startup_validation_only
+    if (
+        (previous_validation, previous_startup_validation_only)
+        != (scheduler.validation, scheduler.startup_validation_only)
+        and scheduler.validation != "off"
+        and scheduler.startup_validation_only
+    ):
+        scheduler._startup_validation_complete = False
     scheduler.live_profile = runtime._live_profile_recorder
 
 

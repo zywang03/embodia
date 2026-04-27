@@ -198,6 +198,11 @@ class InferenceRuntime:
             return True
         if source_key is not None and self._chunk_scheduler_key != source_key:
             return True
+        if (
+            scheduler.validation != self.validation
+            or scheduler.startup_validation_only != self.startup_validation_only
+        ):
+            return True
         return scheduler.runtime_validation_enabled()
 
     def _bootstrap_chunk_scheduler(

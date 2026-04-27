@@ -1090,6 +1090,28 @@ class SchedulerTests(unittest.TestCase):
         with self.assertRaises(infra.InterfaceValidationError):
             scheduler.next_action(bad_frame, prefetch_async=False)
 
+    def test_chunk_scheduler_validation_off_skips_startup_frame_validation(
+        self,
+    ) -> None:
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            return [arm_action(1.0), arm_action(2.0)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            validation="off",
+        )
+        bad_frame = infra.Frame(images={}, state={})
+        bad_frame.timestamp_ns = -1
+
+        action, refreshed = scheduler.next_action(bad_frame, prefetch_async=False)
+
+        self.assertTrue(refreshed)
+        self.assertEqual(arm_value(action), 1.0)
+
     def test_chunk_scheduler_startup_validation_only_skips_steady_state_plan_validation(
         self,
     ) -> None:

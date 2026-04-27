@@ -31,7 +31,9 @@ def resolve_validation_mode(
     legacy_value: bool | None = None
     if legacy_provided:
         if not isinstance(startup_validation_only, bool):
-            raise InterfaceValidationError(f"{field_name} must be a bool.")
+            raise InterfaceValidationError(
+                f"{field_name}.startup_validation_only must be a bool."
+            )
         legacy_value = startup_validation_only
 
     resolved_validation: ValidationMode | None = None
@@ -40,7 +42,8 @@ def resolve_validation_mode(
             resolved_validation = ValidationMode(str(validation))
         except ValueError as exc:
             raise InterfaceValidationError(
-                "validation must be one of 'always', 'startup', or 'off'."
+                f"{field_name}.validation must be 'always', 'startup', or "
+                f"'off', got {validation!r}."
             ) from exc
 
     if resolved_validation is None:
@@ -56,7 +59,8 @@ def resolve_validation_mode(
         )
         if resolved_validation is not legacy_validation:
             raise InterfaceValidationError(
-                "validation and startup_validation_only must not conflict."
+                f"{field_name}.validation conflicts with "
+                f"{field_name}.startup_validation_only."
             )
 
     return resolved_validation, resolved_validation is ValidationMode.STARTUP

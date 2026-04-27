@@ -40,3 +40,4 @@ htmlcov/
 profiles/
 .worktrees/
 artifacts/
+.codex/

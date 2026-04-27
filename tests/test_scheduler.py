@@ -461,6 +461,37 @@ class SchedulerTests(unittest.TestCase):
         self.assertFalse(scheduler._execution_cursor.at_raw_boundary)
         self.assertEqual(scheduler._execution_cursor.remaining_segment_steps, 1)
 
+    def test_chunk_scheduler_execution_buffer_compatibility_view_stays_nonempty_at_raw_boundary(
+        self,
+    ) -> None:
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs, request
+            return [arm_action(1.0), arm_action(2.0)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            interpolation_steps=0,
+        )
+
+        action, refreshed = scheduler.next_action(
+            infra.Frame(images={}, state={}),
+            prefetch_async=False,
+        )
+
+        self.assertEqual(arm_value(action), 1.0)
+        self.assertTrue(refreshed)
+        self.assertTrue(scheduler._execution_cursor.at_raw_boundary)
+        self.assertTrue(scheduler._raw_buffer.has_actions)
+        self.assertEqual(scheduler._execution_cursor.remaining_segment_steps, 1)
+        self.assertEqual(len(scheduler._execution_buffer), 1)
+        self.assertEqual(
+            [arm_value(buffered) for buffered in scheduler._execution_buffer],
+            [2.0],
+        )
+
     def test_chunk_scheduler_interpolation_count_matches_formula(self) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,

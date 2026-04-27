@@ -127,7 +127,7 @@ class ChunkScheduler:
 
     @property
     def _execution_buffer(self) -> deque[Action]:
-        if not self._raw_buffer.has_actions or self._execution_cursor.at_raw_boundary:
+        if not self._raw_buffer.has_actions:
             return deque()
         return deque(
             self._raw_buffer.current_action()

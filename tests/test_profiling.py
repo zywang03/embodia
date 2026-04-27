@@ -146,7 +146,7 @@ class ProfilingTests(unittest.TestCase):
             self.assertEqual(first_action_step["step_index"], 0)
             self.assertTrue(first_action_step["plan_refreshed"])
             self.assertEqual(first_action_step["buffer_size"], 1)
-            self.assertEqual(first_action_step["execution_buffer_size"], 0)
+            self.assertEqual(first_action_step["execution_buffer_size"], 1)
             self.assertEqual(
                 first_action_step["action_commands"][0]["target"],
                 "arm",

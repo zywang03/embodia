@@ -10,6 +10,7 @@ from inferaxis.runtime.inference.scheduler.buffers import (
     ExecutionCursor,
     RawChunkBuffer,
 )
+from inferaxis.runtime.inference.scheduler.latency import LatencyTracker
 
 from helpers import arm_action, arm_value
 
@@ -124,3 +125,37 @@ class ExecutionCursorTests(unittest.TestCase):
         self.assertEqual(arm_value(interpolated), 5.0)
         self.assertEqual(arm_value(final), 10.0)
         self.assertFalse(buffer.has_actions)
+
+
+class LatencyTrackerTests(unittest.TestCase):
+    def test_tracker_projects_control_latency_to_raw_steps(self) -> None:
+        tracker = LatencyTracker(interpolation_steps=1)
+
+        raw_delay = tracker.project_control_latency_to_raw_steps(
+            control_latency_steps=3,
+            raw_count=4,
+            execution_buffer_steps=0,
+        )
+
+        self.assertEqual(raw_delay, 2)
+
+    def test_tracker_updates_after_warmup_requests(self) -> None:
+        tracker = LatencyTracker(
+            latency_ema_beta=0.5,
+            initial_latency_steps=0.0,
+            warmup_requests=1,
+        )
+
+        tracker.update(waited_steps=4)
+        tracker.update(waited_steps=6)
+
+        self.assertEqual(tracker.estimated_latency_steps(), 6)
+        self.assertTrue(tracker.latency_estimate_ready())
+
+    def test_tracker_honors_fixed_latency_steps(self) -> None:
+        tracker = LatencyTracker(fixed_latency_steps=3.0)
+
+        tracker.update(waited_steps=10)
+
+        self.assertEqual(tracker.estimated_latency_steps(), 3)
+        self.assertTrue(tracker.latency_estimate_ready())

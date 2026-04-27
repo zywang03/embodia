@@ -26,12 +26,22 @@ class RequestPipeline:
     def clear_pending(self) -> None:
         self.pending = None
 
+    def discard_pending(self, *, wait: bool = False) -> _CompletedChunk | None:
+        pending = self.pending
+        self.pending = None
+        if pending is None or pending.cancel():
+            return None
+        if not wait and not pending.done():
+            return None
+        try:
+            return pending.result()
+        except Exception:
+            return None
+
     def close(self) -> None:
-        if self.pending is not None:
-            self.pending.cancel()
-            self.pending = None
+        self.discard_pending(wait=True)
         if self.executor is not None:
-            self.executor.shutdown(wait=False, cancel_futures=True)
+            self.executor.shutdown(wait=True, cancel_futures=True)
             self.executor = None
 
     def ensure_executor(self) -> ThreadPoolExecutor:

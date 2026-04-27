@@ -11,6 +11,10 @@ from unittest import mock
 
 import inferaxis as infra
 
+from inferaxis.runtime.inference.scheduler.buffers import (
+    ExecutionCursor,
+    RawChunkBuffer,
+)
 from inferaxis.runtime.inference.profiling import (
     _ProfiledRequestSample,
     _build_async_buffer_trace,
@@ -170,6 +174,59 @@ class ProfilingTests(unittest.TestCase):
             self.assertIn("buffer_size", html_text)
             self.assertIn("arm[0]", html_text)
             self.assertIn("chunk 0 accepted", html_text)
+
+    def test_async_runtime_profile_reads_buffer_counts_without_snapshots(self) -> None:
+        robot = RuntimeRobot()
+        policy = RuntimePolicy()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                profile=True,
+                profile_output_dir=tmpdir,
+                steps_before_request=99,
+            )
+
+            infra.run_step(
+                observe_fn=robot.get_obs,
+                act_fn=robot.send_action,
+                act_src_fn=policy.infer,
+                runtime=runtime,
+                pace_control=False,
+            )
+            assert runtime._chunk_scheduler is not None
+
+            original_remaining_actions = RawChunkBuffer.remaining_actions
+            original_remaining_segment_actions = (
+                ExecutionCursor.remaining_segment_actions
+            )
+
+            def fail_remaining_actions(self: RawChunkBuffer) -> list[infra.Action]:
+                del self
+                raise AssertionError("profile hot path built raw buffer snapshot")
+
+            def fail_remaining_segment_actions(
+                self: ExecutionCursor,
+            ) -> list[infra.Action]:
+                del self
+                raise AssertionError("profile hot path built execution snapshot")
+
+            RawChunkBuffer.remaining_actions = fail_remaining_actions
+            ExecutionCursor.remaining_segment_actions = fail_remaining_segment_actions
+            try:
+                infra.run_step(
+                    observe_fn=robot.get_obs,
+                    act_fn=robot.send_action,
+                    act_src_fn=policy.infer,
+                    runtime=runtime,
+                    pace_control=False,
+                )
+            finally:
+                RawChunkBuffer.remaining_actions = original_remaining_actions
+                ExecutionCursor.remaining_segment_actions = (
+                    original_remaining_segment_actions
+                )
+                runtime.close()
 
     def test_async_runtime_profile_closes_completed_pending_request_cleanly(
         self,

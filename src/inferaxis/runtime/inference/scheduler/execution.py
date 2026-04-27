@@ -103,17 +103,24 @@ def _accept_blocking_pending_chunk(self) -> bool:
     return self._accept_pending_chunk(block=True)
 
 
-def _record_completed_pending_profile_request(self) -> None:
+def _record_completed_pending_profile_request(self, *, wait: bool = False) -> None:
     """Mark a completed but unaccepted pending request before profiler flush."""
 
     profiler = self.live_profile
     future = self._pipeline.pending
-    if profiler is None or future is None or not future.done():
+    if profiler is None or future is None:
         return
-    try:
-        completed = future.result()
-    except Exception:
+    if wait:
+        completed = self._pipeline.discard_pending(wait=True)
+        if completed is None:
+            return
+    elif not future.done():
         return
+    else:
+        try:
+            completed = future.result()
+        except Exception:
+            return
     profiler.record_completed_without_accept(  # type: ignore[attr-defined]
         request_index=completed.request_index,
         request_step=completed.request.request_step,

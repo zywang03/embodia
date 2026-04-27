@@ -97,14 +97,12 @@ class ChunkScheduler:
         self._startup_execution_window_validated = False
         self._rtc_window_builder.reset()
         self._startup_validation_complete = False
-        if self._pipeline.pending is not None:
-            self._pipeline.pending.cancel()
-        self._pipeline.clear_pending()
+        self._pipeline.discard_pending(wait=True)
 
     def close(self) -> None:
         """Shut down background request execution."""
 
-        self._record_completed_pending_profile_request()
+        self._record_completed_pending_profile_request(wait=True)
         self.reset()
         self._pipeline.close()
 
@@ -113,6 +111,18 @@ class ChunkScheduler:
         """Return the source chunk length most recently accepted."""
 
         return self._raw_buffer.active_source_plan_length
+
+    @property
+    def remaining_raw_count(self) -> int:
+        """Return buffered raw actions without materializing a snapshot."""
+
+        return self._raw_buffer.remaining_raw_count
+
+    @property
+    def remaining_execution_steps(self) -> int:
+        """Return current execution segment size without materializing actions."""
+
+        return self._execution_cursor.remaining_segment_steps
 
     @property
     def _buffer(self) -> deque[Action]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import unittest
 
 import inferaxis as infra
@@ -16,6 +17,25 @@ from helpers import (
     arm_action,
     arm_value,
 )
+
+
+class _BlockingPendingPolicy:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.blocking_call_started = threading.Event()
+        self.release_blocking_call = threading.Event()
+
+    def infer(
+        self,
+        obs: infra.Frame,
+        request: infra.ChunkRequest,
+    ) -> list[infra.Action]:
+        del obs, request
+        self.call_count += 1
+        if self.call_count > 1:
+            self.blocking_call_started.set()
+            self.release_blocking_call.wait(timeout=2.0)
+        return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
 
 
 class RuntimeEngineTests(unittest.TestCase):
@@ -667,6 +687,111 @@ class RuntimeEngineTests(unittest.TestCase):
                 runtime=runtime,
                 pace_control=False,
             )
+
+    def test_async_runtime_validation_policy_can_switch_reused_scheduler_off(
+        self,
+    ) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            validation="startup",
+        )
+
+        infra.run_step(
+            frame=robot.get_obs(),
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        runtime.validation = "off"
+        bad_frame = robot.get_obs()
+        bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
+
+        result = infra.run_step(
+            frame=bad_frame,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertEqual(arm_value(result.action), 2.0)
+        assert runtime._chunk_scheduler is not None
+        self.assertEqual(runtime._chunk_scheduler.validation, "off")
+        self.assertFalse(runtime._chunk_scheduler.runtime_validation_enabled())
+
+    def test_async_runtime_reset_waits_for_running_pending_request(self) -> None:
+        robot = RuntimeRobot()
+        policy = _BlockingPendingPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+        self.assertTrue(policy.blocking_call_started.wait(timeout=1.0))
+
+        reset_returned = threading.Event()
+        reset_thread = threading.Thread(
+            target=lambda: (runtime.reset(), reset_returned.set()),
+        )
+        reset_thread.start()
+        try:
+            self.assertFalse(reset_returned.wait(timeout=0.05))
+        finally:
+            policy.release_blocking_call.set()
+            reset_thread.join(timeout=1.0)
+            runtime.close()
+
+        self.assertFalse(reset_thread.is_alive())
+
+    def test_async_runtime_close_waits_for_running_pending_request(self) -> None:
+        robot = RuntimeRobot()
+        policy = _BlockingPendingPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            steps_before_request=0,
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+        self.assertTrue(policy.blocking_call_started.wait(timeout=1.0))
+
+        close_returned = threading.Event()
+        close_thread = threading.Thread(
+            target=lambda: (runtime.close(), close_returned.set()),
+        )
+        close_thread.start()
+        try:
+            self.assertFalse(close_returned.wait(timeout=0.05))
+        finally:
+            policy.release_blocking_call.set()
+            close_thread.join(timeout=1.0)
+
+        self.assertFalse(close_thread.is_alive())
 
     def test_async_runtime_rejects_invalid_slow_rtc_bootstrap_on_scheduler_reuse(
         self,

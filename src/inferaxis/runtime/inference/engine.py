@@ -337,8 +337,8 @@ class InferenceRuntime:
             buffer_size = None
             execution_buffer_size = None
             if self._chunk_scheduler is not None:
-                buffer_size = len(self._chunk_scheduler._buffer)
-                execution_buffer_size = len(self._chunk_scheduler._execution_buffer)
+                buffer_size = self._chunk_scheduler.remaining_raw_count
+                execution_buffer_size = self._chunk_scheduler.remaining_execution_steps
             self._live_profile_recorder.record_action(  # type: ignore[attr-defined]
                 raw_action=raw_action,
                 action=action,

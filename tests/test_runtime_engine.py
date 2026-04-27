@@ -65,19 +65,15 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertIsNone(runtime.ensemble_weight)
 
-    def test_inference_runtime_public_exports_remain_stable(self) -> None:
+    def test_inference_runtime_public_exports_include_runtime_only(self) -> None:
         import inferaxis.runtime.inference as inference_module
 
         self.assertIs(inference_module.InferenceRuntime, infra.InferenceRuntime)
         self.assertIs(inference_module.InferenceMode, infra.InferenceMode)
-        self.assertIs(
-            inference_module.profile_sync_inference,
-            infra.profile_sync_inference,
-        )
-        self.assertIs(
-            inference_module.recommend_inference_mode,
-            infra.recommend_inference_mode,
-        )
+        self.assertFalse(hasattr(inference_module, "profile_sync_inference"))
+        self.assertFalse(hasattr(inference_module, "recommend_inference_mode"))
+        self.assertFalse(hasattr(infra, "profile_sync_inference"))
+        self.assertFalse(hasattr(infra, "recommend_inference_mode"))
 
     def test_runtime_profile_requires_async_mode(self) -> None:
         with self.assertRaises(infra.InterfaceValidationError) as ctx:

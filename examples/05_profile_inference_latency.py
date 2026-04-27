@@ -1,4 +1,4 @@
-"""Example 5: profile inference latency and estimate sustainable control hz.
+"""Example 5: capture an async realtime runtime profile.
 
 Run with:
 
@@ -73,19 +73,46 @@ class YourPolicy:
         ]
 
 
+def print_profile_requests(profile_payload: dict[str, object]) -> None:
+    """Print compact request rows from one runtime profile JSON payload."""
+
+    for request in profile_payload.get("requests", []):
+        if not isinstance(request, dict):
+            continue
+        status = "accepted" if request.get("accepted") else "profiled"
+        if request.get("dropped_as_stale"):
+            status = "dropped"
+        if request.get("error") is not None:
+            status = "error"
+
+        duration_s = request.get("request_duration_s")
+        duration_text = (
+            "n/a" if duration_s is None else f"{float(duration_s) * 1000.0:.3f}"
+        )
+        print(
+            "[runtime_profile] "
+            f"request={request.get('request_index')} "
+            f"status={status} "
+            f"step={request.get('request_step')} "
+            f"duration_ms={duration_text} "
+            f"returned={request.get('returned_chunk_length')} "
+            f"accepted={request.get('accepted_chunk_length')} "
+            f"latency_hint_raw_steps={request.get('latency_hint_raw_steps')}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Profile one callable policy against one required target control hz. "
+            "Capture the live profile emitted by InferenceRuntime.async_realtime. "
             "In this example, --policy-latency-ms and --chunk-steps only control "
-            "the fake policy used for the demo. The profiler itself now uses "
-            "startup_ignore_samples + stable_sample_count total requests."
+            "the fake policy used for the demo."
         ),
     )
     # fmt: off
-    parser.add_argument("--target-hz", type=float, required=True, help="Required target control hz for the closed-loop system.")
-    parser.add_argument("--startup-ignore-samples", type=int, default=1, help="Number of early inference samples to ignore.")
-    parser.add_argument("--stable-sample-count", type=int, default=4, help="Number of stable inference samples kept for the final estimate.")
+    parser.add_argument("--target-hz", type=float, required=True, help="Target control hz for the async realtime runtime.")
+    parser.add_argument("--startup-ignore-samples", type=int, default=1, help="Number of startup warmup requests before latency profiling.")
+    parser.add_argument("--stable-sample-count", type=int, default=4, help="Number of profile-delay requests used to seed latency.")
     parser.add_argument("--policy-latency-ms", type=float, default=15.0, help="Fake policy sleep used only by this example to simulate inference latency.")
     parser.add_argument(
         "--chunk-steps", type=int, default=50,
@@ -96,8 +123,8 @@ def parse_args() -> argparse.Namespace:
         help="Number of raw chunk steps to execute after a chunk is accepted before starting the next request.",
     )
     parser.add_argument("--execute-action", action="store_true", help="Also call act_fn(...) so step timing includes local action execution.")
-    parser.add_argument("--print-requests", action="store_true", help="Print one compact observation summary for each profiled request.")
-    parser.add_argument("--output-dir", type=str, default=None, help="Optional directory for writing profile/recommendation JSON.")
+    parser.add_argument("--print-requests", action="store_true", help="Print one compact summary for each runtime profile request.")
+    parser.add_argument("--output-dir", type=str, default=None, help="Optional directory for runtime_profile.json/html.")
     # fmt: on
     return parser.parse_args()
 
@@ -114,60 +141,55 @@ def main() -> None:
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    profile = infra.profile_sync_inference(
-        observe_fn=robot.get_obs,
-        target_hz=args.target_hz,
-        act_fn=robot.send_action,
-        act_src_fn=policy.infer,
-        execute_action=args.execute_action,
-        startup_ignore_inference_samples=args.startup_ignore_samples,
-        stable_inference_sample_count=args.stable_sample_count,
+    runtime = infra.InferenceRuntime.async_realtime(
+        profile=True,
+        profile_output_dir=output_dir,
+        control_hz=args.target_hz,
+        warmup_requests=args.startup_ignore_samples,
+        profile_delay_requests=args.stable_sample_count,
         steps_before_request=args.steps_before_request,
-        output_path=(output_dir / "profile.json") if output_dir is not None else None,
-        request_log_fn=print if args.print_requests else None,
-    )
-    if output_dir is not None:
-        profile.write_async_buffer_trace_json(output_dir / "buffer_trace.json")
-
-    recommendation = infra.recommend_inference_mode(
-        observe_fn=robot.get_obs,
-        act_fn=robot.send_action,
-        act_src_fn=policy.infer,
-        target_hz=args.target_hz,
-        execute_action=args.execute_action,
-        startup_ignore_inference_samples=args.startup_ignore_samples,
-        stable_inference_sample_count=args.stable_sample_count,
-        steps_before_request=args.steps_before_request,
-        output_path=(output_dir / "recommendation.json")
-        if output_dir is not None
-        else None,
-        request_log_fn=print if args.print_requests else None,
     )
 
-    print("profile:")
-    print(json.dumps(profile.to_dict(), indent=2, sort_keys=True))
-    print()
-    print("recommendation:")
-    print(json.dumps(recommendation.to_dict(), indent=2, sort_keys=True))
+    try:
+        result = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            execute_action=args.execute_action,
+        )
+    finally:
+        runtime.close()
+
+    assert runtime.profile_output_dir is not None
+    profile_output_dir = Path(runtime.profile_output_dir)
+    profile_json_path = profile_output_dir / "runtime_profile.json"
+    profile_html_path = profile_output_dir / "runtime_profile.html"
+    profile_payload = json.loads(profile_json_path.read_text(encoding="utf-8"))
+
+    if args.print_requests:
+        print_profile_requests(profile_payload)
+
+    print("runtime_profile_summary:")
+    print(json.dumps(profile_payload["summary"], indent=2, sort_keys=True))
     print()
     print("summary:")
     print(
-        "  profiled_request_count:",
+        "  runtime_profile_request_count:", profile_payload["summary"]["total_requests"]
+    )
+    print(
+        "  startup_profile_request_count:",
         args.startup_ignore_samples + args.stable_sample_count,
     )
     print("  fake_policy_chunk_steps:", args.chunk_steps)
     print("  fake_policy_latency_ms:", args.policy_latency_ms)
     print("  steps_before_request:", args.steps_before_request)
-    print("  estimated_chunk_steps:", profile.estimated_chunk_steps)
-    print("  estimated_max_buffered_hz:", profile.estimated_max_buffered_hz)
     print("  target_hz:", args.target_hz)
-    print("  recommended_mode:", recommendation.recommended_mode)
-    print("  reason:", recommendation.reason)
+    print("  plan_refreshed:", result.plan_refreshed)
     print("  last_action:", robot.last_action)
-    if output_dir is not None:
-        print("  wrote_profile_json:", output_dir / "profile.json")
-        print("  wrote_recommendation_json:", output_dir / "recommendation.json")
-        print("  wrote_buffer_trace_json:", output_dir / "buffer_trace.json")
+    print("  runtime_profile_dir:", profile_output_dir)
+    print("  wrote_runtime_profile_json:", profile_json_path)
+    print("  wrote_runtime_profile_html:", profile_html_path)
 
 
 if __name__ == "__main__":

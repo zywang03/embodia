@@ -15,7 +15,7 @@ loop 支持：
 - 动态自适应延迟的 chunk 调度
 - 本地数采
 - 采集动作 replay
-- 同步推理延迟 profiling 与 runtime 推荐
+- 异步 runtime 的 live profiling
 
 `inferaxis` 不是机器人中间件，也不是传输层或部署系统。它聚焦的是推理侧的数据契约和
 控制闭环。
@@ -210,6 +210,9 @@ result = infra.run_step(
 不要依赖“被调用了第几次”这种可变计数状态。
 如果你希望 startup warmup/profile 不放在第一次 `run_step(...)` 里，
 可以在进主循环前显式调用一次 `runtime.bootstrap_async(...)`。
+如果要写出 profile 报告，在 `InferenceRuntime.async_realtime(...)` 上设置
+`profile=True`，并可选传入 `profile_output_dir=...`。runtime close 时会写出
+`runtime_profile.json` 和 `runtime_profile.html`。
 
 这样同一套数据接口就能支持：
 
@@ -217,8 +220,7 @@ result = infra.run_step(
 - 基于前向 `steps_before_request` 的异步 chunk 调度
 - 通过 `ensemble_weight=...` 做 chunk handoff 融合
 - 带节拍控制的闭环执行
-- `profile_sync_inference(...)` 基于目标控制频率的延迟 profiling
-- `recommend_inference_mode(...)` 模式推荐
+- 通过 `InferenceRuntime.async_realtime(profile=True)` 记录 live request/action profile
 
 当 `enable_rtc=True` 时，传给 `policy.infer(...)` 的请求对象会直接提供
 `request.prev_action_chunk`、`request.inference_delay` 和

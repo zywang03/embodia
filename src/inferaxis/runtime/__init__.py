@@ -7,8 +7,6 @@ from .inference import (
     InferenceRuntime,
     RealtimeController,
     RtcArgs,
-    profile_sync_inference,
-    recommend_inference_mode,
 )
 
 __all__ = [
@@ -18,7 +16,5 @@ __all__ = [
     "RealtimeController",
     "RtcArgs",
     "check_pair",
-    "profile_sync_inference",
-    "recommend_inference_mode",
     "run_step",
 ]

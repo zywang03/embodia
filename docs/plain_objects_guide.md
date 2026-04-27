@@ -90,6 +90,9 @@ Because of that startup warmup, `infer(frame, request)` should derive its chunk
 from `frame` and `request` instead of relying on mutable "call count" state.
 If you want startup warmup/profile to happen outside the first `run_step(...)`
 call, invoke `runtime.bootstrap_async(...)` once before entering the loop.
+To persist the live request/action profile, construct the runtime with
+`profile=True` and optionally `profile_output_dir=...`; `runtime.close()` writes
+`runtime_profile.json` and `runtime_profile.html`.
 
 If you use `ASYNC` or `steps_before_request`, keep the same
 `infer(frame, request)` boundary. Return one action for chunk size `1`, or

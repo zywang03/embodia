@@ -378,7 +378,7 @@ def make_profile_clock(
     observe_duration: float = 0.001,
     inter_step_gap: float = 0.001,
 ) -> DeterministicClock:
-    """Build one deterministic clock for profile_sync_inference tests."""
+    """Build one deterministic clock for request timing tests."""
 
     timestamps: list[float] = []
     current = 0.0

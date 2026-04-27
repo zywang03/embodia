@@ -22,8 +22,6 @@ from .runtime.inference import (
     InferenceRuntime,
     RealtimeController,
     RtcArgs,
-    profile_sync_inference,
-    recommend_inference_mode,
 )
 
 __all__ = [
@@ -44,7 +42,5 @@ __all__ = [
     "coerce_action",
     "coerce_frame",
     "frame_to_dict",
-    "profile_sync_inference",
-    "recommend_inference_mode",
     "run_step",
 ]

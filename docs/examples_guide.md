@@ -23,10 +23,10 @@ return one `Action` for chunk size `1`, or return multiple future
 actions from the same `act_src_fn(frame, request)` contract. `examples/03` and `examples/04`
 show that data collection and replay still use the same outer loop; the only
 thing that changes is where the action comes from. `examples/05` is a small
-utility example for profiling sync inference latency. It can estimate
-sustainable control hz directly from measured inference latency and returned
-chunk length, but it always profiles against one required `target_hz` because
-the control rate should already be fixed by the real system or dataset setup.
+utility example for capturing the live profile produced by
+`InferenceRuntime.async_realtime(profile=True)`. It uses `target_hz` as the
+runtime control rate and writes the runtime request/action profile as JSON and
+HTML.
 `examples/06` keeps the async runtime shape but enables top-level RTC request
 fields so a policy can read the fixed-length padded `prev_action_chunk` plus
 the effective RTC interval `[inference_delay, execute_horizon)` for RTC-aware

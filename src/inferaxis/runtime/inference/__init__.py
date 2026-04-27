@@ -3,7 +3,6 @@
 from .control import RealtimeController
 from .contracts import ChunkRequest, RtcArgs
 from .engine import InferenceMode, InferenceRuntime
-from .profiling import profile_sync_inference, recommend_inference_mode
 
 __all__ = [
     "ChunkRequest",
@@ -11,6 +10,4 @@ __all__ = [
     "InferenceRuntime",
     "RealtimeController",
     "RtcArgs",
-    "profile_sync_inference",
-    "recommend_inference_mode",
 ]

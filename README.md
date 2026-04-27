@@ -16,7 +16,7 @@ interface, the same loop can drive:
 - dynamically latency-adaptive chunk scheduling
 - local data collection
 - replay of recorded actions
-- sync-latency profiling and runtime recommendation
+- live async runtime profiling
 
 `inferaxis` is not a robot middleware, transport stack, or deployment system.
 It focuses on the inference-side data contract and control loop.
@@ -207,8 +207,7 @@ This lets the same data interface support:
 - async chunk scheduling with front-triggered `steps_before_request`
 - chunk handoff blending via `ensemble_weight=...`
 - paced closed-loop execution
-- latency profiling against a required target control hz via `profile_sync_inference(...)`
-- mode recommendation via `recommend_inference_mode(...)`
+- live request/action profiling via `InferenceRuntime.async_realtime(profile=True)`
 
 When `mode=ASYNC`, no manual latency seed is needed anymore. If you attach a
 `RealtimeController(...)`, inferaxis first issues request-only warmup calls for
@@ -220,6 +219,9 @@ Because of that startup warmup, `policy.infer(...)` should derive chunks from
 `frame` and `request` instead of relying on mutable call-count state.
 If you want startup warmup/profile to happen outside the first `run_step(...)`
 call, use `runtime.bootstrap_async(...)` once before entering the loop.
+Set `profile=True` and optionally `profile_output_dir=...` on
+`InferenceRuntime.async_realtime(...)` to write `runtime_profile.json` and
+`runtime_profile.html` for the live async run.
 
 When `enable_rtc=True`, `policy.infer(...)` receives the RTC hints directly on
 `request.prev_action_chunk`, `request.inference_delay`, and

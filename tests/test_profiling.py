@@ -270,7 +270,7 @@ class ProfilingTests(unittest.TestCase):
             )
             scheduler = runtime._chunk_scheduler
             self.assertIsNotNone(scheduler)
-            pending = scheduler._pending_future  # type: ignore[union-attr]
+            pending = scheduler._pipeline.pending
             self.assertIsNotNone(pending)
             deadline_s = time.monotonic() + 1.0
             while not pending.done():  # type: ignore[union-attr]
@@ -330,7 +330,7 @@ class ProfilingTests(unittest.TestCase):
             )
             scheduler = runtime._chunk_scheduler
             self.assertIsNotNone(scheduler)
-            pending = scheduler._pending_future  # type: ignore[union-attr]
+            pending = scheduler._pipeline.pending
             self.assertIsNotNone(pending)
             pending.result(timeout=1.0)  # type: ignore[union-attr]
             infra.run_step(

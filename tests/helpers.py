@@ -93,6 +93,35 @@ def arm_value(action: infra.Action) -> float:
     return float(command.value[0])
 
 
+def accept_scheduler_chunk(
+    scheduler: object,
+    actions: list[infra.Action],
+    *,
+    request_step: int | None = None,
+    current_raw_step: int | None = None,
+    source_plan_length: int | None = None,
+) -> None:
+    raw_buffer = scheduler._raw_buffer  # type: ignore[attr-defined]
+    raw_step = raw_buffer.global_step
+    raw_buffer.accept_chunk(
+        actions=actions,
+        request_step=raw_step if request_step is None else request_step,
+        current_raw_step=raw_step if current_raw_step is None else current_raw_step,
+        source_plan_length=len(actions)
+        if source_plan_length is None
+        else source_plan_length,
+    )
+    scheduler._execution_cursor.reset()  # type: ignore[attr-defined]
+
+
+def scheduler_raw_actions(scheduler: object) -> list[infra.Action]:
+    return scheduler._raw_buffer.remaining_actions()  # type: ignore[attr-defined]
+
+
+def scheduler_execution_actions(scheduler: object) -> list[infra.Action]:
+    return scheduler._execution_cursor.remaining_segment_actions()  # type: ignore[attr-defined]
+
+
 def arm_action(value: float) -> infra.Action:
     """Build one single-arm action for compact scheduler tests."""
 

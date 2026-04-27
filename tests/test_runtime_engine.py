@@ -18,6 +18,7 @@ from helpers import (
     SingleActionChunkPolicy,
     arm_action,
     arm_value,
+    scheduler_raw_actions,
 )
 
 
@@ -470,7 +471,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(robot.send_count, 0)
         self.assertEqual(policy.request_count, 4)
         self.assertIsNotNone(runtime._chunk_scheduler)
-        self.assertGreater(len(runtime._chunk_scheduler._buffer), 0)  # type: ignore[union-attr]
+        self.assertGreater(len(scheduler_raw_actions(runtime._chunk_scheduler)), 0)
 
         result = infra.run_step(
             observe_fn=robot.get_obs,
@@ -1590,7 +1591,7 @@ class RuntimeEngineTests(unittest.TestCase):
         )
         first_scheduler = runtime._chunk_scheduler
         self.assertIsNotNone(first_scheduler)
-        self.assertIsNotNone(first_scheduler._executor)  # type: ignore[union-attr]
+        self.assertIsNotNone(first_scheduler._pipeline.executor)
 
         infra.run_step(
             observe_fn=robot.get_obs,
@@ -1600,7 +1601,7 @@ class RuntimeEngineTests(unittest.TestCase):
         )
 
         self.assertIsNot(runtime._chunk_scheduler, first_scheduler)
-        self.assertIsNone(first_scheduler._executor)  # type: ignore[union-attr]
+        self.assertIsNone(first_scheduler._pipeline.executor)
 
     def test_runtime_restarts_scheduler_when_source_changes_with_ensemble_weight(
         self,

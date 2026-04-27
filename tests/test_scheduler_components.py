@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 import unittest
 
 import inferaxis as infra
@@ -11,6 +12,7 @@ from inferaxis.runtime.inference.scheduler.buffers import (
     RawChunkBuffer,
 )
 from inferaxis.runtime.inference.scheduler.latency import LatencyTracker
+from inferaxis.runtime.inference.scheduler.pipeline import RequestPipeline
 from inferaxis.runtime.inference.scheduler.rtc import RtcWindowBuilder
 
 from helpers import arm_action, arm_value
@@ -233,3 +235,14 @@ class RtcWindowBuilderTests(unittest.TestCase):
 
         with self.assertRaises(infra.InterfaceValidationError):
             builder.lock_chunk_total_length(3)
+
+
+class RequestPipelineTests(unittest.TestCase):
+    def test_pipeline_tracks_pending_future(self) -> None:
+        pipeline = RequestPipeline()
+
+        self.assertFalse(pipeline.has_pending)
+        pipeline.pending = Future()
+        self.assertTrue(pipeline.has_pending)
+        pipeline.clear_pending()
+        self.assertFalse(pipeline.has_pending)

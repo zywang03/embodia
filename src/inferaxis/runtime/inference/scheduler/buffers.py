@@ -101,6 +101,33 @@ class ExecutionCursor:
             return 1 if self._segment_slot == 0 else 0
         return max(self.interpolation_steps + 1 - self._segment_slot, 0)
 
+    def remaining_segment_actions(self) -> list[Action]:
+        if not self.buffer.has_actions:
+            return []
+
+        left_action = self.buffer.current_action()
+        right_action = self.buffer.next_action()
+        if self.interpolation_steps <= 0 or right_action is None:
+            return [left_action] if self._segment_slot == 0 else []
+
+        if self._segment_slot == 0:
+            remaining_actions: list[Action] = [left_action]
+            start_slot = 1
+        else:
+            remaining_actions = []
+            start_slot = self._segment_slot
+
+        for segment_slot in range(start_slot, self.interpolation_steps + 1):
+            right_weight = segment_slot / float(self.interpolation_steps + 1)
+            remaining_actions.append(
+                actions.interpolate_action(
+                    left_action,
+                    right_action,
+                    right_weight=right_weight,
+                )
+            )
+        return remaining_actions
+
     def next_action(self) -> Action:
         left_action = self.buffer.current_action()
         right_action = self.buffer.next_action()

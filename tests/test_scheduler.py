@@ -492,6 +492,73 @@ class SchedulerTests(unittest.TestCase):
             [2.0],
         )
 
+    def test_chunk_scheduler_execution_buffer_compatibility_view_exposes_true_segment_actions(
+        self,
+    ) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=2,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=make_chunk_request(
+                    request_step=0,
+                    request_time_s=0.0,
+                    history_start=0,
+                    history_end=0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    overlap_steps=0,
+                    latency_steps=0,
+                    request_trigger_steps=0,
+                    plan_start_step=0,
+                    history_actions=[],
+                ),
+                prepared_actions=[arm_action(0.0), arm_action(3.0)],
+                source_plan_length=2,
+            )
+        )
+
+        self.assertEqual(
+            [arm_value(action) for action in scheduler._execution_buffer],
+            [0.0, 1.0, 2.0],
+        )
+
+        self.assertEqual(arm_value(scheduler._pop_next_action()), 0.0)
+
+        self.assertEqual(
+            [arm_value(action) for action in scheduler._execution_buffer],
+            [1.0, 2.0],
+        )
+
+    def test_chunk_scheduler_buffer_getter_returns_detached_snapshot(
+        self,
+    ) -> None:
+        scheduler = ChunkScheduler(
+            interpolation_steps=0,
+        )
+        scheduler._integrate_completed_chunk(
+            _CompletedChunk(
+                request=make_chunk_request(
+                    request_step=0,
+                    request_time_s=0.0,
+                    active_chunk_length=0,
+                    remaining_steps=0,
+                    latency_steps=0,
+                ),
+                prepared_actions=[arm_action(1.0), arm_action(2.0)],
+                source_plan_length=2,
+            )
+        )
+
+        snapshot = scheduler._buffer
+        snapshot.popleft()
+
+        self.assertEqual(scheduler._raw_buffer.remaining_raw_count, 2)
+        self.assertEqual(
+            [arm_value(action) for action in scheduler._raw_buffer.remaining_actions()],
+            [1.0, 2.0],
+        )
+
     def test_chunk_scheduler_interpolation_count_matches_formula(self) -> None:
         scheduler = ChunkScheduler(
             interpolation_steps=2,

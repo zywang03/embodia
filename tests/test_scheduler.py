@@ -1036,6 +1036,7 @@ class SchedulerTests(unittest.TestCase):
             warmup_requests=1,
             profile_delay_requests=2,
             enable_rtc=True,
+            slow_rtc_bootstrap="confirm",
             clock=DeterministicClock(
                 [
                     0.00,
@@ -1062,6 +1063,60 @@ class SchedulerTests(unittest.TestCase):
         self.assertIsNone(requests[0].rtc_args)
         self.assertIsNotNone(requests[1].rtc_args)
         self.assertIsNotNone(requests[2].rtc_args)
+        self.assertTrue(
+            any(
+                "last RTC warmup request carrying prev_action_chunk took"
+                in str(warning.message)
+                for warning in caught
+            )
+        )
+
+    def test_chunk_scheduler_bootstrap_warns_without_prompt_by_default_after_slow_rtc_request(
+        self,
+    ) -> None:
+        requests: list[infra.ChunkRequest] = []
+
+        def action_source(
+            obs: infra.Frame,
+            request: infra.ChunkRequest,
+        ) -> list[infra.Action]:
+            del obs
+            requests.append(request)
+            return [arm_action(float(index + 1)) for index in range(18)]
+
+        scheduler = ChunkScheduler(
+            action_source=action_source,
+            steps_before_request=0,
+            execution_steps=17,
+            control_period_s=0.02,
+            warmup_requests=1,
+            profile_delay_requests=2,
+            enable_rtc=True,
+            clock=DeterministicClock(
+                [
+                    0.00,
+                    0.01,
+                    0.11,
+                    0.20,
+                    0.21,
+                    0.31,
+                    0.40,
+                    0.41,
+                    0.96,
+                ]
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with mock.patch("builtins.input") as prompt:
+                bootstrapped = scheduler.bootstrap(RuntimeRobot().get_obs())
+
+        self.assertTrue(bootstrapped)
+        self.assertEqual(prompt.call_count, 0)
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(scheduler.latency_estimate_ready())
+        self.assertGreater(len(scheduler._buffer), 0)
         self.assertTrue(
             any(
                 "last RTC warmup request carrying prev_action_chunk took"
@@ -1170,6 +1225,7 @@ class SchedulerTests(unittest.TestCase):
             warmup_requests=1,
             profile_delay_requests=2,
             enable_rtc=True,
+            slow_rtc_bootstrap="confirm",
             clock=DeterministicClock(
                 [
                     0.00,

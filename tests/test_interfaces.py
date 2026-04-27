@@ -66,10 +66,22 @@ class InterfaceTests(unittest.TestCase):
             self.assertFalse(hasattr(infra, removed_name), removed_name)
 
     def test_make_chunk_request_rejects_removed_legacy_fields(self) -> None:
-        with self.assertRaises(AssertionError) as ctx:
-            make_chunk_request(history_start=0)
+        for legacy_field in (
+            "history_start",
+            "history_end",
+            "overlap_steps",
+            "request_trigger_steps",
+            "plan_start_step",
+            "history_actions",
+        ):
+            with self.subTest(legacy_field=legacy_field):
+                with self.assertRaises(AssertionError) as ctx:
+                    make_chunk_request(**{legacy_field: 0})
 
-        self.assertIn("Unexpected ChunkRequest test fields", str(ctx.exception))
+                self.assertIn(
+                    "Unexpected ChunkRequest test fields",
+                    str(ctx.exception),
+                )
 
     def test_action_roundtrip_uses_grouped_commands(self) -> None:
         action = coerce_action(

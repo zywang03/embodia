@@ -12,6 +12,11 @@ from ....core.schema import Action
 
 @dataclass(slots=True)
 class LatencyTracker:
+    """Track latency estimates and projection state for scheduler requests.
+
+    Startup profile sampling remains the responsibility of bootstrap orchestration.
+    """
+
     latency_ema_beta: float = 0.5
     initial_latency_steps: float = 0.0
     fixed_latency_steps: float | None = None
@@ -45,7 +50,15 @@ class LatencyTracker:
         return self.bootstrap_complete
 
     def control_steps_for_raw_count(self, raw_steps: int) -> int:
-        if raw_steps <= 0:
+        if isinstance(raw_steps, bool) or not isinstance(raw_steps, int):
+            raise InterfaceValidationError(
+                f"raw_steps must be an int, got {type(raw_steps).__name__}."
+            )
+        if raw_steps < 0:
+            raise InterfaceValidationError(
+                f"raw_steps must be >= 0, got {raw_steps!r}."
+            )
+        if raw_steps == 0:
             return 0
         return raw_steps + max(raw_steps - 1, 0) * self.interpolation_steps
 

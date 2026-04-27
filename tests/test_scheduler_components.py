@@ -128,6 +128,33 @@ class ExecutionCursorTests(unittest.TestCase):
 
 
 class LatencyTrackerTests(unittest.TestCase):
+    def test_tracker_control_steps_for_raw_count_rejects_bool(self) -> None:
+        tracker = LatencyTracker(interpolation_steps=1)
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            tracker.control_steps_for_raw_count(True)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "raw_steps must be an int, got bool.",
+        )
+
+    def test_tracker_control_steps_for_raw_count_rejects_negative(self) -> None:
+        tracker = LatencyTracker(interpolation_steps=1)
+
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            tracker.control_steps_for_raw_count(-1)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "raw_steps must be >= 0, got -1.",
+        )
+
+    def test_tracker_control_steps_for_raw_count_accepts_zero(self) -> None:
+        tracker = LatencyTracker(interpolation_steps=1)
+
+        self.assertEqual(tracker.control_steps_for_raw_count(0), 0)
+
     def test_tracker_projects_control_latency_to_raw_steps(self) -> None:
         tracker = LatencyTracker(interpolation_steps=1)
 
@@ -138,6 +165,18 @@ class LatencyTrackerTests(unittest.TestCase):
         )
 
         self.assertEqual(raw_delay, 2)
+
+    def test_tracker_clamps_negative_requested_latency_offset(self) -> None:
+        tracker = LatencyTracker(latency_steps_offset=-10)
+
+        self.assertEqual(
+            tracker.estimated_request_latency_steps(
+                control_latency_steps=2,
+                raw_count=1,
+                execution_buffer_steps=0,
+            ),
+            0,
+        )
 
     def test_tracker_updates_after_warmup_requests(self) -> None:
         tracker = LatencyTracker(

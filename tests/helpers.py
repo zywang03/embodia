@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
+
 import inferaxis as infra
 import numpy as np
 
-from inferaxis import Action, ChunkRequest, Frame, PolicySpec, RobotSpec
-from inferaxis.core.schema import ComponentSpec, PolicyOutputSpec
+from inferaxis import Action, ChunkRequest, Frame
+from inferaxis.core.schema import ComponentSpec, PolicyOutputSpec, PolicySpec, RobotSpec
 
 
 def demo_image() -> np.ndarray:
@@ -179,8 +180,8 @@ class RuntimeRobot:
     def __init__(self) -> None:
         self.last_action: infra.Action | None = None
 
-    def get_spec(self) -> infra.RobotSpec:
-        return infra.RobotSpec(
+    def get_spec(self) -> RobotSpec:
+        return RobotSpec(
             name="runtime_robot",
             image_keys=["front_rgb"],
             components=[

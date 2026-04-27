@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inferaxis as infra
 import numpy as np
+from inferaxis.core.transform import action_to_dict
 
 
 class YourRobot:
@@ -91,7 +92,7 @@ def main() -> None:
             "step:",
             step_index,
             "action:",
-            infra.action_to_dict(result.action),
+            action_to_dict(result.action),
             "plan_refreshed:",
             result.plan_refreshed,
             "wait:",

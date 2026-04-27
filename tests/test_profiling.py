@@ -11,6 +11,7 @@ from unittest import mock
 
 import inferaxis as infra
 
+from inferaxis.core.errors import InterfaceValidationError
 from inferaxis.runtime.inference.scheduler.buffers import (
     ExecutionCursor,
     RawChunkBuffer,
@@ -531,7 +532,7 @@ class ProfilingTests(unittest.TestCase):
                 steps_before_request=0,
             )
 
-            with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            with self.assertRaises(InterfaceValidationError) as ctx:
                 infra.run_step(
                     observe_fn=robot.get_obs,
                     act_fn=robot.send_action,

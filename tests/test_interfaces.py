@@ -6,17 +6,26 @@ import unittest
 
 import inferaxis as infra
 import numpy as np
+from inferaxis.core.errors import InterfaceValidationError
 from inferaxis.core.schema import (
     Command,
     CommandKindSpec,
     PolicyOutputSpec,
+    PolicySpec,
+    RobotSpec,
     get_command_kind_spec,
     is_known_command_kind,
     register_command_kind,
     validate_command,
 )
-from inferaxis.core.transform import coerce_command
-from inferaxis.runtime.checks import check_policy
+from inferaxis.core.transform import (
+    action_to_dict,
+    coerce_action,
+    coerce_command,
+    coerce_frame,
+    frame_to_dict,
+)
+from inferaxis.runtime.checks import check_pair, check_policy
 
 from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
 
@@ -24,8 +33,34 @@ from helpers import DummyPolicy, DummyRobot, assert_array_equal, demo_image
 class InterfaceTests(unittest.TestCase):
     """Coverage for the schema and function-first runtime helpers."""
 
+    def test_root_public_api_is_minimal(self) -> None:
+        expected_names = {
+            "Action",
+            "BuiltinCommandKind",
+            "ChunkRequest",
+            "Command",
+            "Frame",
+            "InferenceMode",
+            "InferenceRuntime",
+            "RealtimeController",
+            "run_step",
+        }
+
+        self.assertEqual(set(infra.__all__), expected_names)
+        for removed_name in (
+            "InterfaceValidationError",
+            "PolicySpec",
+            "RobotSpec",
+            "action_to_dict",
+            "check_pair",
+            "coerce_action",
+            "coerce_frame",
+            "frame_to_dict",
+        ):
+            self.assertFalse(hasattr(infra, removed_name), removed_name)
+
     def test_action_roundtrip_uses_grouped_commands(self) -> None:
-        action = infra.coerce_action(
+        action = coerce_action(
             {
                 "arm": {
                     "command": "cartesian_pose_delta",
@@ -45,7 +80,7 @@ class InterfaceTests(unittest.TestCase):
         )
         assert_array_equal(self, action.get_command("gripper").value, [0.8])  # type: ignore[union-attr]
         self.assertEqual(
-            infra.action_to_dict(action),
+            action_to_dict(action),
             {
                 "arm": {
                     "command": "cartesian_pose_delta",
@@ -70,8 +105,8 @@ class InterfaceTests(unittest.TestCase):
             ]
         }
 
-        with self.assertRaises(infra.InterfaceValidationError):
-            infra.coerce_action(action)
+        with self.assertRaises(InterfaceValidationError):
+            coerce_action(action)
 
     def test_command_kind_registry_exposes_builtins(self) -> None:
         spec = get_command_kind_spec("joint_position")
@@ -224,7 +259,7 @@ class InterfaceTests(unittest.TestCase):
             value=command_value,
         )
 
-        copied_frame = infra.coerce_frame(frame)
+        copied_frame = coerce_frame(frame)
         copied_command = coerce_command(command)
 
         self.assertIs(copied_frame, frame)
@@ -238,7 +273,7 @@ class InterfaceTests(unittest.TestCase):
         state = np.zeros(6, dtype=np.float64)
         command_value = np.zeros(6, dtype=np.float64)
 
-        frame = infra.coerce_frame(
+        frame = coerce_frame(
             {
                 "images": {"front_rgb": image},
                 "state": {"arm": state},
@@ -278,7 +313,7 @@ class InterfaceTests(unittest.TestCase):
         )
 
     def test_validate_command_rejects_unknown_non_custom_kind(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             validate_command(
                 Command(
                     command="definitely_unknown_kind",
@@ -292,7 +327,7 @@ class InterfaceTests(unittest.TestCase):
 
         sample_frame = executor.reset()
         check_policy(policy, sample_frame=sample_frame)
-        infra.check_pair(executor, policy, sample_frame=sample_frame)
+        check_pair(executor, policy, sample_frame=sample_frame)
 
     def test_check_pair_is_dry_run_and_observes_only_once(self) -> None:
         class CountingExecutor(DummyRobot):
@@ -313,7 +348,7 @@ class InterfaceTests(unittest.TestCase):
         executor = CountingExecutor()
         policy = DummyPolicy()
 
-        infra.check_pair(executor, policy)
+        check_pair(executor, policy)
 
         self.assertEqual(executor.obs_calls, 1)
         self.assertEqual(executor.send_calls, 0)
@@ -322,8 +357,8 @@ class InterfaceTests(unittest.TestCase):
         executor = DummyRobot()
 
         class IncompatiblePolicy:
-            def get_spec(self) -> infra.PolicySpec:
-                return infra.PolicySpec(
+            def get_spec(self) -> PolicySpec:
+                return PolicySpec(
                     name="bad_model",
                     required_image_keys=["front_rgb"],
                     required_state_keys=["arm"],
@@ -351,8 +386,8 @@ class InterfaceTests(unittest.TestCase):
                     value=[1.0],
                 )
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
-            infra.check_pair(
+        with self.assertRaises(InterfaceValidationError) as ctx:
+            check_pair(
                 executor,
                 IncompatiblePolicy(),
                 sample_frame=executor.reset(),
@@ -427,7 +462,7 @@ class InterfaceTests(unittest.TestCase):
         )  # type: ignore[union-attr]
 
     def test_run_step_accepts_frame_without_local_execution(self) -> None:
-        frame = infra.coerce_frame(
+        frame = coerce_frame(
             {
                 "images": {"front_rgb": demo_image()},
                 "state": {"arm": [0.0] * 6},
@@ -507,7 +542,7 @@ class InterfaceTests(unittest.TestCase):
     def test_run_step_rejects_missing_action_callable(self) -> None:
         executor = DummyRobot()
 
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             infra.run_step(
                 observe_fn=executor.get_obs,
                 act_fn=executor.send_action,
@@ -554,11 +589,11 @@ class InterfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            infra.frame_to_dict(result.frame)["state"]["arm"],
+            frame_to_dict(result.frame)["state"]["arm"],
             [0.0] * 6,
         )
         self.assertEqual(
-            infra.action_to_dict(result.action)["arm"]["command"],
+            action_to_dict(result.action)["arm"]["command"],
             "cartesian_pose_delta",
         )
 
@@ -601,7 +636,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(second.frame.sequence_id, 2)
 
     def test_coerce_frame_auto_fills_timestamp_ns(self) -> None:
-        frame = infra.coerce_frame(
+        frame = coerce_frame(
             {
                 "timestamp_ns": 1,
                 "sequence_id": 99,
@@ -633,8 +668,8 @@ class InterfaceTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.reset_calls = 0
 
-            def get_spec(self) -> infra.PolicySpec:
-                return infra.PolicySpec(
+            def get_spec(self) -> PolicySpec:
+                return PolicySpec(
                     name="reset_returning_policy",
                     required_image_keys=["front_rgb"],
                     required_state_keys=["arm"],

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import inferaxis as infra
 import numpy as np
+from inferaxis.core.transform import action_to_dict, frame_to_dict
 
 
 class YourRobot:
@@ -105,7 +106,7 @@ def main() -> None:
 
     records: list[dict[str, object]] = []
     reset_frame = robot.reset()
-    records.append({"frame": infra.frame_to_dict(reset_frame), "action": None})
+    records.append({"frame": frame_to_dict(reset_frame), "action": None})
 
     for _ in range(3):
         result = infra.run_step(
@@ -115,8 +116,8 @@ def main() -> None:
         )
         records.append(
             {
-                "frame": infra.frame_to_dict(result.frame),
-                "action": infra.action_to_dict(result.action),
+                "frame": frame_to_dict(result.frame),
+                "action": action_to_dict(result.action),
             }
         )
 

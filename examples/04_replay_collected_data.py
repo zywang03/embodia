@@ -12,6 +12,12 @@ from pathlib import Path
 
 import inferaxis as infra
 import numpy as np
+from inferaxis.core.transform import (
+    action_to_dict,
+    coerce_action,
+    coerce_frame,
+    frame_to_dict,
+)
 
 
 class YourRobot:
@@ -103,7 +109,7 @@ def main() -> None:
     if not episode_path.exists():
         teleop = DemoTeleop()
         records: list[dict[str, object]] = [
-            {"frame": infra.frame_to_dict(robot.reset()), "action": None}
+            {"frame": frame_to_dict(robot.reset()), "action": None}
         ]
         for _ in range(3):
             result = infra.run_step(
@@ -113,8 +119,8 @@ def main() -> None:
             )
             records.append(
                 {
-                    "frame": infra.frame_to_dict(result.frame),
-                    "action": infra.action_to_dict(result.action),
+                    "frame": frame_to_dict(result.frame),
+                    "action": action_to_dict(result.action),
                 }
             )
 
@@ -135,9 +141,9 @@ def main() -> None:
                 continue
             infra.run_step(
                 act_fn=robot.send_action,
-                frame=infra.coerce_frame(frame),
+                frame=coerce_frame(frame),
                 act_src_fn=lambda _frame, _request, recorded_action=action: (
-                    infra.coerce_action(recorded_action)
+                    coerce_action(recorded_action)
                 ),
             )
             replayed += 1

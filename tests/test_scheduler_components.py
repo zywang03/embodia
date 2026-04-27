@@ -7,6 +7,7 @@ import unittest
 
 import inferaxis as infra
 
+from inferaxis.core.errors import InterfaceValidationError
 from inferaxis.runtime.inference.scheduler.buffers import (
     ExecutionCursor,
     RawChunkBuffer,
@@ -22,7 +23,7 @@ class RawChunkBufferTests(unittest.TestCase):
     def test_buffer_current_action_reports_empty_buffer(self) -> None:
         buffer = RawChunkBuffer()
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             buffer.current_action()
 
         self.assertIn("RawChunkBuffer", str(ctx.exception))
@@ -134,7 +135,7 @@ class LatencyTrackerTests(unittest.TestCase):
     def test_tracker_control_steps_for_raw_count_rejects_bool(self) -> None:
         tracker = LatencyTracker(interpolation_steps=1)
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             tracker.control_steps_for_raw_count(True)
 
         self.assertEqual(
@@ -145,7 +146,7 @@ class LatencyTrackerTests(unittest.TestCase):
     def test_tracker_control_steps_for_raw_count_rejects_negative(self) -> None:
         tracker = LatencyTracker(interpolation_steps=1)
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             tracker.control_steps_for_raw_count(-1)
 
         self.assertEqual(
@@ -233,7 +234,7 @@ class RtcWindowBuilderTests(unittest.TestCase):
 
         builder.lock_chunk_total_length(4)
 
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             builder.lock_chunk_total_length(3)
 
 

@@ -7,6 +7,7 @@ import threading
 import unittest
 
 import inferaxis as infra
+from inferaxis.core.errors import InterfaceValidationError
 
 from helpers import (
     PlanningSource,
@@ -76,7 +77,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertFalse(hasattr(infra, "recommend_inference_mode"))
 
     def test_runtime_profile_requires_async_mode(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.SYNC,
                 profile=True,
@@ -85,7 +86,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertIn("mode=ASYNC", str(ctx.exception))
 
     def test_runtime_rejects_invalid_profile_output_dir(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.ASYNC,
                 profile_output_dir=object(),  # type: ignore[arg-type]
@@ -101,7 +102,7 @@ class RuntimeEngineTests(unittest.TestCase):
 
     def test_runtime_rejects_invalid_interpolation_steps(self) -> None:
         for invalid in (-1, 1.5, True):
-            with self.assertRaises(infra.InterfaceValidationError):
+            with self.assertRaises(InterfaceValidationError):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.SYNC,
                     interpolation_steps=invalid,  # type: ignore[arg-type]
@@ -178,7 +179,7 @@ class RuntimeEngineTests(unittest.TestCase):
 
     def test_runtime_rejects_invalid_control_hz(self) -> None:
         for invalid in (0, -1, True, "50"):
-            with self.assertRaises(infra.InterfaceValidationError):
+            with self.assertRaises(InterfaceValidationError):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.SYNC,
                     control_hz=invalid,  # type: ignore[arg-type]
@@ -208,7 +209,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(runtime.validation, "off")
 
     def test_runtime_rejects_unknown_validation_strategy(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.ASYNC,
                 validation="sometimes",
@@ -271,7 +272,7 @@ class RuntimeEngineTests(unittest.TestCase):
 
     def test_runtime_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
-            with self.assertRaises(infra.InterfaceValidationError):
+            with self.assertRaises(InterfaceValidationError):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.SYNC,
                     latency_steps_offset=invalid,  # type: ignore[arg-type]
@@ -305,7 +306,7 @@ class RuntimeEngineTests(unittest.TestCase):
 
     def test_runtime_rejects_invalid_execution_steps(self) -> None:
         for invalid in (0, -1, 1.5, True):
-            with self.assertRaises(infra.InterfaceValidationError):
+            with self.assertRaises(InterfaceValidationError):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.ASYNC,
                     steps_before_request=0,
@@ -323,7 +324,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(runtime.slow_rtc_bootstrap, "error")
 
     def test_runtime_rejects_invalid_slow_rtc_bootstrap_policy(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.ASYNC,
                 execution_steps=2,
@@ -662,7 +663,7 @@ class RuntimeEngineTests(unittest.TestCase):
         refreshed_bad_frame = robot.get_obs()
         refreshed_bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
 
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             infra.run_step(
                 frame=refreshed_bad_frame,
                 act_fn=robot.send_action,
@@ -809,7 +810,7 @@ class RuntimeEngineTests(unittest.TestCase):
 
         runtime.slow_rtc_bootstrap = "ask-politely"
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.run_step(
                 observe_fn=robot.get_obs,
                 act_fn=robot.send_action,
@@ -1034,7 +1035,7 @@ class RuntimeEngineTests(unittest.TestCase):
             ensemble_weight=0.5,
         )
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.run_step(
                 observe_fn=robot.get_obs,
                 act_fn=robot.send_action,
@@ -1157,7 +1158,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(arm_value(first.action), 1.0)
         self.assertIsNone(runtime._chunk_scheduler)
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.run_step(
                 observe_fn=robot.get_obs,
                 act_fn=robot.send_action,
@@ -1500,7 +1501,7 @@ class RuntimeEngineTests(unittest.TestCase):
             execution_steps=1,
         )
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.run_step(
                 observe_fn=robot.get_obs,
                 act_fn=robot.send_action,
@@ -1516,7 +1517,7 @@ class RuntimeEngineTests(unittest.TestCase):
             steps_before_request=0,
         )
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             infra.run_step(
                 observe_fn=robot.get_obs,
                 act_fn=robot.send_action,

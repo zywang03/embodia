@@ -14,6 +14,7 @@ import warnings
 import inferaxis as infra
 import numpy as np
 
+from inferaxis.core.errors import InterfaceValidationError
 from inferaxis.runtime.inference.scheduler import ChunkScheduler, _CompletedChunk
 from inferaxis.runtime.inference.scheduler.latency import LatencyTracker
 from inferaxis.runtime.inference.scheduler.rtc import RtcWindowBuilder
@@ -975,7 +976,7 @@ class SchedulerTests(unittest.TestCase):
 
     def test_chunk_scheduler_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
-            with self.assertRaises(infra.InterfaceValidationError):
+            with self.assertRaises(InterfaceValidationError):
                 ChunkScheduler(
                     enable_rtc=True,
                     execution_steps=1,
@@ -1348,7 +1349,7 @@ class SchedulerTests(unittest.TestCase):
         bad_frame = infra.Frame(images={}, state={})
         bad_frame.timestamp_ns = -1
 
-        with self.assertRaises(infra.InterfaceValidationError):
+        with self.assertRaises(InterfaceValidationError):
             scheduler.next_action(bad_frame, prefetch_async=False)
 
     def test_chunk_scheduler_validation_off_skips_startup_frame_validation(
@@ -1450,7 +1451,7 @@ class SchedulerTests(unittest.TestCase):
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             with mock.patch("builtins.input", return_value="n") as prompt:
-                with self.assertRaises(infra.InterfaceValidationError) as ctx:
+                with self.assertRaises(InterfaceValidationError) as ctx:
                     scheduler.bootstrap(RuntimeRobot().get_obs())
 
         self.assertEqual(prompt.call_count, 1)
@@ -1478,7 +1479,7 @@ class SchedulerTests(unittest.TestCase):
             enable_rtc=True,
         )
 
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+        with self.assertRaises(InterfaceValidationError) as ctx:
             scheduler.bootstrap(RuntimeRobot().get_obs())
 
         self.assertIn(

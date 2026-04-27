@@ -19,6 +19,16 @@ from inferaxis.runtime.inference.profiling import (
     _ProfiledRequestSample,
     _build_async_buffer_trace,
 )
+from inferaxis.runtime.inference.profiling.models import (
+    RuntimeInferenceProfile,
+    RuntimeProfileActionCommand,
+    RuntimeProfileActionStep,
+    RuntimeProfileChunkAction,
+    RuntimeProfileRequest,
+)
+from inferaxis.runtime.inference.profiling.render_runtime_html import (
+    _runtime_profile_html,
+)
 
 from helpers import (
     PlainRuntimeExecutor,
@@ -172,7 +182,9 @@ class ProfilingTests(unittest.TestCase):
             self.assertIn("InferenceRuntime Live Profile", html_text)
             self.assertIn("Step Trace: buffer size + chunk actions", html_text)
             self.assertIn("buffer_size", html_text)
+            self.assertIn("All channels", html_text)
             self.assertIn("arm[0]", html_text)
+            self.assertIn("arm[5]", html_text)
             self.assertIn("chunk 0 accepted", html_text)
 
     def test_async_runtime_profile_reads_buffer_counts_without_snapshots(self) -> None:
@@ -275,10 +287,20 @@ class ProfilingTests(unittest.TestCase):
             self.assertIsNone(pending_request["error"])
             self.assertEqual(pending_request["returned_chunk_length"], 2)
             self.assertEqual(pending_request["accepted_chunk_length"], 0)
-            self.assertIn(
-                "unused",
-                (Path(tmpdir) / "runtime_profile.html").read_text(encoding="utf-8"),
+            request_one_actions = [
+                action
+                for action in payload["chunk_actions"]
+                if action["request_index"] == 1
+            ]
+            self.assertEqual(
+                [action["status"] for action in request_one_actions],
+                ["unused", "unused"],
             )
+
+            html_text = (Path(tmpdir) / "runtime_profile.html").read_text(
+                encoding="utf-8",
+            )
+            self.assertNotIn("chunk 1 unused", html_text)
 
     def test_async_runtime_profile_marks_dropped_chunk_prefix_actions(self) -> None:
         robot = RuntimeRobot()
@@ -337,6 +359,114 @@ class ProfilingTests(unittest.TestCase):
             self.assertIn("chunk 1 dropped", html_text)
             self.assertIn("chunk 1 accepted", html_text)
             self.assertIn('"dash":"dash"', html_text)
+
+    def test_runtime_profile_html_hides_future_unexecuted_chunk_tail(self) -> None:
+        executed_command = RuntimeProfileActionCommand(
+            target="arm",
+            command="cartesian_pose_delta",
+            value=[11.125] * 6,
+            ref_frame=None,
+        )
+        later_executed_command = RuntimeProfileActionCommand(
+            target="arm",
+            command="cartesian_pose_delta",
+            value=[22.25] * 6,
+            ref_frame=None,
+        )
+        future_tail_command = RuntimeProfileActionCommand(
+            target="arm",
+            command="cartesian_pose_delta",
+            value=[98765.4321] * 6,
+            ref_frame=None,
+        )
+        profile = RuntimeInferenceProfile(
+            mode="async",
+            config={},
+            requests=[
+                RuntimeProfileRequest(
+                    request_index=0,
+                    request_step=0,
+                    launch_control_step=0,
+                    launch_time_s=0.0,
+                    reply_time_s=0.01,
+                    accepted_time_s=0.02,
+                    request_duration_s=0.01,
+                    prepare_duration_s=0.0,
+                    accept_delay_s=0.01,
+                    usable_latency_s=0.02,
+                    latency_hint_raw_steps=0,
+                    waited_control_steps=0,
+                    stale_raw_steps=0,
+                    returned_chunk_length=4,
+                    accepted_chunk_length=4,
+                    accepted=True,
+                    dropped_as_stale=False,
+                    error=None,
+                )
+            ],
+            action_steps=[
+                RuntimeProfileActionStep(
+                    step_index=0,
+                    action_time_s=0.0,
+                    plan_refreshed=True,
+                    control_wait_s=0.0,
+                    buffer_size=4,
+                    execution_buffer_size=4,
+                    raw_commands=[executed_command],
+                    action_commands=[executed_command],
+                ),
+                RuntimeProfileActionStep(
+                    step_index=1,
+                    action_time_s=0.02,
+                    plan_refreshed=False,
+                    control_wait_s=0.0,
+                    buffer_size=3,
+                    execution_buffer_size=3,
+                    raw_commands=[later_executed_command],
+                    action_commands=[later_executed_command],
+                ),
+            ],
+            chunk_actions=[
+                RuntimeProfileChunkAction(
+                    request_index=0,
+                    request_step=0,
+                    action_index=0,
+                    step_index=0,
+                    status="accepted",
+                    commands=[executed_command],
+                ),
+                RuntimeProfileChunkAction(
+                    request_index=0,
+                    request_step=0,
+                    action_index=1,
+                    step_index=1,
+                    status="accepted",
+                    commands=[later_executed_command],
+                ),
+                RuntimeProfileChunkAction(
+                    request_index=0,
+                    request_step=0,
+                    action_index=2,
+                    step_index=2,
+                    status="accepted",
+                    commands=[future_tail_command],
+                ),
+                RuntimeProfileChunkAction(
+                    request_index=0,
+                    request_step=0,
+                    action_index=3,
+                    step_index=3,
+                    status="accepted",
+                    commands=[future_tail_command],
+                ),
+            ],
+        )
+
+        html_text = _runtime_profile_html(profile)
+
+        self.assertIn("11.125", html_text)
+        self.assertIn("22.25", html_text)
+        self.assertNotIn("98765.4321", html_text)
 
     def test_async_runtime_profile_tracks_startup_probe_requests_without_errors(
         self,
@@ -609,13 +739,12 @@ class ProfilingTests(unittest.TestCase):
             self.assertIn("estimated_max_buffered_hz", payload)
             self.assertEqual(profile.to_dict()["steps"], 4)
 
-    def test_profile_sync_inference_builds_async_buffer_trace_and_svg(self) -> None:
+    def test_profile_sync_inference_builds_async_buffer_trace_json_only(self) -> None:
         robot = RuntimeRobot()
         policy = RuntimePolicy()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             trace_json_path = Path(tmpdir) / "buffer_trace.json"
-            trace_svg_path = Path(tmpdir) / "buffer_trace.svg"
             profile = infra.profile_sync_inference(
                 observe_fn=robot.get_obs,
                 target_hz=100.0,
@@ -645,14 +774,13 @@ class ProfilingTests(unittest.TestCase):
             self.assertIn("async_buffer_trace", payload)
 
             profile.write_async_buffer_trace_json(trace_json_path)
-            profile.write_async_buffer_trace_svg(trace_svg_path)
 
             self.assertTrue(trace_json_path.exists())
-            self.assertTrue(trace_svg_path.exists())
             trace_payload = json.loads(trace_json_path.read_text(encoding="utf-8"))
             self.assertIn("steps", trace_payload)
             self.assertIn("requests", trace_payload)
-            self.assertIn("<svg", trace_svg_path.read_text(encoding="utf-8"))
+            self.assertFalse(hasattr(profile, "write_async_buffer_trace_svg"))
+            self.assertFalse(hasattr(trace, "write_svg"))
 
     def test_async_buffer_trace_drops_only_executed_steps_during_underrun(self) -> None:
         trace = _build_async_buffer_trace(

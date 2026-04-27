@@ -163,7 +163,6 @@ def main() -> None:
     )
     if output_dir is not None:
         profile.write_async_buffer_trace_json(output_dir / "buffer_trace.json")
-        profile.write_async_buffer_trace_svg(output_dir / "buffer_trace.svg")
 
     recommendation = infra.recommend_inference_mode(
         observe_fn=robot.get_obs,
@@ -204,7 +203,6 @@ def main() -> None:
         print("  wrote_profile_json:", output_dir / "profile.json")
         print("  wrote_recommendation_json:", output_dir / "recommendation.json")
         print("  wrote_buffer_trace_json:", output_dir / "buffer_trace.json")
-        print("  wrote_buffer_trace_svg:", output_dir / "buffer_trace.svg")
 
 
 if __name__ == "__main__":

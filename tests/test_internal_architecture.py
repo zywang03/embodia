@@ -68,23 +68,16 @@ class InternalArchitectureTests(unittest.TestCase):
 
     def test_profiling_render_internal_modules_reexport_helpers(self) -> None:
         from inferaxis.runtime.inference.profiling import render as render_module
-        from inferaxis.runtime.inference.profiling import render_async_trace
         from inferaxis.runtime.inference.profiling import render_common
         from inferaxis.runtime.inference.profiling import render_runtime_html
-        from inferaxis.runtime.inference.profiling import render_runtime_svg
 
         expected_names = {
-            "_async_buffer_trace_svg",
             "_format_profile_value",
             "_runtime_action_channels",
-            "_runtime_action_trace_section",
             "_runtime_chunk_action_channel_keys",
-            "_runtime_combined_step_trace",
             "_runtime_profile_html",
-            "_runtime_profile_svg",
             "_runtime_request_status",
             "_seconds_to_ms",
-            "_step_plot_points",
         }
 
         self.assertEqual(set(render_module.__all__), expected_names)
@@ -93,32 +86,12 @@ class InternalArchitectureTests(unittest.TestCase):
             render_module._format_profile_value,
         )
         self.assertIs(
-            render_async_trace._step_plot_points,
-            render_module._step_plot_points,
-        )
-        self.assertIs(
-            render_async_trace._async_buffer_trace_svg,
-            render_module._async_buffer_trace_svg,
-        )
-        self.assertIs(
-            render_runtime_svg._runtime_action_channels,
+            render_runtime_html._runtime_action_channels,
             render_module._runtime_action_channels,
         )
         self.assertIs(
-            render_runtime_svg._runtime_action_trace_section,
-            render_module._runtime_action_trace_section,
-        )
-        self.assertIs(
-            render_runtime_svg._runtime_chunk_action_channel_keys,
+            render_runtime_html._runtime_chunk_action_channel_keys,
             render_module._runtime_chunk_action_channel_keys,
-        )
-        self.assertIs(
-            render_runtime_svg._runtime_combined_step_trace,
-            render_module._runtime_combined_step_trace,
-        )
-        self.assertIs(
-            render_runtime_svg._runtime_profile_svg,
-            render_module._runtime_profile_svg,
         )
         self.assertIs(
             render_runtime_html._runtime_profile_html,

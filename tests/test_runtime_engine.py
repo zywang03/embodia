@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import threading
 import unittest
 
@@ -195,13 +196,12 @@ class RuntimeEngineTests(unittest.TestCase):
 
         self.assertEqual(runtime.latency_steps_offset, -2)
 
-    def test_runtime_accepts_startup_validation_only(self) -> None:
-        runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            startup_validation_only=True,
-        )
-
-        self.assertTrue(runtime.startup_validation_only)
+    def test_runtime_no_longer_accepts_startup_validation_only(self) -> None:
+        with self.assertRaises(TypeError):
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                startup_validation_only=True,  # type: ignore[call-arg]
+            )
 
     def test_runtime_accepts_validation_strategy(self) -> None:
         runtime = infra.InferenceRuntime(
@@ -210,31 +210,6 @@ class RuntimeEngineTests(unittest.TestCase):
         )
 
         self.assertEqual(runtime.validation, "off")
-        self.assertFalse(runtime.startup_validation_only)
-
-    def test_runtime_maps_startup_validation_only_to_validation_strategy(self) -> None:
-        startup_runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            startup_validation_only=True,
-        )
-        always_runtime = infra.InferenceRuntime(
-            mode=infra.InferenceMode.ASYNC,
-            startup_validation_only=False,
-        )
-
-        self.assertEqual(startup_runtime.validation, "startup")
-        self.assertEqual(always_runtime.validation, "always")
-
-    def test_runtime_rejects_conflicting_validation_settings(self) -> None:
-        with self.assertRaises(infra.InterfaceValidationError) as ctx:
-            infra.InferenceRuntime(
-                mode=infra.InferenceMode.ASYNC,
-                startup_validation_only=True,
-                validation="always",
-            )
-
-        self.assertIn("validation", str(ctx.exception))
-        self.assertIn("startup_validation_only", str(ctx.exception))
 
     def test_runtime_rejects_unknown_validation_strategy(self) -> None:
         with self.assertRaises(infra.InterfaceValidationError) as ctx:
@@ -259,13 +234,34 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertTrue(runtime.enable_rtc)
         self.assertFalse(runtime.profile)
 
-    def test_async_realtime_preset_allows_legacy_validation_override(self) -> None:
-        runtime = infra.InferenceRuntime.async_realtime(
-            startup_validation_only=False,
-        )
+    def test_async_realtime_signature_exposes_runtime_tuning_knobs(self) -> None:
+        signature = inspect.signature(infra.InferenceRuntime.async_realtime)
 
-        self.assertEqual(runtime.validation, "always")
-        self.assertFalse(runtime.startup_validation_only)
+        self.assertNotIn(
+            inspect.Parameter.VAR_KEYWORD,
+            [param.kind for param in signature.parameters.values()],
+        )
+        expected_parameters = [
+            "profile",
+            "profile_output_dir",
+            "steps_before_request",
+            "execution_steps",
+            "warmup_requests",
+            "profile_delay_requests",
+            "interpolation_steps",
+            "ensemble_weight",
+            "control_hz",
+            "enable_rtc",
+            "slow_rtc_bootstrap",
+            "latency_steps_offset",
+            "validation",
+        ]
+        self.assertEqual(list(signature.parameters), expected_parameters)
+        for name in expected_parameters:
+            self.assertIs(
+                signature.parameters[name].kind,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
 
     def test_runtime_defaults_zeroed_async_tuning_knobs(self) -> None:
         runtime = infra.InferenceRuntime(
@@ -275,7 +271,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(runtime.steps_before_request, 0)
         self.assertEqual(runtime.latency_steps_offset, 0)
         self.assertEqual(runtime.interpolation_steps, 0)
-        self.assertTrue(runtime.startup_validation_only)
+        self.assertEqual(runtime.validation, "startup")
 
     def test_runtime_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
@@ -283,14 +279,6 @@ class RuntimeEngineTests(unittest.TestCase):
                 infra.InferenceRuntime(
                     mode=infra.InferenceMode.SYNC,
                     latency_steps_offset=invalid,  # type: ignore[arg-type]
-                )
-
-    def test_runtime_rejects_invalid_startup_validation_only(self) -> None:
-        for invalid in (1, "yes", None):
-            with self.assertRaises(infra.InterfaceValidationError):
-                infra.InferenceRuntime(
-                    mode=infra.InferenceMode.SYNC,
-                    startup_validation_only=invalid,  # type: ignore[arg-type]
                 )
 
     def test_runtime_no_longer_accepts_legacy_rtc_delay_offset_keyword(self) -> None:
@@ -572,7 +560,7 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertEqual(policy.requests[1].inference_delay, 1)
         self.assertEqual(policy.requests[2].inference_delay, 1)
 
-    def test_async_runtime_startup_validation_only_skips_steady_state_frame_validation(
+    def test_async_runtime_startup_validation_skips_steady_state_frame_validation(
         self,
     ) -> None:
         class ConstantChunkPolicy:
@@ -588,7 +576,7 @@ class RuntimeEngineTests(unittest.TestCase):
         policy = ConstantChunkPolicy()
         runtime = infra.InferenceRuntime(
             mode=infra.InferenceMode.ASYNC,
-            startup_validation_only=True,
+            validation="startup",
         )
 
         first = infra.run_step(
@@ -675,7 +663,6 @@ class RuntimeEngineTests(unittest.TestCase):
         self.assertFalse(runtime._chunk_scheduler.runtime_validation_enabled())
 
         runtime.validation = "startup"
-        runtime.startup_validation_only = True
         refreshed_bad_frame = robot.get_obs()
         refreshed_bad_frame.state["arm"] = [0.0] * 6  # type: ignore[assignment]
 

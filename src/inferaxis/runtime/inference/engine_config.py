@@ -9,7 +9,7 @@ from ...core.errors import InterfaceValidationError
 from ...shared.common import validate_positive_number
 from .control import RealtimeController
 from .optimizers import _normalize_blend_weight
-from .validation import UNSET_VALIDATION, resolve_validation_mode
+from .validation import resolve_validation_mode
 
 if TYPE_CHECKING:
     from .engine import InferenceMode, InferenceRuntime
@@ -44,13 +44,11 @@ def validate_runtime_config(
             "InferenceRuntime.profile_output_dir must be a path-like value when provided."
         )
 
-    resolved_validation, startup_validation_only = resolve_validation_mode(
+    resolved_validation = resolve_validation_mode(
         validation=runtime.validation,
-        startup_validation_only=runtime.startup_validation_only,
         field_name="InferenceRuntime",
     )
     runtime.validation = str(resolved_validation)
-    runtime.startup_validation_only = startup_validation_only
 
     _validate_nonnegative_int(
         runtime.steps_before_request,
@@ -144,11 +142,6 @@ def build_chunk_scheduler_kwargs(
         "slow_rtc_bootstrap": runtime.slow_rtc_bootstrap,
         "latency_steps_offset": runtime.latency_steps_offset,
         "validation": runtime.validation,
-        "startup_validation_only": (
-            UNSET_VALIDATION
-            if runtime.validation == "off"
-            else runtime.startup_validation_only
-        ),
         "live_profile": runtime._live_profile_recorder,
     }
 
@@ -161,7 +154,6 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
         field_name="InferenceRuntime.slow_rtc_bootstrap",
     )
     previous_validation = scheduler.validation
-    previous_startup_validation_only = scheduler.startup_validation_only
     scheduler.steps_before_request = runtime.steps_before_request
     scheduler.execution_steps = runtime.execution_steps
     scheduler.use_overlap_blend = runtime.ensemble_weight is not None
@@ -177,17 +169,10 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.slow_rtc_bootstrap = runtime.slow_rtc_bootstrap
     scheduler.latency_steps_offset = runtime.latency_steps_offset
     scheduler.validation = runtime.validation
-    scheduler.startup_validation_only = (
-        UNSET_VALIDATION
-        if runtime.validation == "off"
-        else runtime.startup_validation_only
-    )
     scheduler._validate_configuration(reset_latency_mode=False)
     if (
-        (previous_validation, previous_startup_validation_only)
-        != (scheduler.validation, scheduler.startup_validation_only)
-        and scheduler.validation != "off"
-        and scheduler.startup_validation_only
+        previous_validation != scheduler.validation
+        and scheduler.validation == "startup"
     ):
         scheduler._startup_validation_complete = False
     scheduler.live_profile = runtime._live_profile_recorder

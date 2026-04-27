@@ -109,7 +109,7 @@ def main() -> None:
             "sync run_step",
             infra.InferenceRuntime(
                 mode=infra.InferenceMode.SYNC,
-                startup_validation_only=True,
+                validation="startup",
             ),
             BenchmarkPolicy(chunk_size=1),
         ),
@@ -119,7 +119,7 @@ def main() -> None:
                 mode=infra.InferenceMode.ASYNC,
                 warmup_requests=0,
                 profile_delay_requests=0,
-                startup_validation_only=True,
+                validation="startup",
             ),
             BenchmarkPolicy(chunk_size=4),
         ),

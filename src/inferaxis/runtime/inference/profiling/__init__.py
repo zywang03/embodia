@@ -10,7 +10,6 @@ from .models import (
     InferenceModeRecommendation,
     SyncInferenceProfile,
 )
-from .render import _async_buffer_trace_svg, _step_plot_points
 from .simulation import (
     _PendingAsyncTraceRequest,
     _TraceActionSlot,

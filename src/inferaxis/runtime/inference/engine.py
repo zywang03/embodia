@@ -31,7 +31,7 @@ from .engine_scheduler import (
     ensure_chunk_scheduler,
     resolve_raw_action,
 )
-from .validation import UNSET_VALIDATION, ValidationMode
+from .validation import ValidationMode
 
 
 class InferenceMode(StrEnum):
@@ -59,7 +59,6 @@ class InferenceRuntime:
     slow_rtc_bootstrap: str = "warn"
     latency_steps_offset: int = 0
     validation: ValidationMode | str | None = None
-    startup_validation_only: bool | object = UNSET_VALIDATION
     realtime_controller: RealtimeController | None = field(
         default=None,
         init=False,
@@ -109,19 +108,46 @@ class InferenceRuntime:
         self.profile_output_dir = resolved_profile_output_dir
 
     @classmethod
-    def async_realtime(cls, **kwargs: object) -> "InferenceRuntime":
-        """Build the default async realtime runtime preset."""
+    def async_realtime(
+        cls,
+        *,
+        profile: bool = False,
+        profile_output_dir: str | PathLike[str] | None = None,
+        steps_before_request: int = 0,
+        execution_steps: int | None = None,
+        warmup_requests: int = 1,
+        profile_delay_requests: int = 3,
+        interpolation_steps: int = 0,
+        ensemble_weight: BlendWeight | None = None,
+        control_hz: float | None = None,
+        enable_rtc: bool = False,
+        slow_rtc_bootstrap: str = "warn",
+        latency_steps_offset: int = 0,
+        validation: ValidationMode | str = ValidationMode.STARTUP,
+    ) -> "InferenceRuntime":
+        """Build an async runtime preset while keeping tuning knobs visible.
+
+        The preset fixes ``mode=ASYNC`` and defaults validation to the startup
+        pass, but leaves runtime latency, RTC, profiling, interpolation, and
+        validation controls as explicit keyword-only parameters.
+        """
 
         preset_kwargs: dict[str, object] = {
             "mode": InferenceMode.ASYNC,
-            "validation": ValidationMode.STARTUP,
-            "profile": False,
-            "interpolation_steps": 0,
-            "ensemble_weight": None,
+            "validation": validation,
+            "profile": profile,
+            "profile_output_dir": profile_output_dir,
+            "steps_before_request": steps_before_request,
+            "execution_steps": execution_steps,
+            "warmup_requests": warmup_requests,
+            "profile_delay_requests": profile_delay_requests,
+            "interpolation_steps": interpolation_steps,
+            "ensemble_weight": ensemble_weight,
+            "control_hz": control_hz,
+            "enable_rtc": enable_rtc,
+            "slow_rtc_bootstrap": slow_rtc_bootstrap,
+            "latency_steps_offset": latency_steps_offset,
         }
-        if "startup_validation_only" in kwargs and "validation" not in kwargs:
-            preset_kwargs.pop("validation")
-        preset_kwargs.update(kwargs)
         return cls(**preset_kwargs)
 
     def reset(self) -> None:
@@ -176,7 +202,6 @@ class InferenceRuntime:
             "slow_rtc_bootstrap": self.slow_rtc_bootstrap,
             "latency_steps_offset": self.latency_steps_offset,
             "validation": self.validation,
-            "startup_validation_only": self.startup_validation_only,
         }
 
     def _flush_live_profile(self) -> None:
@@ -193,17 +218,14 @@ class InferenceRuntime:
 
         if self.validation == ValidationMode.OFF:
             return False
-        if not self.startup_validation_only:
+        if self.validation != ValidationMode.STARTUP:
             return True
         scheduler = self._chunk_scheduler
         if scheduler is None:
             return True
         if source_key is not None and self._chunk_scheduler_key != source_key:
             return True
-        if (
-            scheduler.validation != self.validation
-            or scheduler.startup_validation_only != self.startup_validation_only
-        ):
+        if scheduler.validation != self.validation:
             return True
         return scheduler.runtime_validation_enabled()
 

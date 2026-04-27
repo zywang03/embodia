@@ -11,7 +11,7 @@ import time
 from ....core.schema import Action
 from ..optimizers import BlendWeight
 from ..protocols import ActionSource, ActionSourceProtocol
-from ..validation import UNSET_VALIDATION, ValidationMode
+from ..validation import ValidationMode
 from . import actions, bootstrap, config, execution, latency, requests, rtc
 from .buffers import ExecutionCursor, RawChunkBuffer
 from .latency import LatencyTracker
@@ -41,7 +41,6 @@ class ChunkScheduler:
     slow_rtc_bootstrap: str = "warn"
     latency_steps_offset: int = 0
     validation: str | None = None
-    startup_validation_only: bool | object = UNSET_VALIDATION
     live_profile: object | None = None
     clock: Callable[[], float] = time.perf_counter
     _control_step: int = field(default=0, init=False, repr=False)
@@ -234,7 +233,7 @@ class ChunkScheduler:
 
         if self.validation == ValidationMode.OFF:
             return False
-        if not self.startup_validation_only:
+        if self.validation != ValidationMode.STARTUP:
             return True
         return not self._startup_validation_complete
 

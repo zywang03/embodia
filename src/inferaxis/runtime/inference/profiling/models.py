@@ -222,17 +222,6 @@ class AsyncBufferTrace:
             encoding="utf-8",
         )
 
-    def write_svg(self, path: str | PathLike[str]) -> None:
-        """Write a dependency-free SVG plot for the simulated buffer trace."""
-
-        from .render import _async_buffer_trace_svg
-
-        output_path = Path(path)
-        output_path.write_text(
-            _async_buffer_trace_svg(self),
-            encoding="utf-8",
-        )
-
 
 @dataclass(slots=True)
 class SyncInferenceProfile:
@@ -299,15 +288,6 @@ class SyncInferenceProfile:
                 "This profile does not contain an async buffer trace."
             )
         self.async_buffer_trace.write_json(path)
-
-    def write_async_buffer_trace_svg(self, path: str | PathLike[str]) -> None:
-        """Write the simulated async buffer trace to one SVG file."""
-
-        if self.async_buffer_trace is None:
-            raise InterfaceValidationError(
-                "This profile does not contain an async buffer trace."
-            )
-        self.async_buffer_trace.write_svg(path)
 
 
 @dataclass(slots=True)

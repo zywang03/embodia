@@ -2,16 +2,71 @@
 
 from __future__ import annotations
 
-from html import escape
 from typing import TYPE_CHECKING
-
-from .render_runtime_svg import (
-    _runtime_action_channels,
-    _runtime_chunk_action_channel_keys,
-)
 
 if TYPE_CHECKING:
     from .models import RuntimeInferenceProfile
+
+
+def _runtime_action_channels(
+    profile: "RuntimeInferenceProfile",
+) -> list[tuple[str, str, list[float | None]]]:
+    """Return action command channels in stable target/dimension order."""
+
+    steps = profile.action_steps
+    keys: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for step in steps:
+        for command in step.action_commands:
+            for dim_index, _ in enumerate(command.value):
+                key = (command.target, command.command, dim_index)
+                if key in seen:
+                    continue
+                seen.add(key)
+                keys.append(key)
+
+    channels: list[tuple[str, str, list[float | None]]] = []
+    for target, command_name, dim_index in keys:
+        values: list[float | None] = []
+        for step in steps:
+            value: float | None = None
+            for command in step.action_commands:
+                if command.target != target or command.command != command_name:
+                    continue
+                if dim_index < len(command.value):
+                    value = command.value[dim_index]
+                break
+            values.append(value)
+        channels.append((f"{target}[{dim_index}]", command_name, values))
+    return channels
+
+
+def _runtime_chunk_action_channel_keys(
+    profile: "RuntimeInferenceProfile",
+    *,
+    statuses: set[str] | None = None,
+) -> list[tuple[str, str, int]]:
+    """Return stable channel keys present in returned chunk actions."""
+
+    keys: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for action in profile.chunk_actions:
+        if statuses is not None and action.status not in statuses:
+            continue
+        for command in action.commands:
+            for dim_index, _ in enumerate(command.value):
+                key = (command.target, command.command, dim_index)
+                if key in seen:
+                    continue
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
+def _runtime_channel_label(target: str, dim_index: int) -> str:
+    """Return one compact per-dimension label for action visualizations."""
+
+    return f"{target}[{dim_index}]"
 
 
 def _runtime_request_status(request: object) -> tuple[str, str]:
@@ -44,8 +99,25 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
     requests = profile.requests
     action_steps = profile.action_steps
     channels = _runtime_action_channels(profile)
-    chunk_channel_keys = _runtime_chunk_action_channel_keys(profile)
+    visible_chunk_statuses = {"accepted", "dropped"}
+    max_executed_step_index = max(
+        (step.step_index for step in action_steps),
+        default=-1,
+    )
+    chunk_actions = [
+        action
+        for action in profile.chunk_actions
+        if action.status in visible_chunk_statuses
+        and action.step_index <= max_executed_step_index
+    ]
+    chunk_channel_keys = _runtime_chunk_action_channel_keys(
+        profile,
+        statuses=visible_chunk_statuses,
+    )
     summary = profile.summary()
+    trace_channel_labels: list[str | None] = []
+    default_trace_visibility: list[bool] = []
+    selectable_channels: list[str] = []
 
     fig = make_subplots(
         rows=2,
@@ -57,6 +129,19 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             "Step Trace: buffer size + chunk actions",
         ),
     )
+
+    def add_trace(
+        trace: object,
+        *,
+        row: int,
+        col: int,
+        channel_label: str | None = None,
+        visible: bool = True,
+    ) -> None:
+        setattr(trace, "visible", visible)
+        fig.add_trace(trace, row=row, col=col)
+        trace_channel_labels.append(channel_label)
+        default_trace_visibility.append(visible)
 
     request_labels = [f"req {request.request_index}" for request in requests]
     request_customdata = [
@@ -75,7 +160,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         ("accept wait", "accept_delay_s", "#10b981"),
     ]
     for label, attr_name, color in duration_specs:
-        fig.add_trace(
+        add_trace(
             go.Bar(
                 name=f"{label} ms",
                 x=request_labels,
@@ -105,7 +190,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
     if requests:
         statuses = [_runtime_request_status(request)[0] for request in requests]
         status_colors = [_runtime_request_status(request)[1] for request in requests]
-        fig.add_trace(
+        add_trace(
             go.Scatter(
                 name="request status",
                 x=request_labels,
@@ -126,7 +211,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         for step in action_steps
     ]
     if action_steps:
-        fig.add_trace(
+        add_trace(
             go.Scatter(
                 name="buffer_size",
                 x=step_x,
@@ -157,17 +242,17 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
     status_dash = {
         "accepted": "solid",
         "dropped": "dash",
-        "unused": "dot",
     }
     status_rank = {
         "dropped": 0,
         "accepted": 1,
-        "unused": 2,
     }
-    if profile.chunk_actions and chunk_channel_keys:
-        request_indices = sorted(
-            {action.request_index for action in profile.chunk_actions}
-        )
+    if chunk_actions and chunk_channel_keys:
+        selectable_channels = [
+            _runtime_channel_label(target, dim_index)
+            for target, _command_name, dim_index in chunk_channel_keys
+        ]
+        request_indices = sorted({action.request_index for action in chunk_actions})
         color_by_request = {
             request_index: palette[index % len(palette)]
             for index, request_index in enumerate(request_indices)
@@ -176,7 +261,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         for request_index in request_indices:
             request_actions = [
                 action
-                for action in profile.chunk_actions
+                for action in chunk_actions
                 if action.request_index == request_index
             ]
             statuses = sorted(
@@ -187,11 +272,8 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                 status_actions = [
                     action for action in request_actions if action.status == status
                 ]
-                for channel_index, (
-                    target,
-                    command_name,
-                    dim_index,
-                ) in enumerate(chunk_channel_keys):
+                for target, command_name, dim_index in chunk_channel_keys:
+                    channel_label = _runtime_channel_label(target, dim_index)
                     x_values: list[int] = []
                     y_values: list[float] = []
                     customdata: list[list[object]] = []
@@ -214,7 +296,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                                 request_index,
                                 action.action_index,
                                 status,
-                                f"{target}[{dim_index}]",
+                                channel_label,
                                 command_name,
                             ]
                         )
@@ -223,13 +305,12 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                     legend_key = (request_index, status)
                     showlegend = legend_key not in shown_legend_items
                     shown_legend_items.add(legend_key)
-                    fig.add_trace(
+                    add_trace(
                         go.Scatter(
                             name=f"chunk {request_index} {status}",
                             x=x_values,
                             y=y_values,
                             mode="lines+markers",
-                            visible=True if channel_index < 16 else "legendonly",
                             legendgroup=f"chunk-{request_index}",
                             showlegend=showlegend,
                             line={
@@ -251,16 +332,17 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                         ),
                         row=2,
                         col=1,
+                        channel_label=channel_label,
                     )
     else:
+        selectable_channels = [label for label, _command_name, _values in channels]
         for index, (label, command_name, values) in enumerate(channels):
-            fig.add_trace(
+            add_trace(
                 go.Scatter(
                     name=label,
                     x=step_x,
                     y=values,
                     mode="lines+markers",
-                    visible=True if index < 16 else "legendonly",
                     line={
                         "color": palette[index % len(palette)],
                         "width": 2,
@@ -275,6 +357,7 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
                 ),
                 row=2,
                 col=1,
+                channel_label=label,
             )
 
     if not requests:
@@ -305,14 +388,14 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
         f" stale={summary['dropped_stale_requests']}"
         f" failed={summary['failed_requests']}"
     )
-    fig.update_layout(
-        title={"text": title, "x": 0.02, "xanchor": "left"},
-        template="plotly_white",
-        barmode="stack",
-        hovermode="x unified",
-        height=860,
-        margin={"l": 70, "r": 32, "t": 90, "b": 72},
-        legend={
+    layout_updates: dict[str, object] = {
+        "title": {"text": title, "x": 0.02, "xanchor": "left"},
+        "template": "plotly_white",
+        "barmode": "stack",
+        "hovermode": "x unified",
+        "height": 860,
+        "margin": {"l": 70, "r": 32, "t": 120, "b": 72},
+        "legend": {
             "orientation": "v",
             "x": 1.01,
             "y": 1.0,
@@ -321,7 +404,47 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
             "itemsizing": "constant",
             "groupclick": "togglegroup",
         },
-    )
+    }
+    selectable_channels = list(dict.fromkeys(selectable_channels))
+    if len(selectable_channels) > 1:
+        buttons = [
+            {
+                "label": "All channels",
+                "method": "update",
+                "args": [{"visible": list(default_trace_visibility)}],
+            }
+        ]
+        for channel_label in selectable_channels:
+            buttons.append(
+                {
+                    "label": channel_label,
+                    "method": "update",
+                    "args": [
+                        {
+                            "visible": [
+                                True
+                                if trace_channel_label is None
+                                else trace_channel_label == channel_label
+                                for trace_channel_label in trace_channel_labels
+                            ]
+                        }
+                    ],
+                }
+            )
+        layout_updates["updatemenus"] = [
+            {
+                "type": "dropdown",
+                "direction": "down",
+                "showactive": True,
+                "active": 0,
+                "x": 1.0,
+                "xanchor": "right",
+                "y": 1.14,
+                "yanchor": "top",
+                "buttons": buttons,
+            }
+        ]
+    fig.update_layout(**layout_updates)
     fig.update_xaxes(title_text="request", row=1, col=1)
     fig.update_yaxes(title_text="milliseconds", row=1, col=1)
     fig.update_xaxes(
@@ -344,6 +467,8 @@ def _runtime_profile_html(profile: "RuntimeInferenceProfile") -> str:
 
 
 __all__ = [
+    "_runtime_action_channels",
+    "_runtime_chunk_action_channel_keys",
     "_runtime_profile_html",
     "_runtime_request_status",
     "_seconds_to_ms",

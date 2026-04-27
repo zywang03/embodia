@@ -967,12 +967,11 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertEqual(scheduler.latency_steps_offset, -3)
 
-    def test_chunk_scheduler_accepts_startup_validation_only(self) -> None:
-        scheduler = ChunkScheduler(
-            startup_validation_only=True,
-        )
-
-        self.assertTrue(scheduler.startup_validation_only)
+    def test_chunk_scheduler_no_longer_accepts_startup_validation_only(self) -> None:
+        with self.assertRaises(TypeError):
+            ChunkScheduler(
+                startup_validation_only=True,  # type: ignore[call-arg]
+            )
 
     def test_chunk_scheduler_rejects_invalid_latency_steps_offset(self) -> None:
         for invalid in (1.5, True, "2"):
@@ -981,13 +980,6 @@ class SchedulerTests(unittest.TestCase):
                     enable_rtc=True,
                     execution_steps=1,
                     latency_steps_offset=invalid,  # type: ignore[arg-type]
-                )
-
-    def test_chunk_scheduler_rejects_invalid_startup_validation_only(self) -> None:
-        for invalid in (1, "yes", None):
-            with self.assertRaises(infra.InterfaceValidationError):
-                ChunkScheduler(
-                    startup_validation_only=invalid,  # type: ignore[arg-type]
                 )
 
     def test_chunk_scheduler_no_longer_accepts_legacy_rtc_delay_offset_keyword(
@@ -1339,7 +1331,7 @@ class SchedulerTests(unittest.TestCase):
             )
         )
 
-    def test_chunk_scheduler_startup_validation_only_still_validates_startup_frame(
+    def test_chunk_scheduler_startup_validation_still_validates_startup_frame(
         self,
     ) -> None:
         def action_source(
@@ -1351,7 +1343,7 @@ class SchedulerTests(unittest.TestCase):
 
         scheduler = ChunkScheduler(
             action_source=action_source,
-            startup_validation_only=True,
+            validation="startup",
         )
         bad_frame = infra.Frame(images={}, state={})
         bad_frame.timestamp_ns = -1
@@ -1381,7 +1373,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(refreshed)
         self.assertEqual(arm_value(action), 1.0)
 
-    def test_chunk_scheduler_startup_validation_only_skips_steady_state_plan_validation(
+    def test_chunk_scheduler_startup_validation_skips_steady_state_plan_validation(
         self,
     ) -> None:
         request_count = 0
@@ -1407,7 +1399,7 @@ class SchedulerTests(unittest.TestCase):
         scheduler = ChunkScheduler(
             action_source=action_source,
             steps_before_request=0,
-            startup_validation_only=True,
+            validation="startup",
             clock=lambda: 123.0,
         )
 

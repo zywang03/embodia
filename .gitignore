@@ -39,3 +39,4 @@ htmlcov/
 
 profiles/
 .worktrees/
+artifacts/

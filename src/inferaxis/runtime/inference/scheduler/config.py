@@ -85,13 +85,11 @@ def _validate_configuration(self, *, reset_latency_mode: bool = True) -> None:
     ):
         raise InterfaceValidationError("latency_steps_offset must be an int.")
 
-    resolved_validation, startup_validation_only = resolve_validation_mode(
+    resolved_validation = resolve_validation_mode(
         validation=self.validation,
-        startup_validation_only=self.startup_validation_only,
         field_name="ChunkScheduler",
     )
     self.validation = str(resolved_validation)
-    self.startup_validation_only = startup_validation_only
 
     self.overlap_current_weight = _normalize_blend_weight(
         self.overlap_current_weight,

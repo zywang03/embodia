@@ -3,8 +3,6 @@
 
 # inferaxis
 
-![Async Buffer Trace Example](./assets/async_buffer_trace_300ms.svg)
-
 `inferaxis` is a unified-data-interface, dynamically latency-adaptive inference
 system for embodied control. It standardizes observations into `Frame`,
 actions into `Action`, and keeps the outer execution loop stable through

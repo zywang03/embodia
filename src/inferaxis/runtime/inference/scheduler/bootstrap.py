@@ -155,7 +155,7 @@ def _bootstrap_async_latency(
 def _maybe_complete_startup_validation(self) -> None:
     """Disable hot-path validation once startup checks have finished."""
 
-    if not self.startup_validation_only:
+    if self.validation != "startup":
         return
     if not self.latency_estimate_ready():
         return

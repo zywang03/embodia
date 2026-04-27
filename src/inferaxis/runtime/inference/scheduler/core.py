@@ -219,6 +219,9 @@ class ChunkScheduler:
     _validate_configuration = config._validate_configuration
     refresh_latency_mode = config.refresh_latency_mode
     _validated_latency_steps_offset = config._validated_latency_steps_offset
+    _sync_execution_cursor_config = config._sync_execution_cursor_config
+    _sync_rtc_window_builder_config = config._sync_rtc_window_builder_config
+    _sync_latency_tracker_config = config._sync_latency_tracker_config
 
     estimated_latency_steps = latency.estimated_latency_steps
     _base_estimated_latency_steps = latency._base_estimated_latency_steps

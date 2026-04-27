@@ -780,6 +780,119 @@ class RuntimeEngineTests(unittest.TestCase):
             runtime.steps_before_request,
         )
 
+    def test_async_runtime_reuse_preserves_learned_latency_tracker_state(
+        self,
+    ) -> None:
+        class ConstantChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+
+        robot = RuntimeRobot()
+        policy = ConstantChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            control_hz=50.0,
+            warmup_requests=0,
+            profile_delay_requests=0,
+            steps_before_request=99,
+        )
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        assert runtime._chunk_scheduler is not None
+        scheduler = runtime._chunk_scheduler
+        scheduler._latency_tracker.estimate = 7.0
+        scheduler._latency_tracker.bootstrap_complete = True
+        scheduler._latency_tracker.observation_count = 5
+
+        infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertIs(runtime._chunk_scheduler, scheduler)
+        self.assertEqual(scheduler._latency_tracker.estimate, 7.0)
+        self.assertTrue(scheduler._latency_tracker.bootstrap_complete)
+        self.assertEqual(scheduler._latency_tracker.observation_count, 5)
+
+    def test_async_runtime_reuse_applies_interpolation_change_only_after_raw_boundary(
+        self,
+    ) -> None:
+        class InterpolatingChunkPolicy:
+            def infer(
+                self,
+                obs: infra.Frame,
+                request: infra.ChunkRequest,
+            ) -> list[infra.Action]:
+                del obs, request
+                return [arm_action(0.0), arm_action(3.0), arm_action(6.0)]
+
+        robot = RuntimeRobot()
+        policy = InterpolatingChunkPolicy()
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            interpolation_steps=2,
+            steps_before_request=99,
+        )
+
+        first = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertEqual(arm_value(first.action), 0.0)
+        assert runtime._chunk_scheduler is not None
+        scheduler = runtime._chunk_scheduler
+        self.assertEqual(scheduler._execution_cursor.interpolation_steps, 2)
+        self.assertFalse(scheduler._execution_cursor.at_raw_boundary)
+
+        runtime.interpolation_steps = 0
+
+        second = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+        third = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+        fourth = infra.run_step(
+            observe_fn=robot.get_obs,
+            act_fn=robot.send_action,
+            act_src_fn=policy.infer,
+            runtime=runtime,
+            pace_control=False,
+        )
+
+        self.assertIs(runtime._chunk_scheduler, scheduler)
+        self.assertEqual(arm_value(second.action), 1.0)
+        self.assertEqual(arm_value(third.action), 2.0)
+        self.assertEqual(arm_value(fourth.action), 3.0)
+        self.assertEqual(scheduler._execution_cursor.interpolation_steps, 0)
+
     def test_sync_runtime_enable_rtc_does_not_require_robot_spec(self) -> None:
         executor = PlainRuntimeExecutor()
         policy = RtcLoggingChunkPolicy()

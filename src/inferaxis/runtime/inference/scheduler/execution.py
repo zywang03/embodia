@@ -219,8 +219,10 @@ def _pop_next_action(self) -> Action:
 
     if not self._raw_buffer.has_actions:
         raise InterfaceValidationError("ChunkScheduler has no buffered action to emit.")
+    self._sync_execution_cursor_config()
     action = self._execution_cursor.next_action()
     self._control_step += 1
+    self._sync_execution_cursor_config()
     return action
 
 

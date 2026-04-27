@@ -9,7 +9,7 @@ from ..optimizers import _normalize_blend_weight
 from ..validation import resolve_validation_mode
 
 
-def _validate_configuration(self) -> None:
+def _validate_configuration(self, *, reset_latency_mode: bool = True) -> None:
     """Validate public scheduler settings in place."""
 
     _validate_nonnegative_int(
@@ -97,17 +97,38 @@ def _validate_configuration(self) -> None:
         self.overlap_current_weight,
         field_name="overlap_current_weight",
     )
-    if hasattr(self, "_execution_cursor"):
-        self._execution_cursor.interpolation_steps = self.interpolation_steps
-    if hasattr(self, "_rtc_window_builder"):
-        self._rtc_window_builder.enabled = self.enable_rtc
-        self._rtc_window_builder.execution_steps = self.execution_steps
-        self._rtc_window_builder.steps_before_request = self.steps_before_request
-    self.refresh_latency_mode()
+    self._sync_execution_cursor_config()
+    self._sync_rtc_window_builder_config()
+    self.refresh_latency_mode(reset_estimate=reset_latency_mode)
 
 
-def refresh_latency_mode(self) -> None:
+def refresh_latency_mode(self, *, reset_estimate: bool = True) -> None:
     """Recompute latency-estimate mode after runtime config changes."""
+
+    self._sync_latency_tracker_config(reset_estimate=reset_estimate)
+
+
+def _sync_execution_cursor_config(self) -> None:
+    """Apply pending interpolation changes only at raw-action boundaries."""
+
+    if not hasattr(self, "_execution_cursor"):
+        return
+    if not self._raw_buffer.has_actions or self._execution_cursor.at_raw_boundary:
+        self._execution_cursor.interpolation_steps = self.interpolation_steps
+
+
+def _sync_rtc_window_builder_config(self) -> None:
+    """Copy public RTC settings into the owned RTC builder component."""
+
+    if not hasattr(self, "_rtc_window_builder"):
+        return
+    self._rtc_window_builder.enabled = self.enable_rtc
+    self._rtc_window_builder.execution_steps = self.execution_steps
+    self._rtc_window_builder.steps_before_request = self.steps_before_request
+
+
+def _sync_latency_tracker_config(self, *, reset_estimate: bool = True) -> None:
+    """Copy public latency settings into the owned tracker component."""
 
     if not hasattr(self, "_latency_tracker"):
         return
@@ -119,7 +140,11 @@ def refresh_latency_mode(self) -> None:
     self._latency_tracker.profile_delay_requests = self.profile_delay_requests
     self._latency_tracker.interpolation_steps = self.interpolation_steps
     self._latency_tracker.latency_steps_offset = self.latency_steps_offset
-    self._latency_tracker.refresh_mode()
+    if reset_estimate:
+        self._latency_tracker.refresh_mode()
+    elif self._latency_tracker.fixed_latency_steps is not None:
+        self._latency_tracker.estimate = self._latency_tracker.fixed_latency_steps
+        self._latency_tracker.bootstrap_complete = True
 
 
 def _validated_latency_steps_offset(self) -> int:

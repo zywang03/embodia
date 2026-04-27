@@ -178,7 +178,7 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.latency_steps_offset = runtime.latency_steps_offset
     scheduler.validation = runtime.validation
     scheduler.startup_validation_only = runtime.startup_validation_only
-    scheduler._validate_configuration()
+    scheduler._validate_configuration(reset_latency_mode=False)
     if (
         (previous_validation, previous_startup_validation_only)
         != (scheduler.validation, scheduler.startup_validation_only)

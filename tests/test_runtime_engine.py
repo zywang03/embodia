@@ -308,6 +308,27 @@ class RuntimeEngineTests(unittest.TestCase):
                     execution_steps=invalid,  # type: ignore[arg-type]
                 )
 
+    def test_runtime_accepts_slow_rtc_bootstrap_policy(self) -> None:
+        runtime = infra.InferenceRuntime(
+            mode=infra.InferenceMode.ASYNC,
+            execution_steps=2,
+            enable_rtc=True,
+            slow_rtc_bootstrap="error",
+        )
+
+        self.assertEqual(runtime.slow_rtc_bootstrap, "error")
+
+    def test_runtime_rejects_invalid_slow_rtc_bootstrap_policy(self) -> None:
+        with self.assertRaises(infra.InterfaceValidationError) as ctx:
+            infra.InferenceRuntime(
+                mode=infra.InferenceMode.ASYNC,
+                execution_steps=2,
+                enable_rtc=True,
+                slow_rtc_bootstrap="ask-politely",
+            )
+
+        self.assertIn("slow_rtc_bootstrap", str(ctx.exception))
+
     def test_runtime_allows_steps_before_request_equal_to_execution_steps_without_rtc(
         self,
     ) -> None:

@@ -56,6 +56,7 @@ class InferenceRuntime:
     ensemble_weight: BlendWeight | None = None
     control_hz: float | None = None
     enable_rtc: bool = False
+    slow_rtc_bootstrap: str = "warn"
     latency_steps_offset: int = 0
     validation: ValidationMode | str | None = None
     startup_validation_only: bool | object = UNSET_VALIDATION
@@ -172,6 +173,7 @@ class InferenceRuntime:
             "ensemble_weight": self.ensemble_weight,
             "control_hz": self.control_hz,
             "enable_rtc": self.enable_rtc,
+            "slow_rtc_bootstrap": self.slow_rtc_bootstrap,
             "latency_steps_offset": self.latency_steps_offset,
             "validation": self.validation,
             "startup_validation_only": self.startup_validation_only,

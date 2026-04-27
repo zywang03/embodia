@@ -3,11 +3,112 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 import warnings
 
 from ....core.errors import InterfaceValidationError
 from ....core.schema import Action
 from ..contracts import RtcArgs
+
+
+@dataclass(slots=True)
+class RtcWindowBuilder:
+    enabled: bool = False
+    execution_steps: int | None = None
+    steps_before_request: int = 0
+    locked_chunk_total_length: int | None = None
+
+    def reset(self) -> None:
+        self.locked_chunk_total_length = None
+
+    def lock_chunk_total_length(self, chunk_length: int) -> None:
+        if not self.enabled:
+            return
+        if self.execution_steps is None:
+            raise InterfaceValidationError(
+                "RTC chunk length locking requires execution_steps."
+            )
+        if chunk_length <= 0:
+            raise InterfaceValidationError(
+                f"RTC chunk_total_length must be > 0, got {chunk_length!r}."
+            )
+        if self.locked_chunk_total_length is None:
+            self.locked_chunk_total_length = chunk_length
+            self.validate_execution_window_structure(chunk_length)
+            return
+        if chunk_length != self.locked_chunk_total_length:
+            raise InterfaceValidationError(
+                "RTC requires a stable source raw chunk length once the first "
+                "chunk is accepted. Got "
+                f"chunk_total_length={chunk_length!r}, "
+                f"locked_chunk_total_length={self.locked_chunk_total_length!r}."
+            )
+
+    def validate_execution_window_structure(self, chunk_total_length: int) -> None:
+        if not self.enabled or self.execution_steps is None:
+            return
+        if self.execution_steps >= (chunk_total_length - self.steps_before_request):
+            raise InterfaceValidationError(
+                "RTC requires execution_steps < chunk_total_length - "
+                "steps_before_request, got "
+                f"execution_steps={self.execution_steps!r}, "
+                f"chunk_total_length={chunk_total_length!r}, "
+                f"steps_before_request={self.steps_before_request!r}."
+            )
+
+    def build_prev_action_chunk(
+        self,
+        *,
+        source_chunk: Sequence[Action],
+    ) -> tuple[list[Action], int]:
+        if not source_chunk:
+            raise InterfaceValidationError(
+                "RTC prev_action_chunk source must contain at least one action."
+            )
+        if self.execution_steps is None:
+            raise InterfaceValidationError(
+                "RTC prev_action_chunk construction requires execution_steps."
+            )
+        total_length = (
+            self.locked_chunk_total_length
+            if self.locked_chunk_total_length is not None
+            else len(source_chunk)
+        )
+        execute_horizon = self.execution_steps
+        if total_length < execute_horizon:
+            raise InterfaceValidationError(
+                "RTC locked chunk_total_length must be >= execution_steps, got "
+                f"chunk_total_length={total_length!r}, "
+                f"execution_steps={execute_horizon!r}."
+            )
+        window_limit = min(len(source_chunk), execute_horizon, total_length)
+        window = [source_chunk[index] for index in range(window_limit)]
+        total_pad_count = total_length - len(window)
+        if total_pad_count > 0:
+            pad_action = window[-1]
+            window.extend(pad_action for _ in range(total_pad_count))
+        return window, execute_horizon
+
+    def build_args(
+        self,
+        *,
+        remaining_chunk: Sequence[Action],
+        inference_delay: int,
+        rtc_seed_chunk: Sequence[Action] | None = None,
+    ) -> RtcArgs | None:
+        if not self.enabled:
+            return None
+        source_chunk = remaining_chunk if remaining_chunk else rtc_seed_chunk
+        if not source_chunk:
+            return None
+        prev_action_chunk, execute_horizon = self.build_prev_action_chunk(
+            source_chunk=source_chunk,
+        )
+        return RtcArgs(
+            prev_action_chunk=prev_action_chunk,
+            inference_delay=min(max(int(inference_delay), 1), execute_horizon),
+            execute_horizon=execute_horizon,
+        )
 
 
 def _build_rtc_args(

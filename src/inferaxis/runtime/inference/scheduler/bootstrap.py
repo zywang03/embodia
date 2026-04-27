@@ -72,6 +72,11 @@ def _confirm_slow_rtc_bootstrap_request(
         f"{duration_ms:.1f} ms, exceeding the {threshold_ms:.1f} ms "
         "startup threshold."
     )
+    if self.slow_rtc_bootstrap == "warn":
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+        return
+    if self.slow_rtc_bootstrap == "error":
+        raise InterfaceValidationError(message)
     warnings.warn(message, RuntimeWarning, stacklevel=2)
     try:
         response = input(f"{message} Continue startup anyway? [y/N]: ")

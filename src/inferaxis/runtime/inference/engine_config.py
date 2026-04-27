@@ -64,6 +64,11 @@ def validate_runtime_config(
         raise InterfaceValidationError(
             "InferenceRuntime(enable_rtc=True) requires execution_steps=... ."
         )
+    if runtime.slow_rtc_bootstrap not in {"warn", "error", "confirm"}:
+        raise InterfaceValidationError(
+            "InferenceRuntime.slow_rtc_bootstrap must be 'warn', 'error', or "
+            f"'confirm', got {runtime.slow_rtc_bootstrap!r}."
+        )
 
     for field_name in ("warmup_requests", "profile_delay_requests"):
         _validate_nonnegative_int(
@@ -137,6 +142,7 @@ def build_chunk_scheduler_kwargs(
             runtime.ensemble_weight if runtime.ensemble_weight is not None else 0.5
         ),
         "enable_rtc": runtime.enable_rtc,
+        "slow_rtc_bootstrap": runtime.slow_rtc_bootstrap,
         "latency_steps_offset": runtime.latency_steps_offset,
         "validation": runtime.validation,
         "startup_validation_only": (
@@ -163,6 +169,7 @@ def sync_chunk_scheduler_config(runtime: "InferenceRuntime", scheduler: Any) -> 
     scheduler.profile_delay_requests = runtime.profile_delay_requests
     scheduler.interpolation_steps = runtime.interpolation_steps
     scheduler.enable_rtc = runtime.enable_rtc
+    scheduler.slow_rtc_bootstrap = runtime.slow_rtc_bootstrap
     scheduler.latency_steps_offset = runtime.latency_steps_offset
     previous_validation = scheduler.validation
     previous_startup_validation_only = scheduler.startup_validation_only

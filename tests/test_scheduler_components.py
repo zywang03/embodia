@@ -11,6 +11,7 @@ from inferaxis.runtime.inference.scheduler.buffers import (
     RawChunkBuffer,
 )
 from inferaxis.runtime.inference.scheduler.latency import LatencyTracker
+from inferaxis.runtime.inference.scheduler.rtc import RtcWindowBuilder
 
 from helpers import arm_action, arm_value
 
@@ -198,3 +199,37 @@ class LatencyTrackerTests(unittest.TestCase):
 
         self.assertEqual(tracker.estimated_latency_steps(), 3)
         self.assertTrue(tracker.latency_estimate_ready())
+
+
+class RtcWindowBuilderTests(unittest.TestCase):
+    def test_builder_pads_prev_action_chunk_to_locked_length(self) -> None:
+        builder = RtcWindowBuilder(
+            enabled=True,
+            execution_steps=2,
+            steps_before_request=0,
+        )
+        source = [arm_action(1.0), arm_action(2.0), arm_action(3.0)]
+        builder.lock_chunk_total_length(len(source))
+
+        rtc_args = builder.build_args(
+            remaining_chunk=source[:2],
+            inference_delay=3,
+        )
+
+        assert rtc_args is not None
+        self.assertEqual(len(rtc_args.prev_action_chunk), 3)
+        self.assertEqual(rtc_args.inference_delay, 2)
+        self.assertEqual(rtc_args.execute_horizon, 2)
+        self.assertEqual(arm_value(rtc_args.prev_action_chunk[-1]), 2.0)
+
+    def test_builder_rejects_changed_chunk_length(self) -> None:
+        builder = RtcWindowBuilder(
+            enabled=True,
+            execution_steps=2,
+            steps_before_request=0,
+        )
+
+        builder.lock_chunk_total_length(4)
+
+        with self.assertRaises(infra.InterfaceValidationError):
+            builder.lock_chunk_total_length(3)

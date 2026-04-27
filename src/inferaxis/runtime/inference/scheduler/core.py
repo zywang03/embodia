@@ -34,6 +34,7 @@ class ChunkScheduler:
     use_overlap_blend: bool = False
     overlap_current_weight: BlendWeight = 0.5
     enable_rtc: bool = False
+    slow_rtc_bootstrap: str = "confirm"
     latency_steps_offset: int = 0
     validation: str | None = None
     startup_validation_only: bool | object = UNSET_VALIDATION

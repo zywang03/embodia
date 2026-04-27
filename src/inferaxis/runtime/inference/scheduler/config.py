@@ -74,6 +74,11 @@ def _validate_configuration(self) -> None:
         raise InterfaceValidationError(
             "execution_steps must be provided when enable_rtc=True."
         )
+    if self.slow_rtc_bootstrap not in {"warn", "error", "confirm"}:
+        raise InterfaceValidationError(
+            "ChunkScheduler.slow_rtc_bootstrap must be 'warn', 'error', or "
+            f"'confirm', got {self.slow_rtc_bootstrap!r}."
+        )
     if isinstance(self.latency_steps_offset, bool) or not isinstance(
         self.latency_steps_offset,
         int,

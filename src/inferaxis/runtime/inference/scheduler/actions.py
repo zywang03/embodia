@@ -254,15 +254,16 @@ def _interpolate_action(
 def _build_execution_segment(self) -> deque[Action]:
     """Expand the current raw step into execution actions."""
 
-    if not self._buffer:
+    remaining_actions = self._raw_buffer.remaining_actions()
+    if not remaining_actions:
         return deque()
 
-    left_action = self._buffer[0]
-    if self.interpolation_steps <= 0 or len(self._buffer) <= 1:
+    left_action = remaining_actions[0]
+    if self.interpolation_steps <= 0 or len(remaining_actions) <= 1:
         return deque([left_action])
 
     segment: list[Action] = [left_action]
-    right_action = self._buffer[1]
+    right_action = remaining_actions[1]
     for interpolation_index in range(1, self.interpolation_steps + 1):
         right_weight = interpolation_index / float(self.interpolation_steps + 1)
         segment.append(

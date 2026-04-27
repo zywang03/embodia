@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 import time
 
-from ....core.schema import Action
 from ..optimizers import BlendWeight
 from ..protocols import ActionSource, ActionSourceProtocol
 from ..validation import ValidationMode
@@ -124,31 +121,6 @@ class ChunkScheduler:
         return self._execution_cursor.remaining_segment_steps
 
     @property
-    def _buffer(self) -> deque[Action]:
-        return deque(self._raw_buffer.remaining_actions())
-
-    @_buffer.setter
-    def _buffer(self, value: deque[Action]) -> None:
-        self._raw_buffer.accept_chunk(
-            actions=list(value),
-            request_step=self._raw_buffer.global_step,
-            current_raw_step=self._raw_buffer.global_step,
-            source_plan_length=len(value),
-        )
-        self._execution_cursor.reset()
-
-    @property
-    def _execution_buffer(self) -> deque[Action]:
-        return deque(self._execution_cursor.remaining_segment_actions())
-
-    @_execution_buffer.setter
-    def _execution_buffer(self, value: deque[Action]) -> None:
-        if value:
-            self._buffer = value
-        else:
-            self._execution_cursor.reset()
-
-    @property
     def _global_step(self) -> int:
         return self._raw_buffer.global_step
 
@@ -179,22 +151,6 @@ class ChunkScheduler:
     @_active_source_plan_length.setter
     def _active_source_plan_length(self, value: int) -> None:
         self._raw_buffer.active_source_plan_length = value
-
-    @property
-    def _pending_future(self) -> Future[_CompletedChunk] | None:
-        return self._pipeline.pending
-
-    @_pending_future.setter
-    def _pending_future(self, value: Future[_CompletedChunk] | None) -> None:
-        self._pipeline.pending = value
-
-    @property
-    def _executor(self) -> ThreadPoolExecutor | None:
-        return self._pipeline.executor
-
-    @_executor.setter
-    def _executor(self, value: ThreadPoolExecutor | None) -> None:
-        self._pipeline.executor = value
 
     @property
     def _latency_steps_estimate(self) -> float:

@@ -171,7 +171,7 @@ def bootstrap(self, frame: Frame, *, validate_frame_input: bool = True) -> bool:
 
     if self.control_period_s is None or self.latency_estimate_ready():
         return False
-    if self._raw_buffer.has_actions or self._pending_future is not None:
+    if self._raw_buffer.has_actions or self._pipeline.pending is not None:
         return False
 
     bootstrapped_chunk = self._bootstrap_async_latency(normalized_frame)

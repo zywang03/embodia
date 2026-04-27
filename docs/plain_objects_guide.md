@@ -22,10 +22,9 @@ result = infra.run_step(
 )
 ```
 
-`run_step(...)` accepts any explicit callable you pass as `act_src_fn=...`. If
-you use object-level checks such as `check_policy(...)`, the checked method name
-is the fixed `infer(...)`. Those checks are dry-run helpers: they validate one
-observed frame and one `infer(...)` call, and never call `send_action(...)`.
+`run_step(...)` accepts any explicit callable you pass as `act_src_fn=...`.
+Using a conventional `infer(frame, request)` method keeps policy objects easy to
+reuse across sync, async, and RTC-aware runtime modes.
 
 ## Observation and action shape
 
@@ -72,16 +71,16 @@ policy implementation:
 ```python
 runtime = infra.InferenceRuntime(
     mode=infra.InferenceMode.ASYNC,
+    control_hz=50.0,
     steps_before_request=0,
     warmup_requests=1,
     profile_delay_requests=3,
-    realtime_controller=infra.RealtimeController(hz=50.0),
 )
 ```
 
 For `mode=ASYNC`, no manual latency seed is needed anymore. When a
-`RealtimeController(...)` is attached, inferaxis first issues request-only
-warmup calls for `warmup_requests`, then profiles delay for
+runtime has `control_hz=...`, inferaxis first issues request-only warmup calls
+for `warmup_requests`, then profiles delay for
 `profile_delay_requests`, converts the measured request time into control-step
 latency, and only then starts sending actions to the robot. This bootstrap
 happens automatically on the first `run_step(...)` call once `observe_fn` and
@@ -90,9 +89,10 @@ Because of that startup warmup, `infer(frame, request)` should derive its chunk
 from `frame` and `request` instead of relying on mutable "call count" state.
 If you want startup warmup/profile to happen outside the first `run_step(...)`
 call, invoke `runtime.bootstrap_async(...)` once before entering the loop.
-To persist the live request/action profile, construct the runtime with
-`profile=True` and optionally `profile_output_dir=...`; `runtime.close()` writes
-`runtime_profile.json` and `runtime_profile.html`.
+To persist the live request/action profile, use
+`InferenceRuntime.async_realtime(profile=True)` or set the runtime
+`profile=True` / `profile_output_dir=...` options directly; `runtime.close()`
+writes `runtime_profile.json` and `runtime_profile.html`.
 
 If you use `ASYNC` or `steps_before_request`, keep the same
 `infer(frame, request)` boundary. Return one action for chunk size `1`, or

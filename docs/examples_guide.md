@@ -1,6 +1,6 @@
 # inferaxis examples guide
 
-The public examples are intentionally fixed to six local paths:
+The public examples are intentionally fixed to seven local paths:
 
 1. [`examples/01_sync_inference.py`](../examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](../examples/02_async_inference.py)
@@ -8,6 +8,7 @@ The public examples are intentionally fixed to six local paths:
 4. [`examples/04_replay_collected_data.py`](../examples/04_replay_collected_data.py)
 5. [`examples/05_profile_inference_latency.py`](../examples/05_profile_inference_latency.py)
 6. [`examples/06_async_inference_with_rtc.py`](../examples/06_async_inference_with_rtc.py)
+7. [`examples/07_benchmark_runtime.py`](../examples/07_benchmark_runtime.py)
 
 The examples now center on the same function-first path throughout: plain local
 objects, explicit method references such as `observe_fn=...`, `act_fn=...`,
@@ -34,6 +35,8 @@ planning.
 Because RTC is enabled there, the very first bootstrap request still has no
 RTC args, while later warmup/profile requests already exercise
 `prev_action_chunk`.
+`examples/07` is a lightweight runtime overhead benchmark for sync, async, and
+RTC-aware async scheduling.
 The async runtime now uses `steps_before_request` to decide when to launch the next
 request after a chunk is accepted. `steps_before_request=0` starts immediately, while
 larger values wait for that many raw chunk steps to execute first. Latency is

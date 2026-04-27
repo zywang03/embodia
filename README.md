@@ -39,8 +39,11 @@ The public surface is intentionally small:
 - `Frame`
 - `Action`
 - `Command`
-- `run_step(...)`
-- `InferenceRuntime(...)`
+- `BuiltinCommandKind`
+- `ChunkRequest`
+- `InferenceRuntime`
+- `InferenceMode`
+- `run_step`
 - `RealtimeController`
 
 The runtime call boundary is:
@@ -185,12 +188,11 @@ Project-specific command kinds can be registered as `custom:...`.
 adds optimization and scheduling without changing that outer call style.
 
 ```python
-runtime = infra.InferenceRuntime(
-    mode=infra.InferenceMode.ASYNC,
+runtime = infra.InferenceRuntime.async_realtime(
+    control_hz=50.0,
     steps_before_request=0,
     warmup_requests=1,
     profile_delay_requests=3,
-    realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
 result = infra.run_step(
@@ -209,8 +211,8 @@ This lets the same data interface support:
 - paced closed-loop execution
 - live request/action profiling via `InferenceRuntime.async_realtime(profile=True)`
 
-When `mode=ASYNC`, no manual latency seed is needed anymore. If you attach a
-`RealtimeController(...)`, inferaxis first issues request-only warmup calls for
+When `mode=ASYNC`, no manual latency seed is needed anymore. If you set
+`control_hz=...`, inferaxis first issues request-only warmup calls for
 `warmup_requests`, then profiles delay across `profile_delay_requests`
 requests, converts that to control-step latency, and only then starts sending
 actions to the robot. This bootstrap happens automatically on the first
@@ -267,17 +269,9 @@ from measured chunk latency instead of being fixed ahead of time.
 `ensemble_weight` defaults to `None`. If it is omitted, inferaxis does not
 blend aligned handoff actions and simply switches to the aligned new chunk.
 
-## Validation
-
-`check_policy(...)` and `check_pair(...)` are dry-run validation helpers.
-
-- They validate the interface contract.
-- They issue at most one observation request and one policy inference call.
-- They do not call `act_fn(...)`.
-
 ## Examples
 
-The public examples are fixed to these six paths:
+The public examples are fixed to these seven paths:
 
 1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
@@ -285,6 +279,7 @@ The public examples are fixed to these six paths:
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 5. [`examples/05_profile_inference_latency.py`](./examples/05_profile_inference_latency.py)
 6. [`examples/06_async_inference_with_rtc.py`](./examples/06_async_inference_with_rtc.py)
+7. [`examples/07_benchmark_runtime.py`](./examples/07_benchmark_runtime.py)
 
 Together they show the intended scope of the system: one shared data interface,
 one outer loop, multiple inference-time use cases.

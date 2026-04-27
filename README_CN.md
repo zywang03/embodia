@@ -38,8 +38,11 @@ pip install .
 - `Frame`
 - `Action`
 - `Command`
-- `run_step(...)`
-- `InferenceRuntime(...)`
+- `BuiltinCommandKind`
+- `ChunkRequest`
+- `InferenceRuntime`
+- `InferenceMode`
+- `run_step`
 - `RealtimeController`
 
 运行时调用边界是：
@@ -184,12 +187,11 @@ action = infra.Action(
 外层调用方式的前提下，补充调度和优化能力。
 
 ```python
-runtime = infra.InferenceRuntime(
-    mode=infra.InferenceMode.ASYNC,
+runtime = infra.InferenceRuntime.async_realtime(
+    control_hz=50.0,
     steps_before_request=0,
     warmup_requests=1,
     profile_delay_requests=3,
-    realtime_controller=infra.RealtimeController(hz=50.0),
 )
 
 result = infra.run_step(
@@ -200,8 +202,8 @@ result = infra.run_step(
 )
 ```
 
-当 `mode=ASYNC` 时，不再需要手动给延迟 seed。如果同时挂了
-`RealtimeController(...)`，inferaxis 会先按 `warmup_requests`
+当 `mode=ASYNC` 时，不再需要手动给延迟 seed。如果设置了
+`control_hz=...`，inferaxis 会先按 `warmup_requests`
 做一段“只请求、不执行”的 warmup，再按 `profile_delay_requests`
 做 delay profiling，把真实请求耗时换算成控制步延迟，然后再开始把动作发给机械臂。
 这段 bootstrap 会在第一次 `run_step(...)` 且已经拿到 `observe_fn` /
@@ -260,17 +262,9 @@ inferaxis 会先丢掉已经过期的前缀；如果设置了 `ensemble_weight=.
 `ensemble_weight` 默认就是 `None`。如果不传，inferaxis 就不会做 handoff 融合，而是直接切到
 对齐后的新 chunk。
 
-## 校验
-
-`check_policy(...)` 和 `check_pair(...)` 是 dry-run 校验工具。
-
-- 它们只检查接口契约
-- 最多请求一次 observation 和一次 policy inference
-- 不会调用 `act_fn(...)`
-
 ## 示例
 
-公开示例固定为以下六个：
+公开示例固定为以下七个：
 
 1. [`examples/01_sync_inference.py`](./examples/01_sync_inference.py)
 2. [`examples/02_async_inference.py`](./examples/02_async_inference.py)
@@ -278,8 +272,9 @@ inferaxis 会先丢掉已经过期的前缀；如果设置了 `ensemble_weight=.
 4. [`examples/04_replay_collected_data.py`](./examples/04_replay_collected_data.py)
 5. [`examples/05_profile_inference_latency.py`](./examples/05_profile_inference_latency.py)
 6. [`examples/06_async_inference_with_rtc.py`](./examples/06_async_inference_with_rtc.py)
+7. [`examples/07_benchmark_runtime.py`](./examples/07_benchmark_runtime.py)
 
-这五个例子一起表达的就是这个项目现在的边界：一套统一数据接口，一条统一外层 loop，
+这七个例子一起表达的就是这个项目现在的边界：一套统一数据接口，一条统一外层 loop，
 覆盖多种推理时场景。
 
 更细一点的说明见 [`docs/plain_objects_guide.md`](./docs/plain_objects_guide.md)

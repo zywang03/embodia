@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ....core.errors import InterfaceValidationError
 from ....core.schema import Action
 from . import actions
 
@@ -36,6 +37,8 @@ class RawChunkBuffer:
         self.active_source_plan_length = 0
 
     def current_action(self) -> Action:
+        if not self.has_actions:
+            raise InterfaceValidationError("RawChunkBuffer has no action to emit.")
         return self.actions[self.start_index]
 
     def next_action(self) -> Action | None:
